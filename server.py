@@ -1818,13 +1818,11 @@ def la_payload(car):
     cs = lv.get('charging_state')
     if cs == 'Charging':
         tl = lv.get('time_to_full_charge') or 0
-        kw = lv.get('charger_power') or 0
-        d = dict(base, critical_text='%s%%' % soc, notification_icon='mdi:ev-station', notification_icon_color='#4CC2A0', progress=soc, progress_max=max(lim, soc + 1), progress_bar_color='#4CC2A0',
+        kw = round(lv.get('charger_power') or 0)
+        rest = ('%d h %02d min' % (int(tl), int(tl % 1 * 60))) if tl >= 1 else ('%d min' % max(1, round(tl * 60))) if tl else ''
+        d = dict(base, critical_text=rest or '%s%%' % soc, notification_icon='mdi:ev-station', notification_icon_color='#4CC2A0', progress=soc, progress_max=max(lim, soc + 1), progress_bar_color='#4CC2A0',
                  background_color='#0B0D10', text_color='#FFFFFF')
-        if tl:
-            d.update(chronometer=True, when=int(tl * 3600), when_relative=True)
-        rest = ('încă %d h %02d min' % (int(tl), int(tl % 1 * 60))) if tl >= 1 else ('încă %d min' % round(tl * 60)) if tl else ''
-        return 'charge', 'Se încarcă · %s%%' % soc, ('%s kW · limită %s%%%s' % (round(kw), lim, (' · ' + rest) if rest else '')), d
+        return 'charge', 'Se încarcă · %d kW' % kw, ('%s%% → %s%%%s' % (soc, lim, (' · încă ' + rest) if rest else '')), d
     if cs == 'Complete' and lv.get('plugged_in'):
         return 'complete', '✅ Încărcare terminată', '%s: baterie %s%%.' % (nm, soc), dict(base, critical_text='%s%%' % soc, notification_icon='mdi:battery-check', notification_icon_color='#4CC2A0', progress=soc, progress_max=100, progress_bar_color='#4CC2A0')
     if st.get('live_drive') and shift in ('D', 'R', 'N'):
@@ -1857,7 +1855,7 @@ def la_sync(car=1):
         return
     changed = kind != LA['kind']
     min_gap = 55 if kind == 'drive' else 90
-    if changed or (soc != LA['soc'] and now - LA['sent'] > min_gap) or (kind in ('charge', 'drive') and now - LA['sent'] > 240):
+    if changed or (soc != LA['soc'] and now - LA['sent'] > min_gap) or (kind == 'charge' and now - LA['sent'] > 120) or (kind == 'drive' and now - LA['sent'] > 240):
         if changed:
             LA['since'] = now
         LA.update(kind=kind, sent=now, soc=soc)
