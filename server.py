@@ -1084,7 +1084,7 @@ def ha_entities():
         return max(sc)[2] if sc else ''
     return dict(ok=True, entities=sorted(ents, key=lambda e: e['id'])[:600],
                 grid=best([r'grid', r'import', r'retea|rețea|reteaua', r'power'], bad=('export', 'l1_', 'l2_', 'l3_', 'ct1', 'frequency', 'voltage')),
-                pv=best([r'pv', r'solar|fotovolt', r'power'], bad=('pv1', 'pv2', 'pv3', 'pv4', 'today', 'total', 'voltage', 'current', 'battery', 'grid')))
+                pv=best([r'pv', r'solar|fotovolt', r'power'], bad=('pv1', 'pv2', 'pv3', 'pv4', 'today', 'total', 'voltage', 'current', 'battery', 'grid', 'forecast', 'solcast', 'helios', 'estimat', 'power_production', 'next_')))
 
 
 def cfg_test(what):
