@@ -1818,11 +1818,11 @@ def la_payload(car):
     cs = lv.get('charging_state')
     if cs == 'Charging':
         tl = lv.get('time_to_full_charge') or 0
-        kw = round(lv.get('charger_power') or 0)
+        kw = ('%.1f' % float(lv.get('charger_power') or 0)).replace('.', ',')
         rest = ('%d h %02d min' % (int(tl), int(tl % 1 * 60))) if tl >= 1 else ('%d min' % max(1, round(tl * 60))) if tl else ''
         d = dict(base, critical_text=rest or '%s%%' % soc, notification_icon='mdi:ev-station', notification_icon_color='#4CC2A0', progress=soc, progress_max=max(lim, soc + 1), progress_bar_color='#4CC2A0',
                  background_color='#0B0D10', text_color='#FFFFFF')
-        return 'charge', '%s%% · %d kW' % (soc, kw), ('%s rămase' % rest) if rest else 'Se încarcă', d
+        return 'charge', '%s%% · %s kW' % (soc, kw), ('%s rămase' % rest) if rest else 'Se încarcă', d
     if cs == 'Complete' and lv.get('plugged_in'):
         return 'complete', 'Încărcare terminată', '%s%%' % soc, dict(base, critical_text='%s%%' % soc, notification_icon='mdi:battery-check', notification_icon_color='#4CC2A0', progress=soc, progress_max=100, progress_bar_color='#4CC2A0')
     if st.get('live_drive') and shift in ('D', 'R', 'N'):
