@@ -13,12 +13,12 @@ const EN2 = {
 const toast = (id, t, cls) => { const m = document.getElementById(id); if (m) { m.textContent = t; m.className = 'toast ' + (cls || ''); } };
 async function fire(name, label, arg, msgId) {
   if (S.public_demo) { toast(msgId, X('Demonstrație — comenzile sunt dezactivate.', 'Demo — commands are disabled.'), 'bad'); return null; }
-  const pin = getPin(); if (!pin) return null;
+  const pin = await getPin(); if (!pin) return null;
   toast(msgId, label + '…', 'busy');
   try {
     const r = await fetch('/api/cmd/' + name, { method: 'POST', headers: { 'X-Pin': pin, 'Content-Type': 'application/json' }, body: JSON.stringify({ car, arg }) });
     const j = await r.json();
-    if (r.status === 403) { localStorage.removeItem('pin'); toast(msgId, tr('PIN greșit.'), 'bad'); return null; }
+    if (r.status === 403) { pinClear(); toast(msgId, tr('PIN greșit.'), 'bad'); return null; }
     toast(msgId, j.ok ? '✓ ' + label + (j.via === 'ble' ? ' · BLE' : '') : '✗ ' + label + (j.reason ? ' — ' + j.reason : ''), j.ok ? 'ok' : 'bad');
     return j;
   } catch (e) { toast(msgId, '✗ ' + label + ' — ' + e.message, 'bad'); return null; }
@@ -141,11 +141,11 @@ async function afterNotif() {
   const box = $('#notif'); if (!box || S.public_demo) { if (box) box.innerHTML = ''; return; }
   let n; try { n = await api('/api/notify'); } catch (e) { return; }
   const st = n.settings || {};
-  setHtml(box, `<div class="card">${sw('n_plugged', st.plugged, tr('Cablu conectat'))}${sw('n_charge_done', st.charge_done, tr('Încărcare terminată'))}${sw('n_door', st.door, tr('Ușă / portbagaj deschise'))}${sw('n_update', st.update, X('Update software disponibil', 'Software update available'))}${sw('n_low_batt', st.low_batt, X('Baterie sub 20% la parcare', 'Battery below 20% while parked'))}${sw('n_live', st.live, X('Live Activity pe iPhone (încărcare, ușă deschisă, conectată)', 'iPhone Live Activity (charging, open door, plugged in)'))}${sw('n_live_drive', st.live_drive, X('Live Activity și în timpul condusului', 'Live Activity while driving'))}${sw('n_actions', st.actions, X('Butoane de comandă pe notificări (deblochează cablul, oprește încărcarea, încuie)', 'Command buttons on notifications (release cable, stop charging, lock)'))}
+  setHtml(box, `<div class="card">${sw('n_plugged', st.plugged, tr('Cablu conectat'))}${sw('n_charge_done', st.charge_done, tr('Încărcare terminată'))}${sw('n_door', st.door, tr('Ușă / portbagaj deschise'))}${sw('n_update', st.update, X('Update software disponibil', 'Software update available'))}${sw('n_low_batt', st.low_batt, X('Baterie sub 20% la parcare', 'Battery below 20% while parked'))}${sw('n_live', st.live, X('Live Activity pe iPhone (încărcare, ușă deschisă, conectată)', 'iPhone Live Activity (charging, open door, plugged in)'))}${sw('n_live_drive', st.live_drive, X('Live Activity și în timpul condusului', 'Live Activity while driving'))}${sw('n_actions', st.actions, X('Butoane de comandă pe notificări (deblochează cablul, oprește încărcarea, încuie)', 'Command buttons on notifications (release cable, stop charging, lock)'))}${sw('n_app_update', st.app_update, X('Versiune nouă a aplicației', 'New app version'))}
     ${n.hook ? '' : `<p class="note" style="margin:8px 0 0">${X('Telefonul nu e legat încă (lipsește NOTIFY_WEBHOOK) — notificările apar doar aici.', 'Phone not linked yet (NOTIFY_WEBHOOK missing) — notifications only show here.')}</p>`}
     <div class="links"><a href="#" id="ntest">${tr('Trimite test')}</a></div>
     <div id="nlist">${(n.events || []).slice(0, 40).map((e) => `<div class="row nrow"><div><b>${esc(e.title)}</b><small>${esc(e.msg)}</small></div><div class="sp"></div><span class="mut" style="font-size:11.5px">${ago(e.t)}</span></div>`).join('') || `<p class="note" style="margin:8px 0 0">${tr('Nicio notificare încă.')}</p>`}</div></div>`);
-  ['plugged', 'charge_done', 'door', 'update', 'low_batt', 'live', 'live_drive', 'actions'].forEach((k) => { const e = $('#n_' + k); if (e) e.onchange = () => fetch('/api/notify/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [k]: e.checked }) }); });
+  ['plugged', 'charge_done', 'door', 'update', 'low_batt', 'live', 'live_drive', 'actions', 'app_update'].forEach((k) => { const e = $('#n_' + k); if (e) e.onchange = () => fetch('/api/notify/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [k]: e.checked }) }); });
   const t = $('#ntest'); if (t) t.onclick = async (ev) => { ev.preventDefault(); await fetch('/api/notify/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); setTimeout(afterNotif, 400); };
 }
 
@@ -562,9 +562,9 @@ function afterAuto() {
   };
   $('#rtype').onchange = fields; fields();
   const post = async (body) => {
-    const pin = getPin(); if (!pin) return;
+    const pin = await getPin(); if (!pin) return;
     const r = await fetch('/api/rules', { method: 'POST', headers: { 'X-Pin': pin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), j = await r.json();
-    if (r.status === 403) { localStorage.removeItem('pin'); toast('rmsg', j.reason || tr('PIN greșit.'), 'bad'); return; }
+    if (r.status === 403) { pinClear(); toast('rmsg', j.reason || tr('PIN greșit.'), 'bad'); return; }
     if (j.ok === false || j.error) { toast('rmsg', '✗ ' + (j.reason || j.error), 'bad'); return; }
     render();
   };
@@ -597,7 +597,9 @@ async function pageSettings() {
   if (c.error) return `<div class="top"><h1>${X('Setări', 'Settings')}</h1></div>${lang}<div class="empty">${X('Setările pot fi schimbate doar de administrator.', 'Only the administrator can change settings.')}</div>`;
   const f = (label, id, val, o = {}) => `<label class="cf">${label}<input id="${id}" type="${o.secret ? 'password' : (o.type || 'text')}" value="${o.secret ? '' : esc(val ?? '')}" placeholder="${o.secret ? (o.set ? X('••••••  (setat — lasă gol ca să-l păstrezi)', '••••••  (set — leave empty to keep)') : (o.ph || '')) : (o.ph || '')}" autocomplete="off" ${o.attrs || ''}></label>${o.hint ? `<small class="ch">${o.hint}</small>` : ''}`;
   const sec2 = (title, body, save, extra = '') => `<h2>${title}</h2><div class="card cfg">${body}<div class="links"><a href="#" data-save="${save}">${X('Salvează', 'Save')}</a>${extra}</div><div class="toast" aria-live="polite" id="cm-${save}" style="display:none"></div></div>`;
-  const fl = c.fleet, ha = c.ha, ac = c.access, dp = c.display;
+  const fl = c.fleet, ha = c.ha, ac = c.access, dp = c.display, up = c.update || {};
+  let ver = {}; try { ver = await api('/api/version'); } catch (x) { /* ignore */ }
+  let cl = []; try { cl = await api('/api/changelog?limit=6'); } catch (x) { /* ignore */ }
   window.__pinSet = fl.pin_set; window.__haSet = ha.token_set && !!ha.url;
   return `<div class="top"><h1>${X('Setări', 'Settings')}</h1><small>${X('Totul se salvează pe server și se aplică imediat. Câmpurile secrete nu se mai afișează după salvare.', 'Everything is saved on the server and applies immediately. Secret fields are never shown again after saving.')}</small></div>
   ${lang}
@@ -615,6 +617,17 @@ async function pageSettings() {
   ${sec2(X('Acces din internet și roluri', 'Internet access & roles'), f(X('Parolă pentru acces din internet (min. 12 caractere)', 'Password for internet access (min. 12 characters)'), 'app_password', '', { secret: true, set: ac.password_set })
     + f('Cloudflare Access — team domain', 'acc_team', ac.team, { ph: 'echipa.cloudflareaccess.com' }) + f('Cloudflare Access — AUD tag', 'acc_aud', ac.aud) + f(X('E-mail administrator', 'Administrator e-mail'), 'acc_email', ac.email)
     + f(X('Roluri (email:rol, separate prin virgulă; roluri: admin, family, viewer)', 'Roles (email:role, comma-separated; roles: admin, family, viewer)'), 'roles', ac.roles, { ph: 'sotia@example.com:family' }), 'access')}
+  ${sec2(X('Versiune și actualizări', 'Version & updates'),
+    `<div class="grid">${stat(X('Versiune instalată', 'Installed version'), 'v' + esc(ver.version || '?') + (ver.commit ? ' · ' + esc(ver.commit) : ''))}${stat(X('Ultima versiune', 'Latest version'), ver.private ? X('build local', 'local build') : (ver.latest ? 'v' + esc(ver.latest) : '—'))}</div>`
+    + (ver.newer ? `<div class="card" style="border:1px solid #6fd6b866;margin-top:10px"><b style="color:var(--mint)">${X('Versiune nouă disponibilă', 'New version available')}: v${esc(ver.latest)}</b><pre class="notes">${esc(ver.notes || '')}</pre>
+      <p class="note" style="margin:6px 0">${X('Actualizare manuală', 'Manual update')}: <code>docker compose pull &amp;&amp; docker compose up -d</code> ${X('(sau', '(or')} <code>git pull &amp;&amp; docker compose up -d --build</code>)</p>${ver.url ? `<div class="links"><a href="${esc(safeUrl(ver.url))}" target="_blank" rel="noopener">${X('Notele versiunii', 'Release notes')}</a></div>` : ''}</div>` : '')
+    + (ver.error ? `<p class="note">${X('Ultima verificare a eșuat: ', 'Last check failed: ')}${esc(ver.error)}</p>` : (ver.checked ? `<p class="note">${X('Ultima verificare: ', 'Last checked: ')}${esc(new Date(ver.checked * 1000).toLocaleString(LOC()))}</p>` : ''))
+    + (cl.length ? `<details class="cl"><summary>${X('Ce s-a schimbat', 'What changed')}</summary>${cl.map((x) => `<h3 class="sub">v${esc(x.version)}${x.date ? ' · ' + esc(x.date) : ''}</h3><pre class="notes">${esc(x.notes)}</pre>`).join('')}</details>` : '')
+    + sw('update_check', up.check, X('Verifică automat versiuni noi (o cerere către GitHub, de două ori pe zi)', 'Check for new versions automatically (one request to GitHub, twice a day)'))
+    + f(X('Adresa updater-ului (ex. Watchtower: http://watchtower:8080/v1/update) — opțional', 'Updater address (e.g. Watchtower: http://watchtower:8080/v1/update) — optional'), 'update_webhook', up.webhook, { ph: 'http://watchtower:8080/v1/update' })
+    + f(X('Token updater', 'Updater token'), 'update_token', '', { secret: true, set: up.token_set })
+    + `<p class="note">${X('Cu un updater configurat apare butonul „Actualizează acum”. Aplicația nu are acces la Docker și nu își poate înlocui singură containerul.', 'With an updater configured an “Update now” button appears. The app has no Docker access and cannot replace its own container.')}</p>`,
+    'updates', `<a href="#" data-upd="check">${X('Verifică acum', 'Check now')}</a>${ver.can_apply ? `<a href="#" data-upd="apply">${X('Actualizează acum', 'Update now')}</a>` : ''}`)}
   ${sec2(X('Afișare', 'Display'), f(X('Adresa aplicației (se deschide la atingerea notificării)', 'App address (opened when you tap a notification)'), 'app_url', dp.app_url, { ph: 'https://car.example.com' }) + f(X('Consum mașină termică de comparație (l/100 km)', 'Comparison ICE car consumption (l/100 km)'), 'ice_l100', dp.ice_l100, { ph: '7.5' }) + `<label class="cf">${X('Combustibil pentru comparație', 'Fuel for comparison')}<select id="fuel_type"><option value="euro95" ${dp.fuel_type === 'euro95' ? 'selected' : ''}>${X('Benzină (Euro 95) — preț automat zilnic', 'Petrol (Euro 95) — automatic daily price')}</option><option value="diesel" ${dp.fuel_type === 'diesel' ? 'selected' : ''}>${X('Motorină — preț automat zilnic', 'Diesel — automatic daily price')}</option><option value="manual" ${dp.fuel_type === 'manual' ? 'selected' : ''}>${X('Preț manual', 'Manual price')}</option></select></label>` + f(X('Preț manual combustibil (pe litru)', 'Manual fuel price (per litre)'), 'fuel_price', dp.fuel_price, { ph: '7.50' }) + f(X('Țara pentru prețul automat (fuel-prices.eu)', 'Country for the automatic price (fuel-prices.eu)'), 'fuel_country', dp.fuel_country, { ph: 'Romania' }) + f(X('Monedă (lângă costul încărcărilor)', 'Currency (next to charging cost)'), 'currency', dp.currency) + f(X('Preț energie din rețea / kWh (opțional)', 'Grid energy price / kWh (optional)'), 'price_grid', dp.price_grid, { ph: '1.10', hint: X('Folosit pentru „Cost real estimat”. Gol = tariful locației din TeslaMate.', 'Used for “Estimated real cost”. Empty = the location tariff from TeslaMate.') }) + f('URL TeslaMate', 'link_tm', dp.teslamate, { ph: 'http://…:4000' }) + f('URL Grafana', 'link_gf', dp.grafana, { ph: 'http://…:3000' }), 'display')}`;
 }
 function afterSettings() {
@@ -630,25 +643,35 @@ function afterSettings() {
     });
   }).catch(() => {});
   const FIELDS = { pin: ['pin'], fleet: ['fleet_id', 'fleet_secret', 'fleet_domain', 'fleet_base'], ha: ['ha_url', 'ha_token', 'ha_prefix', 'ha_grid', 'ha_pv'], notify: ['notify_webhook'],
-    access: ['app_password', 'acc_team', 'acc_aud', 'acc_email', 'roles'], tessie: ['tessie_token'], display: ['app_url', 'ice_l100', 'fuel_type', 'fuel_price', 'fuel_country', 'currency', 'price_grid', 'link_tm', 'link_gf'] };
+    access: ['app_password', 'acc_team', 'acc_aud', 'acc_email', 'roles'], tessie: ['tessie_token'], updates: ['update_webhook', 'update_token'], display: ['app_url', 'ice_l100', 'fuel_type', 'fuel_price', 'fuel_country', 'currency', 'price_grid', 'link_tm', 'link_gf'] };
   const say = (k, t, cls) => { const m = document.getElementById('cm-' + k); if (m) { m.style.display = ''; m.textContent = t; m.className = 'toast ' + (cls || ''); } };
   const call = async (path, body, k) => {
     const pinSet = (window.__pinSet !== false);
-    let pin = localStorage.getItem('pin') || '';
-    if (!pin && pinSet) pin = getPin();
+    let pin = pinGet();
+    if (!pin && pinSet) pin = await getPin();
     let r, j;
     try { r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Pin': pin || '' }, body: JSON.stringify(body) }); j = await r.json(); }
     catch (err) { return [false, { reason: X('Fără conexiune la server.', 'No connection to the server.') }]; }
-    if (r.status === 403 && /PIN/.test(j.reason || '')) { localStorage.removeItem('pin'); }
+    if (r.status === 403 && /PIN/.test(j.reason || '')) { pinClear(); }
     return [r.ok, j];
   };
+  view.querySelectorAll('[data-upd]').forEach((b) => b.onclick = async (ev) => {
+    ev.preventDefault();
+    const apply = b.dataset.upd === 'apply';
+    if (apply && !confirm(X('Actualizez aplicația acum? Se repornește câteva zeci de secunde.', 'Update the app now? It restarts for a few tens of seconds.'))) return;
+    say('updates', X('Se lucrează…', 'Working…'), 'busy');
+    const [ok, j] = await call(apply ? '/api/update/apply' : '/api/update/check', {}, 'updates');
+    if (apply) say('updates', (ok && j.ok ? '✓ ' : '✗ ') + (j.reason || X('Cerere trimisă. Reîncarcă pagina peste ~1 minut.', 'Request sent. Reload the page in about a minute.')), ok && j.ok ? 'ok' : 'bad');
+    else { say('updates', ok && j.ok ? '✓ ' + (j.newer ? X('Versiune nouă: v', 'New version: v') + j.latest : X('Ești la zi.', 'You are up to date.')) : '✗ ' + (j.reason || X('Eroare', 'Error')), ok && j.ok ? 'ok' : 'bad'); if (ok && j.ok) setTimeout(render, 1200); }
+  });
   view.querySelectorAll('[data-save]').forEach((b) => b.onclick = async (e) => {
     e.preventDefault(); const k = b.dataset.save, body = {};
     FIELDS[k].forEach((id) => { const el = document.getElementById(id); if (el) body[id] = el.value; });
     if (k === 'ha') body.ha_ble = document.getElementById('ha_ble').checked ? '1' : '0';
+    if (k === 'updates') body.update_check = document.getElementById('update_check').checked ? '1' : '0';
     say(k, X('Se salvează…', 'Saving…'), 'busy');
     const [ok, j] = await call('/api/config', body, k);
-    if (ok && j.ok) { if (k === 'pin' && body.pin) localStorage.setItem('pin', body.pin); say(k, '✓ ' + X('Salvat', 'Saved'), 'ok'); setTimeout(render, 900); }
+    if (ok && j.ok) { if (k === 'pin' && body.pin) pinSave(body.pin, false); say(k, '✓ ' + X('Salvat', 'Saved'), 'ok'); setTimeout(render, 900); }
     else say(k, '✗ ' + (j.reason || j.error || X('Eroare', 'Error')), 'bad');
   });
   const impBox = () => document.getElementById('timp');
@@ -709,12 +732,14 @@ function drawNav(active) {
   const nav2 = document.getElementById('nav'); if (!nav2) return;
   nav2.innerHTML = `<div class="sb-top"><div class="sb-logo"><svg viewBox="0 0 24 24"><path d="${NAVI.car}"/></svg><span>TESLAMATE UI</span></div></div>
     <button class="sb-car" id="sbcar" title="${X('Detalii mașină', 'Car details')}"><span>${esc(carLabel(c))}</span>${nicon('info')}</button>
+    ${S.cars.length > 1 ? `<select id="sbcarsel" aria-label="${X('Alege mașina', 'Choose car')}">${S.cars.map((x) => `<option value="${x.id}" ${x.id === car ? 'selected' : ''}>${esc(carLabel(x))}${x.name ? ' · ' + esc(x.name) : ''}</option>`).join('')}</select>` : ''}
     <div class="sb-menu">${MENU.map(([k, ro, en, ic]) => `<a href="#/${k}" class="${active === k ? 'on' : ''}">${nicon(ic)}<span>${X(ro, en)}</span></a>`).join('')}</div>
     <div class="sb-foot"><a href="#/settings" class="${active === 'settings' ? 'on' : ''}">${nicon('gear')}<span>${X('Setări', 'Settings')}</span></a>
-      <div class="sb-lang"><button data-lang="ro" class="${LANG === 'ro' ? 'on' : ''}">RO</button><button data-lang="en" class="${LANG === 'en' ? 'on' : ''}">EN</button></div></div>`;
+      ${S.app ? `<a href="#/settings" class="sb-ver">v${esc(S.app.version)}${S.app.latest ? ` · <b>${X('nou', 'new')} v${esc(S.app.latest)}</b>` : ''}</a>` : ''}<div class="sb-lang"><button data-lang="ro" class="${LANG === 'ro' ? 'on' : ''}">RO</button><button data-lang="en" class="${LANG === 'en' ? 'on' : ''}">EN</button></div></div>`;
   nav2.querySelectorAll('[data-lang]').forEach((b) => b.onclick = () => { LANG = b.dataset.lang; try { localStorage.setItem('lang', LANG); } catch (x) { /* ignore */ } document.documentElement.lang = LANG; render(); });
   nav2.querySelectorAll('a').forEach((a) => a.addEventListener('click', () => document.body.classList.remove('nav-open')));
   const sc = document.getElementById('sbcar'); if (sc) sc.onclick = carInfo;
+  const sel = document.getElementById('sbcarsel'); if (sel) sel.onchange = () => { car = +sel.value; try { localStorage.setItem('car', String(car)); } catch (x) { /* ignore */ } document.body.classList.remove('nav-open'); render(); };
   const tt = document.getElementById('tbtitle'), cur2 = MENU.find((m) => m[0] === active);
   if (tt) tt.textContent = cur2 ? X(cur2[1], cur2[2]) : (active === 'settings' ? X('Setări', 'Settings') : carLabel(c));
 }
@@ -818,7 +843,7 @@ async function pfDiag() {
   try { const dg = await api('/api/profiler/diag'); if (dg.ok && !dg.sim) line.push((dg.synced ? '✓ ' : '… ') + X('Configurația ' + (dg.synced ? 'e aplicată pe mașină' : 'așteaptă să fie preluată de mașină (trebuie să fie trează și online)'), 'Configuration ' + (dg.synced ? 'is applied on the car' : 'is waiting for the car to fetch it (it must be awake and online)'))); } catch (e) { /* ignore */ }
   if ((age == null || age > 20) && Date.now() / 1000 - se.started > 25) line.push('<a href="#" id="pfwake" style="color:var(--gold)">' + X('Trezește mașina', 'Wake the car') + '</a>');
   box.innerHTML = line.join('<br>');
-  const w = $('#pfwake'); if (w) w.onclick = async (e) => { e.preventDefault(); w.textContent = '…'; const pin = getPin(); if (!pin) return; await fetch('/api/cmd/wake', { method: 'POST', headers: { 'X-Pin': pin, 'Content-Type': 'application/json' }, body: JSON.stringify({ car }) }); };
+  const w = $('#pfwake'); if (w) w.onclick = async (e) => { e.preventDefault(); w.textContent = '…'; const pin = await getPin(); if (!pin) return; await fetch('/api/cmd/wake', { method: 'POST', headers: { 'X-Pin': pin, 'Content-Type': 'application/json' }, body: JSON.stringify({ car }) }); };
 }
 let pfDiagT = 0;
 function pfRenderCtl() {
@@ -829,7 +854,7 @@ function pfRenderCtl() {
   if (box.dataset.k === key) return;
   box.dataset.k = key;
   const cards = Object.entries(st.profiles).map(([k, p]) => `<button class="pf-card ${PFSEL === k ? 'on' : ''}" data-pf="${k}" ${se ? 'disabled' : ''}><b>${LANG === 'en' ? p.en : p.ro}</b><small>${p.count} ${X('semnale', 'signals')}</small><span>${pfDescAll()[k] || ''}</span></button>`).join('');
-  setHtml(box, se ? `<div class="card"><div class="row"><div><b>${LANG === 'en' ? st.profiles[se.profile].en : st.profiles[se.profile].ro}</b><small class="mut" style="display:block">${se.fields} ${X('semnale · se oprește automat', 'signals · stops automatically')}</small></div><div class="sp"></div><button class="pf-btn stop" id="pfstop">${X('Oprește', 'Stop')}</button></div>
+  setHtml(box, se ? `<div class="card"><div class="row"><div><b>${LANG === 'en' ? st.profiles[se.profile].en : st.profiles[se.profile].ro}</b><small class="mut" style="display:block">${se.fields} ${X('semnale · se oprește automat', 'signals · stops automatically')}</small></div><div class="sp"></div><button class="pf-btn stop" id="pfstop">${X('Oprește', 'Stop')}</button>${(se.stop_fails || window.__pfStopFail) ? `<button class="pf-btn" id="pfforce" title="${X('Închide sesiunea fără să mai restabilesc configurația mașinii', 'Close the session without restoring the car configuration')}">${X('Forțează', 'Force')}</button>` : ''}</div>
       <div class="note" id="pfdiag" style="margin:8px 0 0"></div>
       ${(se.dropped || []).length ? `<p class="note" style="margin:8px 0 0">${X('Omise (lipsește permisiunea de locație vehicle_location sau nu sunt acceptate): ', 'Skipped (missing vehicle_location scope or not accepted): ')}${esc(se.dropped.slice(0, 8).join(', '))}${se.dropped.length > 8 ? '…' : ''}</p>` : ''}</div>`
     : `<div class="pf-cards">${cards}</div><div class="card" style="margin-top:10px"><div class="row"><label class="cf" style="margin:0;flex:1">${X('Durată', 'Duration')}<select id="pfmin" style="width:100%">${[5, 10, 15, 30].map((m) => `<option value="${m}" ${m === PFMIN ? 'selected' : ''}>${m} min</option>`).join('')}</select></label><button class="pf-btn" id="pfgo" style="margin-top:14px">${X('Pornește sesiunea', 'Start session')}</button></div>
@@ -839,12 +864,13 @@ function pfRenderCtl() {
   box.querySelectorAll('[data-pf]').forEach((b) => b.onclick = () => { PFSEL = b.dataset.pf; pfRenderCtl(); });
   const m = $('#pfmin'); if (m) m.onchange = () => { PFMIN = +m.value; };
   const go = $('#pfgo'); if (go) go.onclick = async () => {
-    const pin = S.public_demo ? '' : getPin(); if (!pin && !S.public_demo) return; const msg = $('#pfmsg'); msg.style.display = ''; msg.className = 'toast busy'; msg.textContent = X('Se configurează mașina…', 'Configuring the car…');
+    const pin = S.public_demo ? '' : await getPin(); if (!pin && !S.public_demo) return; const msg = $('#pfmsg'); msg.style.display = ''; msg.className = 'toast busy'; msg.textContent = X('Se configurează mașina…', 'Configuring the car…');
     try { const r = await fetch('/api/profiler/start', { method: 'POST', headers: { 'X-Pin': pin, 'Content-Type': 'application/json' }, body: JSON.stringify({ car, profile: PFSEL, minutes: PFMIN }) }); const j = await r.json();
-      if (r.status === 403) localStorage.removeItem('pin');
+      if (r.status === 403) pinClear();
       if (j.ok || S.public_demo) { PFS.status = await api('/api/profiler'); pfRenderCtl(); } else { msg.className = 'toast bad'; msg.textContent = '✗ ' + (j.reason || j.error || 'eroare'); } } catch (e) { msg.className = 'toast bad'; msg.textContent = '✗ ' + e.message; }
   };
-  const sp = $('#pfstop'); if (sp) sp.onclick = async () => { const pin = getPin(); if (!pin && !S.public_demo) return; const r = await fetch('/api/profiler/stop', { method: 'POST', headers: { 'X-Pin': pin || '', 'Content-Type': 'application/json' }, body: '{}' }); await r.json(); PFS.status = await api('/api/profiler'); box.dataset.k = ''; pfRenderCtl(); };
+  const sp = $('#pfstop'); if (sp) sp.onclick = async () => { const pin = await getPin(); if (!pin && !S.public_demo) return; const r = await fetch('/api/profiler/stop', { method: 'POST', headers: { 'X-Pin': pin || '', 'Content-Type': 'application/json' }, body: '{}' }); const jr = await r.json(); window.__pfStopFail = !jr.ok; PFS.status = await api('/api/profiler'); box.dataset.k = ''; pfRenderCtl(); };
+  const pfo = $('#pfforce'); if (pfo) pfo.onclick = async () => { if (!confirm(X('Închid sesiunea FĂRĂ să restabilesc configurația mașinii (Sentry)? Verifică după aceea telemetria.', 'Close the session WITHOUT restoring the car configuration (Sentry)? Check the telemetry afterwards.'))) return; const pin = await getPin(); if (!pin) return; const r = await fetch('/api/profiler/stop', { method: 'POST', headers: { 'X-Pin': pin, 'Content-Type': 'application/json' }, body: JSON.stringify({ force: true }) }); const jr = await r.json(); window.__pfStopFail = false; if (jr.warning) alert(jr.warning); PFS.status = await api('/api/profiler'); box.dataset.k = ''; pfRenderCtl(); };
 }
 function pfRenderData() {
   if (!PFS) return; const q2 = (PFFILTER || '').toLowerCase(), fav = lsGet('pf_fav', []);
@@ -994,11 +1020,11 @@ function openPhoto(L, o) {
 const CU = () => { const c = S.currency; return tr(!c || /^(lei|ron)$/i.test(c) ? 'lei' : c); };       // "LEI"/"RON" se afiseaza ca "lei"
 let chF = { p: null, d: 0 }, chRows = [], chKeys = [];
 async function pinPost(path, body) {
-  let pin = ''; try { pin = localStorage.getItem('pin') || ''; } catch (x) { /* ignore */ }
-  if (!pin && window.__pinSet !== false) pin = getPin();
+  let pin = pinGet();
+  if (!pin && window.__pinSet !== false) pin = await getPin();
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Pin': pin || '' }, body: JSON.stringify(body) });
   const j = await r.json().catch(() => ({}));
-  if (r.status === 403 && /PIN/.test(j.reason || '')) { try { localStorage.removeItem('pin'); } catch (x) { /* ignore */ } }
+  if (r.status === 403 && /PIN/.test(j.reason || '')) { pinClear(); }
   return [r.ok && j.ok !== false, j];
 }
 function chCost(c) {

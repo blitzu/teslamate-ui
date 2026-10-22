@@ -120,6 +120,63 @@ class Pure(unittest.TestCase):
         self.assertEqual(S.ble_plan('cop_temp', {'level': 77})[2]['option'], 'High')
 
 
+class Versioning(unittest.TestCase):
+    def setUp(self):
+        S.UPDFILE = os.path.join(TMP, 'update.json')
+        S.APP_VERSION = '1.0.0'
+        S.UPD.update(latest='', url='', notes='', published='', checked=0, error='', notified='')
+        S.CFG.clear()
+        self.sent = []
+        S.notify = lambda kind, title, msg, data=None, log=True: self.sent.append((kind, title))
+
+    def test_ver_tuple_and_newer(self):
+        self.assertEqual(S.ver_tuple('v1.2.3'), (1, 2, 3))
+        self.assertEqual(S.ver_tuple('1.10'), (1, 10, 0))
+        self.assertGreater(S.ver_tuple('1.10.0'), S.ver_tuple('1.9.9'))
+        S.UPD['latest'] = '1.0.1'
+        self.assertTrue(S.update_newer())
+        S.UPD['latest'] = '1.0.0'
+        self.assertFalse(S.update_newer())
+
+    def test_update_check_notifies_once_per_version(self):
+        S._get_text = lambda url, timeout=20: json.dumps(dict(tag_name='v1.2.0', html_url='https://github.com/x/y/releases/tag/v1.2.0', body='note', published_at='2026-10-23T00:00:00Z'))
+        r = S.update_check()
+        self.assertTrue(r['ok'] and r['newer'])
+        self.assertEqual(len(self.sent), 1)
+        S.update_check()
+        self.assertEqual(len(self.sent), 1)                                   # aceeasi versiune: nu se mai notifica
+        S._get_text = lambda url, timeout=20: json.dumps(dict(tag_name='v1.3.0', body=''))
+        S.update_check()
+        self.assertEqual(len(self.sent), 2)
+        self.assertEqual(S.jload(S.UPDFILE, {})['notified'], '1.3.0')          # supravietuieste repornirii
+
+    def test_update_check_error_is_recorded(self):
+        def boom(url, timeout=20):
+            raise OSError('fara retea')
+        S._get_text = boom
+        self.assertFalse(S.update_check()['ok'])
+        self.assertIn('fara retea', S.UPD['error'])
+
+    def test_private_build_does_not_check(self):
+        S.APP_VERSION = '1.0.0-private'
+        self.assertFalse(S.update_enabled())
+        S.APP_VERSION = '1.0.0'
+        S.CFG['update_check'] = '0'
+        self.assertFalse(S.update_enabled())
+
+    def test_apply_needs_webhook_and_token_rule(self):
+        self.assertFalse(S.update_apply()['ok'])
+        calls = []
+        S.http = lambda url, data=None, headers=None, **k: (calls.append((url, headers)) or (200, {}))
+        S.CFG.update(update_webhook='http://watchtower:8080/v1/update', update_token='tok')
+        self.assertTrue(S.update_apply()['ok'])
+        self.assertEqual(calls[0][1], {'Authorization': 'Bearer tok'})
+        S.CFGFILE = os.path.join(TMP, 'cfg2.json')
+        ok, err = S.cfg_update({'update_webhook': 'http://evil.example/x'})
+        self.assertFalse(ok)
+        self.assertIn('tokenul', err)
+
+
 def start(env_extra):
     env = dict(os.environ, PORT='4177', PUBLIC_PORT='4176', DATABASE_HOST='127.0.0.1', DATABASE_PASS='x', DATA_DIR=tempfile.mkdtemp(prefix='tesla-ui-srv-'), **env_extra)
     env.pop('DEMO_ONLY', None)
@@ -185,6 +242,19 @@ class HttpOpen(unittest.TestCase):
         self.assertIn(b' 400 ', raw_status(['POST /api/notify/test HTTP/1.0', 'Content-Type: application/json', 'Content-Length: -1']))
         self.assertIn(b' 400 ', raw_status(['POST /api/notify/test HTTP/1.0', 'Content-Type: application/json', 'Content-Length: 2097152']))
         self.assertEqual(req('POST', '/api/notify/test', body=b'{}', headers={'Content-Type': 'text/plain'})[0], 415)
+
+    def test_host_and_origin_checks(self):
+        self.assertEqual(req('GET', '/api/health', headers={'Host': 'evil.example.com'})[0], 421)                  # DNS rebinding
+        self.assertEqual(req('GET', '/api/health', headers={'Host': '192.168.1.5:4100'})[0], 503)                  # IP: acceptat (503 = fara DB in test)
+        self.assertEqual(req('GET', '/api/health', headers={'Host': 'casa'})[0], 503)                              # nume simplu: acceptat
+        self.assertNotEqual(req('GET', '/api/health', headers={'Host': 'masina.exemplu.ro', 'Cf-Ray': 'x'})[0], 421)   # prin Cloudflare nu se verifica
+        st, _, _ = req('POST', '/api/notify/test', body={}, headers={'Origin': 'http://evil.example.com'})
+        self.assertEqual(st, 403)
+
+    def test_version_endpoint(self):
+        st, d, _ = req('GET', '/api/version')
+        self.assertEqual(st, 200)
+        self.assertIn('version', json.loads(d))
 
     def test_security_headers(self):
         st, _, h = req('GET', '/')

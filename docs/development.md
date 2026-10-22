@@ -37,6 +37,7 @@ Without `DEMO_ONLY`, but with no reachable TeslaMate database, the app also fall
 | `GET/POST /api/config`, `POST /api/config/test`, `GET /api/config/ha_entities` | settings from the app (admin; changes need the PIN) |
 | `POST /api/import/tessie`, `GET /api/import/tessie/status` | Tessie import (dry-run, import, undo) |
 | `GET /api/profiler`, `/api/profiler/stream`, `/api/profiler/diag`, `/api/profiler/export.csv`, `POST /api/profiler/start`, `/stop`, `/ingest` | live telemetry profiler |
+| `GET /api/version`, `/api/changelog`, `POST /api/update/check`, `POST /api/update/apply` | installed/latest version and release notes, entries of `CHANGELOG.md`, check now, call the configured updater (admin + PIN) |
 | `GET /api/health` | `{ok, db, mqtt, threads}`; 503 when the database does not answer (used by the Docker `HEALTHCHECK`) |
 | `GET /api/overview`, `/api/battery` | statistics |
 | `GET /api/vdata?car=` | climate/charge settings and schedules read from the car (only when TeslaMate says it is online; never wakes it) |

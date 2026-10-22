@@ -77,6 +77,10 @@ Sessions made with the app password are bound to that password: **changing the p
 * Commands, wrong PINs and wrong passwords leave an `audit:` line (with role and address) in `docker compose logs ui`.
 * For least privilege on the database use `./scripts/create-db-user.sh` (read-only role).
 
+## Host and origin checks
+
+From the local network (requests that did not come through Cloudflare or a proxy) the app only answers when the `Host` header is an IP address, `localhost`, a single-label or `.local`/`.lan` name, the host of `APP_URL`, or listed in `ALLOWED_HOSTS` (comma-separated). A malicious web page that makes its own domain resolve to your home IP (DNS rebinding) is therefore refused with `421`. `POST`s from a browser must carry an `Origin` equal to the page they come from.
+
 ## Hardening checklist
 
 * Back up `fleet/private-key.pem` offline; if it leaks, remove the virtual key from the car (Controls → Locks → Keys) and regenerate.

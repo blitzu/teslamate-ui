@@ -373,9 +373,115 @@ def fuel_lookup(book, day, manual=0.0):
 
 
 def _get_text(url, timeout=20):
-    req = urllib.request.Request(url, headers={'User-Agent': 'teslamate-ui/1.0 (+fuel price lookup)', 'Accept': 'text/plain,application/json'})
+    req = urllib.request.Request(url, headers={'User-Agent': 'teslamate-ui/%s' % APP_VERSION, 'Accept': 'text/plain,application/json'})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read(400_000).decode('utf-8', 'replace')
+
+
+# ---------------------------------------------------------------- versiune si actualizari (GitHub Releases)
+def _read_version():
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'VERSION')) as f:
+            return f.read().strip() or '0.0.0'
+    except OSError:
+        return '0.0.0'
+
+
+APP_VERSION = _read_version()                        # semver; "-private" la sfarsit = build local fara verificare de versiuni noi
+BUILD_COMMIT = (os.environ.get('BUILD_COMMIT') or '')[:7]
+UPDATE_REPO = os.environ.get('UPDATE_REPO', 'blitzu/teslamate-ui')
+UPDFILE = DATA_DIR + '/update.json'
+UPD = dict(latest='', url='', notes='', published='', checked=0, error='', notified='')
+ULOCK = threading.Lock()
+
+
+def ver_tuple(v):
+    m = re.match(r'^\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?', str(v or ''))
+    return tuple(int(x or 0) for x in m.groups()) if m else (0, 0, 0)
+
+
+def update_cfg_on():
+    return str(cget('update_check', 'UPDATE_CHECK', '1')).lower() in ('1', 'true')
+
+
+def update_enabled():
+    return update_cfg_on() and not APP_VERSION.endswith('-private')
+
+
+def update_newer():
+    return bool(UPD['latest']) and ver_tuple(UPD['latest']) > ver_tuple(APP_VERSION)
+
+
+def update_check():
+    """Intreaba GitHub care e ultimul release (o cerere fara date personale); notifica o singura data per versiune noua."""
+    try:
+        r = json.loads(_get_text('https://api.github.com/repos/%s/releases/latest' % UPDATE_REPO, 20))
+        tag = str(r.get('tag_name') or '')
+        if not tag:
+            raise ValueError('niciun release publicat')
+        with ULOCK:
+            UPD.update(latest=tag.lstrip('v'), url=str(r.get('html_url') or ''), notes=str(r.get('body') or '')[:2000], published=str(r.get('published_at') or ''), checked=int(time.time()), error='')
+            newer = update_newer()
+            first = newer and UPD['notified'] != UPD['latest']
+            if first:
+                UPD['notified'] = UPD['latest']
+            jsave(UPDFILE, dict(UPD))
+        if first and nset_load().get('app_update', True):
+            notify('app_update', '🆕 Versiune nouă: v%s' % UPD['latest'], 'Ai v%s. Deschide Setări → Actualizări.' % APP_VERSION)
+        return dict(ok=True, latest=UPD['latest'], newer=newer)
+    except Exception as e:  # noqa
+        with ULOCK:
+            UPD.update(error=str(e)[:200], checked=int(time.time()))
+        log('verificare versiune: %s' % e)
+        return dict(ok=False, reason=str(e)[:200])
+
+
+def update_loop():
+    time.sleep(90)
+    while True:
+        if update_enabled():
+            update_check()
+        time.sleep(12 * 3600)
+
+
+def update_apply():
+    """Cere actualizarea unui updater extern (ex. Watchtower HTTP API): aplicatia nu are acces la Docker si nu isi poate inlocui singura containerul."""
+    url = str(cget('update_webhook', 'UPDATE_WEBHOOK', ''))
+    tok = str(cget('update_token', 'UPDATE_TOKEN', ''))
+    if not url:
+        return dict(ok=False, reason='Nu e configurat niciun webhook de actualizare (Setări → Actualizări).')
+    try:
+        c, r = http(url, None, headers=({'Authorization': 'Bearer ' + tok} if tok else {}), method='POST', timeout=300)
+    except Exception as e:  # noqa
+        return dict(ok=True, reason='Cererea a fost trimisă; conexiunea s-a întrerupt (normal dacă aplicația se repornește): %s' % str(e)[:120])
+    return dict(ok=c < 300, code=c, reason='' if c < 300 else 'Updater-ul a răspuns %s.' % c)
+
+
+def changelog_entries(limit=8):
+    """Intrarile din CHANGELOG.md (de langa server.py): [{version, date, notes}], cele mai noi primele."""
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'CHANGELOG.md'), encoding='utf-8') as f:
+            txt = f.read()
+    except OSError:
+        return []
+    out = []
+    for m in re.finditer(r'^## +v?(\d+(?:\.\d+){0,2})(?: *[-–—] *([0-9-]+))?[ \t]*\n(.*?)(?=^## |\Z)', txt, re.M | re.S):
+        out.append(dict(version=m.group(1), date=m.group(2) or '', notes=m.group(3).strip()))
+    return out[:limit]
+
+
+def version_info():
+    with ULOCK:
+        u = dict(UPD)
+    return dict(version=APP_VERSION, commit=BUILD_COMMIT, repo=UPDATE_REPO, check=update_cfg_on(), private=APP_VERSION.endswith('-private'), latest=u['latest'], newer=update_newer(),
+                url=u['url'], notes=u['notes'], published=u['published'], checked=u['checked'], error=u['error'], can_apply=bool(cget('update_webhook', 'UPDATE_WEBHOOK', '')))
+
+
+def app_brief():
+    return dict(version=APP_VERSION, commit=BUILD_COMMIT, latest=UPD['latest'] if (update_enabled() and update_newer()) else '')
+
+
+UPD.update({k: v for k, v in (jload(UPDFILE, {}) or {}).items() if k in UPD})
 
 
 def parse_llms(txt):
@@ -1491,8 +1597,8 @@ def _vehicle_data(car, force=False):
 # ---------------------------------------------------------------- configurare din aplicatie (/data/config.json; suprascrie valorile din .env)
 CFGFILE = DATA_DIR + '/config.json'
 CFG = {}
-CFG_SECRETS = ('fleet_secret', 'pin', 'ha_token', 'notify_webhook', 'app_password', 'tessie_token')
-CFG_KEYS = CFG_SECRETS + ('app_url', 'price_grid', 'fleet_id', 'fleet_domain', 'fleet_base', 'ha_url', 'ha_prefix', 'ha_ble', 'ha_grid', 'ha_pv', 'currency', 'ice_l100', 'fuel_type', 'fuel_price', 'fuel_country', 'link_tm', 'link_gf', 'acc_team', 'acc_aud', 'acc_email', 'roles')
+CFG_SECRETS = ('fleet_secret', 'pin', 'ha_token', 'notify_webhook', 'app_password', 'tessie_token', 'update_token')
+CFG_KEYS = CFG_SECRETS + ('update_check', 'update_webhook', 'app_url', 'price_grid', 'fleet_id', 'fleet_domain', 'fleet_base', 'ha_url', 'ha_prefix', 'ha_ble', 'ha_grid', 'ha_pv', 'currency', 'ice_l100', 'fuel_type', 'fuel_price', 'fuel_country', 'link_tm', 'link_gf', 'acc_team', 'acc_aud', 'acc_email', 'roles')
 EU_BASE = 'https://fleet-api.prd.eu.vn.cloud.tesla.com'
 _tz = os.environ.get('TZ', '') or 'UTC'
 LOCAL_TZ = _tz if re.fullmatch(r'[A-Za-z0-9_+\-/]{1,40}', _tz) else 'UTC'      # zilele din statistici se grupeaza pe ora locala, nu UTC
@@ -1559,6 +1665,7 @@ def cfg_public():
         fleet=dict(id=g('fleet_id', 'FLEET_CLIENT_ID'), domain=g('fleet_domain', 'FLEET_DOMAIN'), base=g('fleet_base', 'FLEET_BASE', EU_BASE), secret_set=bool(FL['secret']), pin_set=bool(FL['pin'])),
         ha=dict(url=HA['url'], token_set=bool(HA['token']), prefix=HA['prefix'], ble=HA['ble'], grid=HA['grid'], pv=HA['pv']),
         notify=dict(webhook_set=bool(NHOOK)), tessie=dict(token_set=bool(cget('tessie_token', 'TESSIE_TOKEN'))),
+        update=dict(check=update_cfg_on(), webhook=cget('update_webhook', 'UPDATE_WEBHOOK', ''), token_set=bool(cget('update_token', 'UPDATE_TOKEN', '')), private=APP_VERSION.endswith('-private')),
         display=dict(app_url=APPURL, price_grid=cget('price_grid', 'PRICE_GRID', ''), currency=CURRENCY, ice_l100=cget('ice_l100', 'ICE_L100', ''), fuel_type=fuel_conf()['type'], fuel_price=cget('fuel_price', 'FUEL_PRICE', ''), fuel_country=fuel_conf()['country'], teslamate=LINKS['teslamate'], grafana=LINKS['grafana']),
         access=dict(team=ACCESS['team'], aud=ACCESS['aud'], email=ACCESS['email'], roles=str(cget('roles', 'ROLES')), password_set=bool(AUTH['pw'])))
 
@@ -1566,6 +1673,10 @@ def cfg_public():
 def cfg_update(b):
     errs = []
     new = dict(CFG)
+    if 'update_webhook' in b:                          # idem pentru tokenul updater-ului
+        nw = str(b['update_webhook'] or '').strip()
+        if nw and nw != str(cget('update_webhook', 'UPDATE_WEBHOOK', '')) and cget('update_token', 'UPDATE_TOKEN', '') and not str(b.get('update_token') or '').strip():
+            errs.append('Ai schimbat adresa updater-ului: introdu din nou și tokenul.')
     if 'ha_url' in b:                                  # tokenul HA nu trebuie sa ajunga la un alt server fara sa-l introduci din nou
         nu = str(b['ha_url'] or '').strip().rstrip('/')
         if nu and nu != str(HA['url']).rstrip('/') and HA['token'] and not str(b.get('ha_token') or '').strip():
@@ -1580,7 +1691,7 @@ def cfg_update(b):
         if v == '__clear__':
             new.pop(k, None)
             continue
-        if k in ('ha_url', 'link_tm', 'link_gf', 'app_url') and v and not v.startswith(('http://', 'https://')):
+        if k in ('ha_url', 'link_tm', 'link_gf', 'app_url', 'update_webhook') and v and not v.startswith(('http://', 'https://')):
             errs.append('%s trebuie să înceapă cu http:// sau https://' % k)
         if k == 'notify_webhook' and not v.startswith(('http://', 'https://')):
             errs.append('webhook invalid')
@@ -1594,6 +1705,8 @@ def cfg_update(b):
                 v = v.replace(',', '.')
             except ValueError:
                 errs.append('valoare invalidă pentru %s' % k)
+        if k == 'update_check' and v not in ('', '0', '1'):
+            errs.append('update_check invalid')
         if k == 'fuel_type' and v not in ('', 'euro95', 'diesel', 'manual'):
             errs.append('tip combustibil invalid')
         if k == 'fuel_country' and v and not re.fullmatch(r'[A-Za-z -]{2,40}', v):
@@ -2048,7 +2161,7 @@ def imp_action(car, body):
 NFILE = DATA_DIR + '/notify.json'
 NHOOK = os.environ.get('NOTIFY_WEBHOOK', '')
 APPURL = os.environ.get('APP_URL', '').rstrip('/')
-KIND_ROUTE = dict(plugged='#/charges', charge_done='#/charges', door='#/car', update='#/car', low_batt='#/car', rule='#/auto', live='#/car', test='#/notifications')
+KIND_ROUTE = dict(plugged='#/charges', charge_done='#/charges', door='#/car', update='#/car', low_batt='#/car', rule='#/auto', live='#/car', test='#/notifications', app_update='#/settings')
 
 
 KIND_ACTIONS = {           # butoane pe notificarile obisnuite (Live Activity nu are butoane); executate de automatizarea din HA prin ESP32 BLE
@@ -2060,7 +2173,7 @@ KIND_ACTIONS = {           # butoane pe notificarile obisnuite (Live Activity nu
 
 def app_link(kind='live'):
     return (APPURL + '/' + KIND_ROUTE.get(kind, '#/car')) if APPURL else None
-NDEFAULT = dict(plugged=True, charge_done=True, door=True, update=True, low_batt=True, live=True, live_drive=False, actions=True)
+NDEFAULT = dict(plugged=True, charge_done=True, door=True, update=True, low_batt=True, live=True, live_drive=False, actions=True, app_update=True)
 EVENTS = []          # cele mai noi primele, max 60
 NLOCK = threading.Lock()
 LAST_SENT = {}
@@ -2473,9 +2586,9 @@ def api_state():
             c['image'] = car_image(c)
             c['live_age'] = (time.time() - LIVE_TS[c['id']]) if c['id'] in LIVE_TS else None
             out.append(c)
-        return dict(demo=False, cars=out, links=LINKS, mqtt=bool(LIVE), lan_open=not AUTH['pw'] and not DEMO_ONLY, currency=CURRENCY)
+        return dict(demo=False, cars=out, links=LINKS, mqtt=bool(LIVE), lan_open=not AUTH['pw'] and not DEMO_ONLY, currency=CURRENCY, app=app_brief())
     return dict(demo=True, public_demo=DEMO_ONLY, cars=[dict(DEMO_CAR, live=DEMO_LIVE, live_age=0, image=car_image(DEMO_CAR), sleep=DEMO_SLEEP)],
-                links=({} if DEMO_ONLY else LINKS), mqtt=False, db_error=(cl is None and not DEMO_ONLY), lan_open=not AUTH['pw'] and not DEMO_ONLY, currency=CURRENCY)
+                links=({} if DEMO_ONLY else LINKS), mqtt=False, db_error=(cl is None and not DEMO_ONLY), lan_open=not AUTH['pw'] and not DEMO_ONLY, currency=CURRENCY, app=app_brief())
 
 
 CSP = os.environ.get('CSP') or (
@@ -2512,6 +2625,27 @@ class H(BaseHTTPRequestHandler):
 
     def via_internet(self):
         return any(k in self.headers for k in ('Cf-Connecting-Ip', 'Cf-Ray', 'Cf-Visitor', 'X-Forwarded-For'))
+
+    def host_ok(self):
+        """Din LAN (fara header-ele Cloudflare) accepta doar Host = IP, localhost, nume simplu/.local/.lan sau din ALLOWED_HOSTS / APP_URL: un domeniu strain care a fost rezolvat la IP-ul tau local (DNS rebinding) e refuzat."""
+        if DEMO_ONLY or self.via_internet():
+            return True
+        h = (self.headers.get('Host') or '').strip().lower()
+        host = (h.split(']')[0] + ']') if h.startswith('[') else h.rsplit(':', 1)[0] if ':' in h else h
+        host = host.strip('[]')
+        if not host or re.fullmatch(r'[0-9.]+', host) or ':' in host or '.' not in host or host == 'localhost' or host.endswith(('.localhost', '.local', '.lan', '.home.arpa', '.internal')):
+            return True
+        allowed = {x.strip().lower() for x in str(os.environ.get('ALLOWED_HOSTS', '')).split(',') if x.strip()}
+        if APPURL:
+            allowed.add((urlparse(APPURL).hostname or '').lower())
+        return host in allowed
+
+    def origin_ok(self):
+        """POST din browser: Origin (daca exista) trebuie sa fie chiar aplicatia. Prin Cloudflare Host poate fi rescris de tunel, deci acolo nu se verifica."""
+        o = self.headers.get('Origin')
+        if not o or DEMO_ONLY or self.via_internet():
+            return True
+        return (urlparse(o).netloc or '').lower() == (self.headers.get('Host') or '').strip().lower()
 
     def client_ip(self):
         return self.headers.get('Cf-Connecting-Ip') or self.client_address[0]     # X-Forwarded-For nu mai e crezut (il poate scrie orice client)
@@ -2622,6 +2756,8 @@ class H(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         a = {k: v[0] for k, v in parse_qs(u.query).items()}
         p = u.path
+        if not self.host_ok():
+            return self.send_json(dict(error='host', reason='Adresă necunoscută. Adaugă-o în ALLOWED_HOSTS sau intră prin IP.'), 421)
         if p == '/login':
             return self.page(200, login_html(self.lang()))
         if p == '/logout':
@@ -2637,7 +2773,7 @@ class H(BaseHTTPRequestHandler):
         try:
             if p == '/api/health':
                 db = True if DEMO_ONLY else (has_cars() is not None)
-                return self.send_json(dict(ok=db, db=db, mqtt=(MQ_STATE['up'] if MQ['host'] else None), threads={k: t.is_alive() for k, t in THREADS.items()}), 200 if db else 503)
+                return self.send_json(dict(ok=db, db=db, version=APP_VERSION, mqtt=(MQ_STATE['up'] if MQ['host'] else None), threads={k: t.is_alive() for k, t in THREADS.items()}), 200 if db else 503)
             if p == '/api/state':
                 d = api_state()
                 d['role'] = self.role
@@ -2681,6 +2817,10 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         u = urlparse(self.path)
+        if not self.host_ok():
+            return self.send_json(dict(ok=False, reason='Adresă necunoscută. Adaugă-o în ALLOWED_HOSTS sau intră prin IP.'), 421)
+        if not self.origin_ok():
+            return self.send_json(dict(ok=False, reason='Origine interzisă.'), 403)
         if u.path == '/api/profiler/ingest':
             tok = os.environ.get('INGEST_TOKEN', '')
             if not tok or not secrets.compare_digest(self.headers.get('X-Ingest-Token', '').encode('utf-8', 'replace'), tok.encode('utf-8', 'replace')):
@@ -2750,6 +2890,12 @@ class H(BaseHTTPRequestHandler):
                     return self.send_json(dict(ok=False, reason='Valoare invalidă (%s)' % e), 400)
             if u.path == '/api/fuel/refresh':
                 return self.send_json(fuel_fetch())
+            if u.path == '/api/update/check':
+                return self.send_json(dict(update_check(), info=version_info()))
+            if u.path == '/api/update/apply':
+                res = update_apply()
+                log('audit: update apply rol=%s ip=%s ok=%s' % (self.role, self.client_ip(), res.get('ok')))
+                return self.send_json(res)
             if u.path == '/api/profiler/start':
                 return self.send_json(pf_start(int(body.get('car', 1)), body.get('profile'), body.get('minutes', 5)))
             if u.path == '/api/profiler/stop':
@@ -2817,6 +2963,10 @@ class H(BaseHTTPRequestHandler):
             return demo_overview(days) if demo else overview(car, days)
         if p == '/api/fuel':
             return fuel_info()
+        if p == '/api/version':
+            return version_info()
+        if p == '/api/changelog':
+            return changelog_entries(int(a.get('limit', 8)))
         if p == '/api/battery':
             return demo_battery() if demo else battery(car)
         if p == '/api/sleep':
@@ -3002,6 +3152,6 @@ def supervise(fn):
 if __name__ == '__main__':
     log('pornit: demo=%s mqtt=%s ha=%s pin=%s parola=%s access=%s' % (DEMO_ONLY, bool(MQ['host']), bool(HA['url']), bool(FL['pin']), bool(AUTH['pw']), bool(ACCESS['team'])))
     if not DEMO_ONLY:
-        for fn in (mqtt_thread, rules_clock, pf_watch, la_loop, fuel_loop, serve_public):
+        for fn in (mqtt_thread, rules_clock, pf_watch, la_loop, fuel_loop, update_loop, serve_public):
             supervise(fn)
     ThreadingHTTPServer(('0.0.0.0', PORT), H).serve_forever()

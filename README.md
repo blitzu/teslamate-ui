@@ -108,6 +108,7 @@ Set `NOTIFY_WEBHOOK` — see **[docs/notifications.md](docs/notifications.md)** 
 | Open-Meteo (`api.open-meteo.com`, `archive-api.open-meteo.com`) | weather in the route replay | latitude/longitude rounded to 0.1° and the date | browser |
 | fuel-prices.eu | daily national fuel price for the ICE-car comparison | only the country name | server |
 | frankfurter.dev (ECB rates) | EUR → your currency | only the currency code | server |
+| GitHub (`api.github.com`) | check for a new release, twice a day (can be switched off) | nothing about you or your car (an anonymous request) | server |
 | Tessie API (`api.tessie.com`) | one-off history import (only if you run it) | your Tessie token | server |
 | Cloudflare / your Home Assistant | only if you configure them | see the docs | server |
 
@@ -126,6 +127,8 @@ Leaflet and MapLibre GL JS are **bundled** (`static/vendor/`), not loaded from a
 * [docs/security.md](docs/security.md) — internet exposure, PIN, passwords, Cloudflare Access
 * [docs/home-assistant.md](docs/home-assistant.md) — BLE commands, energy source, automations
 * [docs/profiler.md](docs/profiler.md) - live telemetry profiler
+* [docs/updates.md](docs/updates.md) - versions, new-version notifications, updating and automatic updates
+* [CHANGELOG.md](CHANGELOG.md) - what changed in each version
 * [docs/costs.md](docs/costs.md) - editable charge costs, providers, ICE-car comparison and the daily fuel price
 * [docs/import-tessie.md](docs/import-tessie.md) - import your Tessie history
 * [docs/notifications.md](docs/notifications.md) — webhook and Home Assistant example

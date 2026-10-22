@@ -171,6 +171,7 @@ function pageCar() {
     L.is_climate_on != null ? chip(L.is_climate_on ? 'Climatizare pornită' : 'Climatizare oprită', L.is_climate_on) : '',
     L.plugged_in != null ? chip(L.plugged_in ? 'Conectată la priză' : 'Neconectată', L.plugged_in) : '',
     (S.lan_open && S.role === 'admin') ? `<a href="#/settings" class="chip alert" style="text-decoration:none"><i></i>${X('Rețeaua locală nu are parolă — Setări', 'Local network has no password — Settings')}</a>` : '',
+    (S.app && S.app.latest && S.role === 'admin') ? `<a href="#/settings" class="chip" style="text-decoration:none"><i></i>${X('Versiune nouă', 'New version')} v${esc(S.app.latest)}</a>` : '',
     (L.doors_open || L.windows_open || L.trunk_open || L.frunk_open) ? `<span id="openchips">${openChips(L, (S.opens || {})[c.id]) || chip('Ceva e deschis', false, true)}</span>` : '',
     L.update_available ? chip(tr('Update disponibil') + (L.update_version ? ' ' + esc(L.update_version) : ''), false) : '',
     L.healthy === false ? chip('Conexiune TeslaMate instabilă', false, true) : '',
@@ -336,7 +337,20 @@ async function statsBody(embed) {
 
 
 /* ---------- comenzi (Tesla Fleet API prin backend) ---------- */
-const getPin = (force) => { let p = localStorage.getItem('pin'); if (!p || force) { p = prompt(tr('PIN aplicație:')) || ''; if (p) localStorage.setItem('pin', p); } return p; };
+const pinGet = () => { try { return sessionStorage.getItem('pin') || localStorage.getItem('pin') || ''; } catch (e) { return ''; } };
+const pinClear = () => { try { sessionStorage.removeItem('pin'); localStorage.removeItem('pin'); } catch (e) { /* ignore */ } };
+const pinSave = (p, remember) => { pinClear(); try { (remember ? localStorage : sessionStorage).setItem('pin', p); } catch (e) { /* ignore */ } };
+const getPin = (force) => new Promise((res) => {
+  const have = pinGet(); if (have && !force) { res(have); return; }
+  const m = document.createElement('div'); m.className = 'pinmod'; m.setAttribute('role', 'dialog'); m.setAttribute('aria-modal', 'true');
+  m.innerHTML = `<form class="pincard"><h3>${tr('PIN aplicație:')}</h3><input id="pinin" type="password" inputmode="numeric" autocomplete="off" aria-label="PIN"><label class="pinrm"><input type="checkbox" id="pinrm"> ${X('Ține minte pe acest dispozitiv', 'Remember on this device')}</label><div class="pinbtn"><button type="button" id="pincx">${X('Anulează', 'Cancel')}</button><button type="submit">OK</button></div></form>`;
+  document.body.appendChild(m);
+  const done = (v) => { m.remove(); res(v); };
+  m.querySelector('form').onsubmit = (e) => { e.preventDefault(); const v = m.querySelector('#pinin').value.trim(); if (v) pinSave(v, m.querySelector('#pinrm').checked); done(v); };
+  m.querySelector('#pincx').onclick = () => done('');
+  m.addEventListener('keydown', (e) => { if (e.key === 'Escape') done(''); });
+  m.querySelector('#pinin').focus();
+});
 const IC = {
   lock: 'M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z',
   unlock: 'M12 17c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm6-9h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h1.9c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm0 12H6V10h12v10z',
@@ -353,14 +367,14 @@ const IC = {
 const ico = (k) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${IC[k]}"/></svg>`;
 async function sendCmd(name, label, arg, tile) {
   if (S.public_demo) return;
-  const pin = getPin(); if (!pin) return;
+  const pin = await getPin(); if (!pin) return;
   label = tr(label);
   const msg = (t, cls) => { window.__cm = [t, cls, Date.now()]; const m = $('#cmdmsg'); if (m) { m.textContent = t; m.className = 'toast ' + (cls || ''); } };
   msg(label + '…', 'busy'); if (tile) tile.classList.add('busy');
   try {
     const r = await fetch('/api/cmd/' + name, { method: 'POST', headers: { 'X-Pin': pin, 'Content-Type': 'application/json' }, body: JSON.stringify({ car, arg }) });
     const j = await r.json();
-    if (r.status === 403) { localStorage.removeItem('pin'); msg(tr('PIN greșit.'), 'bad'); return; }
+    if (r.status === 403) { pinClear(); msg(tr('PIN greșit.'), 'bad'); return; }
     msg(j.ok ? '✓ ' + label + (j.via === 'ble' ? ' · BLE' : '') : '✗ ' + label + (j.reason ? ' — ' + j.reason : ''), j.ok ? 'ok' : 'bad');
   } catch (e) { msg('✗ ' + label + ' — ' + e.message, 'bad'); }
   finally { if (tile) tile.classList.remove('busy'); }
@@ -383,12 +397,12 @@ async function renderCmds() {
 const rg = $('#fl-reg');
   if (rg) rg.onclick = async (e) => {
     e.preventDefault();
-    const pin = getPin(); if (!pin) return;
+    const pin = await getPin(); if (!pin) return;
     const m = $('#fl-msg'); if (m) m.textContent = tr('Se înregistrează…');
     try {
       const r = await fetch('/api/fleet/register', { method: 'POST', headers: { 'X-Pin': pin, 'Content-Type': 'application/json' }, body: '{}' });
       const j = await r.json();
-      if (r.status === 403) { localStorage.removeItem('pin'); if (m) m.textContent = tr('PIN greșit.'); return; }
+      if (r.status === 403) { pinClear(); if (m) m.textContent = tr('PIN greșit.'); return; }
       if (m) m.textContent = j.ok ? tr('Domeniu înregistrat.') : ('✗ ' + (j.step || '') + ' ' + (j.code || '') + ' ' + JSON.stringify(j.detail || '').slice(0, 240));
       if (j.ok) setTimeout(renderCmds, 800);
     } catch (x) { if (m) m.textContent = '✗ ' + x.message; }
@@ -441,9 +455,12 @@ const ICON = {
 const TABS = [['car', 'Mașină'], ['climate', 'Clima'], ['drives', 'Curse'], ['charges', 'Încărcări'], ['stats', 'Statistici'], ['settings', 'Setări']];
 function renderNav(active) { drawNav(active); }
 let renderSeq = 0;
+const SCROLL = {};                                           // pozitia listelor (Curse / Incarcari / Activitate) cand intri intr-un detaliu
 async function render() {
   const h = location.hash.replace(/^#\/?/, '') || 'car';
   const [p, arg] = h.split('/');
+  const prevRoute = route;
+  if (['drives', 'charges', 'activity'].includes(prevRoute) && p !== prevRoute) SCROLL[prevRoute] = scrollY;
   route = p;
   if (p !== 'trip' && typeof stopReplay === 'function') stopReplay();            // si cand reluarea inca se incarca (RP nu e setat)
   if (p !== 'profiler' && typeof pfClose === 'function') pfClose();
@@ -488,14 +505,15 @@ async function render() {
   if (p === 'auto') afterAuto();
   if (p === 'settings') afterSettings();
   if (p === 'charge') { afterChargeSolar(arg); afterChargeEdit(); }
-  if (p === 'car') scrollTo(0, y); else if (seq === renderSeq && !window.__keep) scrollTo(0, 0);
+  const back = ['drive', 'charge', 'trip'].includes(prevRoute) && ['drives', 'charges', 'activity'].includes(p) && SCROLL[p] != null;
+  if (p === 'car') scrollTo(0, y); else if (seq === renderSeq && !window.__keep) scrollTo(0, back ? SCROLL[p] : 0);
 }
 addEventListener('hashchange', render);
 
 /* ---------- live ---------- */
 let t = null, rrFirst = 0, sseUp = false;
 function carSoon(c) {                                   // redesenare cu throttle: cel mult 2 s de asteptare, chiar daca mesajele vin continuu
-  if (route !== 'car') return;
+  if (route !== 'car' || !c || c.id !== car) return;
   const now = Date.now(); if (!t) rrFirst = now;
   clearTimeout(t);
   t = setTimeout(() => { t = null; const y = scrollY; setHtml(view, pageCar()); drawMap($('#map'), c.live); afterCar(); scrollTo(0, y); }, Math.max(0, Math.min(400, 2000 - (now - rrFirst))));
@@ -506,7 +524,7 @@ async function refreshState() {                         // dupa ce iOS suspenda 
     if (n.demo || S.demo) return;
     S.lan_open = n.lan_open; S.role = n.role;
     n.cars.forEach((nc) => { const c = S.cars.find((x) => x.id === nc.id); if (!c) return; c.sleep = nc.sleep; c.live = Object.assign(c.live || {}, nc.live || {}); c.live_age = nc.live_age; });
-    if (S.cars[0]) carSoon(S.cars[0]);
+    carSoon(cur());
   } catch (e) { /* ignore */ }
 }
 function live() {
@@ -521,7 +539,7 @@ function live() {
   };
 }
 async function boot() {
-  try { S = await api('/api/state'); car = S.cars[0]?.id || 1; } catch (e) { /* ignore */ }
+  try { S = await api('/api/state'); car = S.cars[0]?.id || 1; const sv = +(localStorage.getItem('car') || 0); if (S.cars.some((x) => x.id === sv)) car = sv; } catch (e) { /* ignore */ }
   document.title = (S.cars[0]?.name || 'Tesla') + (S.demo ? ' · demo' : '');
   render();
   live();

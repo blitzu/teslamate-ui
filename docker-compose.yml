@@ -3,6 +3,9 @@
 services:
   ui:
     build: .
+    image: ghcr.io/blitzu/teslamate-ui:${APP_TAG:-latest}     # published by the Release workflow; `docker compose pull` updates it
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"           # lets Watchtower (or a similar updater) keep it current, see docs/updates.md
     container_name: tessie-ui
     restart: unless-stopped
     read_only: true
@@ -50,6 +53,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.proxy
+    image: ghcr.io/blitzu/teslamate-ui-proxy:${APP_TAG:-latest}
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
     container_name: tessie-fleet-proxy
     restart: unless-stopped
     read_only: true
