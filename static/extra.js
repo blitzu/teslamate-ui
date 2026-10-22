@@ -250,12 +250,13 @@ async function startReplay(id) {
   <div class="rp-ctl"><button class="rp-btn" id="rpp" aria-label="play">❚❚</button><input type="range" id="rps" min="0" max="1000" value="0"><button class="rp-btn" id="rpr" aria-label="record" title="Video">⏺</button><button class="rp-btn wide" id="rpv">1×</button></div>
   <div class="rp-end" id="rpe"></div>`;
   document.body.appendChild(root);
+  root.querySelector('#rpi').classList.add('show');                     // "Se incarca harta…" vizibil de la inceput
   const done = () => { stopReplay(); location.hash = '#/drive/' + id; };
   root.querySelector('#rpx').onclick = done;
   let data;
-  try { [data] = await Promise.all([api('/api/trip/' + id + '?car=' + car), loadMapLibre()]); } catch (e) { root.querySelector('#rpl').textContent = '✗ ' + e.message; return; }
+  try { [data] = await Promise.all([api('/api/trip/' + id + '?car=' + car), loadMapLibre()]); } catch (e) { root.querySelector('#rpl').textContent = '✗ ' + e.message; root.querySelector('#rpi').classList.add('show'); return; }
   if (!document.getElementById('rp')) return;
-  if (!data.segments.some((s) => s.points.length > 1)) { root.querySelector('#rpl').textContent = X('Nu există puncte GPS pentru această cursă.', 'No GPS points for this drive.'); return; }
+  if (!data.segments.some((s) => s.points.length > 1)) { root.querySelector('#rpl').textContent = X('Nu există puncte GPS pentru această cursă.', 'No GPS points for this drive.'); root.querySelector('#rpi').classList.add('show'); return; }
   const T0 = buildTL(data), tl = T0.tl;
   const drv = T0.drives, first = drv[0], last = drv[drv.length - 1];
   const names = [first.start_name, ...data.stops.map((s) => s.name), last.end_name].filter((x, i, a) => x && x !== '—' && a.indexOf(x) === i).slice(0, 4).map((x) => tr(x));
@@ -635,8 +636,9 @@ function afterSettings() {
     const pinSet = (window.__pinSet !== false);
     let pin = localStorage.getItem('pin') || '';
     if (!pin && pinSet) pin = getPin();
-    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Pin': pin || '' }, body: JSON.stringify(body) });
-    const j = await r.json();
+    let r, j;
+    try { r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Pin': pin || '' }, body: JSON.stringify(body) }); j = await r.json(); }
+    catch (err) { return [false, { reason: X('Fără conexiune la server.', 'No connection to the server.') }]; }
     if (r.status === 403 && /PIN/.test(j.reason || '')) { localStorage.removeItem('pin'); }
     return [r.ok, j];
   };
@@ -739,7 +741,7 @@ async function pageActivity() {
     const k = dayKey(e.t); if (k !== last) { html += `<div class="day"><span>${dayLabel(k)}</span><span></span></div>`; last = k; }
     const [ic, col] = ICN[e.type] || ICN.app;
     const meta = e.type === 'drive' ? `${nf(e.km, 1)} km · ${nf(e.kwh, 1)} kWh · ${nf(e.soc0)}% → ${nf(e.soc1)}% · ${tm(e.t)}–${tm(e.end)}`
-      : e.type === 'charge' ? `+${nf(e.kwh, 1)} kWh · ${nf(e.soc0)}% → ${nf(e.soc1)}% · ${e.dc ? 'DC' : 'AC'} · ${tm(e.t)}–${tm(e.end)}${e.cost ? ' · ' + nf(e.cost, 2) + ' lei' : ''}`
+      : e.type === 'charge' ? `+${nf(e.kwh, 1)} kWh · ${nf(e.soc0)}% → ${nf(e.soc1)}% · ${e.dc ? 'DC' : 'AC'} · ${tm(e.t)}–${tm(e.end)}${e.cost != null ? ' · ' + nf(e.cost, 2) + ' ' + CU() : ''}`
       : e.type === 'parked' ? `${hm(e.hours * 60)} · ${X('somn', 'sleep')} ${e.sleep_pct}% · ${e.drop > 0 ? '−' : '+'}${nf(Math.abs(e.drop))}% · ${tm(e.t)}–${tm(e.end)}`
       : e.type === 'update' ? X('Actualizare software instalată', 'Software update installed') : esc(e.msg || '');
     const href = e.type === 'drive' ? `#/drive/${e.id}` : e.type === 'charge' ? `#/charge/${e.id}` : e.type === 'parked' ? '#/parked' : '#';
@@ -989,7 +991,7 @@ function openPhoto(L, o) {
 
 
 /* ---------- Incarcari: filtru pe furnizor + totaluri, cost editabil, comparatie cu o masina termica ---------- */
-const CU = () => tr(S.currency ?? '€');
+const CU = () => { const c = S.currency; return tr(!c || /^(lei|ron)$/i.test(c) ? 'lei' : c); };       // "LEI"/"RON" se afiseaza ca "lei"
 let chF = { p: null, d: 0 }, chRows = [], chKeys = [];
 async function pinPost(path, body) {
   let pin = ''; try { pin = localStorage.getItem('pin') || ''; } catch (x) { /* ignore */ }
@@ -1003,18 +1005,19 @@ function chCost(c) {
   const cu = esc(CU()), tmc = c.cost != null ? nf(c.cost, 2) : '—';
   if (c.cost_manual != null) return `<span title="${X('Cost introdus manual · TeslaMate: ', 'Manually entered cost · TeslaMate: ')}${tmc}"><b>${nf(c.cost_manual, 2)}</b> ${cu} <small style="color:var(--mut)">(${X('manual', 'manual')})</small></span>`;
   if (c.cost_real != null) return `<span title="${X('Cost real estimat (doar energia din rețea) · TeslaMate: ', 'Estimated real cost (grid energy only) · TeslaMate: ')}${tmc}"><b>${nf(c.cost_real, 2)}</b> ${cu} <small style="color:var(--mut)">(TM ${tmc})</small></span>`;
-  return c.cost ? `<span><b>${nf(c.cost, 2)}</b> ${cu}</span>` : '';
+  return c.cost != null ? `<span><b>${nf(c.cost, 2)}</b> ${cu}</span>` : '';
 }
-async function fetchCharges() {
+async function fetchAll(kind) {
   let all = [], off = 0;
   for (;;) {
-    const r = await api('/api/charges?car=' + car + '&limit=200&offset=' + off);
+    const r = await api('/api/' + kind + '?car=' + car + '&limit=200&offset=' + off);
     all = all.concat(r);
     if (r.length < 200 || all.length >= 1000) break;
     off += 200;
   }
   return all;
 }
+const fetchCharges = () => fetchAll('charges');
 async function pageCharges() {
   chRows = await fetchCharges();
   const head = `<div class="top"><h1>${tr('Încărcări')}</h1></div>`;
@@ -1038,8 +1041,9 @@ function drawChargeList() {
   <div class="pchips"><button class="pchip ${chF.p === null ? 'on' : ''}" data-cp="-1">${X('Toți furnizorii', 'All providers')} <small>${inPeriod.length}</small></button>${chKeys.map((k, i) => `<button class="pchip ${chF.p === k ? 'on' : ''}" data-cp="${i}">${esc(nm(k))} <small>${by[k].n}</small></button>`).join('')}</div>`;
   const rows = chFiltered();
   const kwh = rows.reduce((s, x) => s + (x.charge_energy_added || 0), 0), cost = rows.reduce((s, x) => s + (x.cost_eff || 0), 0);
-  const nocost = rows.filter((x) => !x.cost_eff).length;
-  let html = `<h2>${chF.p === null ? X('Total', 'Total') : esc(nm(chF.p))}</h2><div class="grid">${stat(X('Sesiuni', 'Sessions'), nf(rows.length))}${stat(X('Energie încărcată', 'Energy charged'), nf(kwh, 1), 'kWh')}${stat(X('Cost total', 'Total cost'), nf(cost, 2), cu)}${stat(X('Cost mediu', 'Average cost'), kwh > 0 ? nf(cost / kwh, 2) : '—', cu + '/kWh')}</div>`;
+  const nocost = rows.filter((x) => x.cost_eff == null).length;
+  const kwhC = rows.filter((x) => x.cost_eff != null).reduce((s, x) => s + (x.charge_energy_added || 0), 0);   // pretul mediu = cost / kWh doar din sesiunile care au cost
+  let html = `<h2>${chF.p === null ? X('Total', 'Total') : esc(nm(chF.p))}</h2><div class="grid">${stat(X('Sesiuni', 'Sessions'), nf(rows.length))}${stat(X('Energie încărcată', 'Energy charged'), nf(kwh, 1), 'kWh')}${stat(X('Cost total', 'Total cost'), nf(cost, 2), cu)}${stat(X('Cost mediu', 'Average cost'), kwhC > 0 ? nf(cost / kwhC, 2) : '—', cu + '/kWh')}</div>`;
   if (nocost) html += `<p class="note" style="margin:8px 2px 0">${nocost} ${X('sesiuni fără cost înregistrat (nu intră în total). Poți introduce costul din pagina fiecărei încărcări.', 'sessions without a recorded cost (not in the total). You can enter the cost on each charge’s page.')}</p>`;
   if (!rows.length) html += `<div class="empty">${X('Nicio încărcare pentru filtrul ales.', 'No charges for this filter.')}</div>`;
   const agg = {};
@@ -1075,7 +1079,7 @@ function costStats(ch, d) {
   const cu = CU(), eff = ch.cost_eff ?? ch.cost ?? 0, tmc = ch.cost || 0;
   let h = stat(X('Cost total', 'Total cost'), nf(eff, 2), cu);
   if (Math.abs(eff - tmc) > 0.005) h += stat(X('Cost TeslaMate', 'TeslaMate cost'), nf(tmc, 2), cu);
-  h += stat(X('Cost / 100 km', 'Cost / 100 km'), d.km > 0 && eff ? nf(eff / d.km * 100, 2) : '—', cu);
+  h += stat(X('Cost încărcări / 100 km', 'Charging cost / 100 km'), d.km > 0 && eff != null ? nf(eff / d.km * 100, 2) : '—', cu);
   if (eff < tmc - 0.005) h += stat(X('Economie față de TeslaMate', 'Saved vs TeslaMate'), nf(tmc - eff, 2), cu);
   if (ch.manual_n) h += stat(X('Sesiuni cu cost manual', 'Sessions with manual cost'), nf(ch.manual_n));
   return h;
@@ -1088,7 +1092,7 @@ function iceBlock(o) {
   else {
     body += `<div class="grid">${stat(X('Cost combustibil (termică)', 'Fuel cost (ICE car)'), nf(ic.cost, 2), cu)}${stat(X('Cost electric (estimat)', 'Electric cost (estimated)'), ic.ev_cost != null ? nf(ic.ev_cost, 2) : '—', cu)}
       ${stat(X('Economie', 'Saved'), ic.saving != null ? nf(ic.saving, 2) : '—', cu)}${stat(X('Litri evitați', 'Litres avoided'), nf(ic.liters, 1), 'l')}
-      ${stat(X('Preț mediu combustibil', 'Average fuel price'), ic.avg_price != null ? nf(ic.avg_price, 2) : '—', cu + '/l')}${stat(X('Cost / 100 km', 'Cost / 100 km'), (ic.per100_ice != null ? nf(ic.per100_ice, 1) : '—') + ' vs ' + (ic.per100_ev != null ? nf(ic.per100_ev, 1) : '—'), cu)}</div>`;
+      ${stat(X('Preț mediu combustibil', 'Average fuel price'), ic.avg_price != null ? nf(ic.avg_price, 2) : '—', cu + '/l')}${stat(X('Cost / 100 km: termică vs electric (energia consumată)', 'Cost / 100 km: ICE vs electric (energy used)'), (ic.per100_ice != null ? nf(ic.per100_ice, 1) : '—') + ' vs ' + (ic.per100_ev != null ? nf(ic.per100_ev, 1) : '—'), cu)}</div>`;
     body += `<h3 class="sub">${X('Prețul combustibilului pe zile', 'Fuel price per day')} (${cu}/l)${last ? ' · ' + X('azi ', 'now ') + nf(last.price, 2) : ''}</h3>`
       + ((ic.prices || []).length > 1 ? '<div class="chart">' + line(ic.prices.map((p) => [+new Date(p.day + 'T12:00:00'), p.price]), { color: '#d9ba80', dec: 2 }) + '</div>' : `<div class="mut" style="padding:8px 0;font-size:13px">${X('Prețul se stochează în fiecare zi; graficul apare după a doua zi de citire.', 'The price is stored every day; the chart appears after the second day of readings.')}</div>`);
     body += `<p class="note" style="margin:8px 0 0">${X('Litri = km/100 × consum, la prețul din fiecare zi', 'Litres = km/100 × consumption, at that day’s price')} (${ic.type === 'diesel' ? X('motorină', 'diesel') : ic.type === 'manual' ? X('preț manual', 'manual price') : X('benzină Euro 95', 'Euro 95 petrol')}).

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """TeslaMate UI (stil Tessie): backend. MQTT (live) + Postgres TeslaMate (istoric) -> JSON/SSE. Fara date demo cat timp TeslaMate nu are masini => mod DEMO."""
-import json, math, os, re, queue, random, secrets, shutil, ssl, threading, time, datetime as dt
+import collections, json, math, os, re, queue, random, secrets, shutil, ssl, threading, time, datetime as dt
 import urllib.request, urllib.error, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -163,7 +163,11 @@ def real_cost(row, allow_fetch=True):
     hist = ha_history(HA['grid'], t0 - dt.timedelta(minutes=1), t1)
     if not hist:                                      # eroare/lipsa istoric: nu cacha "0,00" pana la repornire
         return None, True
-    RC_CACHE[k] = round(_integral(hist, a, b) * price, 2)
+    grid = _integral(hist, a, b)
+    cap = row.get('charge_energy_used') or row.get('charge_energy_added')
+    if cap:
+        grid = min(grid, cap)                          # importul casei nu poate depasi energia luata de masina
+    RC_CACHE[k] = round(grid * price, 2)
     return RC_CACHE[k], True
 
 
@@ -299,7 +303,11 @@ def fuel_book(fc=None):
     fc = fc or fuel_conf()
     out = []
     if fc['type'] != 'manual':
+        code = CUR_CODES.get(str(CURRENCY).strip().lower(), '')
+        slug = re.sub(r'[^A-Za-z-]', '', fc['country'].strip().replace(' ', '-')) or 'Romania'
         for day, d in sorted((_json_file(FUELFILE, {}).get('days') or {}).items()):
+            if (d.get('cur') or code) != code or (d.get('country') or slug) != slug:
+                continue                                  # citiri facute pentru alta moneda/tara nu se amesteca
             eur, rate = d.get(fc['type']), d.get('rate')
             if eur and rate:
                 out.append((day, round(eur * rate, 3)))
@@ -380,7 +388,8 @@ def ice_calc(by_day, ev_kwh, ev_cost, kwh_charged, l100=None, book=None, manual=
     book = fuel_book(fc) if book is None else book
     manual = fc['manual'] if manual is None else manual
     cost = liters = km_tot = 0.0
-    est = miss = 0
+    miss = 0
+    est_all = []
     days = []
     for x in by_day:
         km = x.get('km') or 0
@@ -392,13 +401,13 @@ def ice_calc(by_day, ev_kwh, ev_cost, kwh_charged, l100=None, book=None, manual=
         cost += lit * p
         liters += lit
         km_tot += km
-        est += 1 if kind != 'exact' else 0
+        est_all.append(kind in ('carry', 'early'))
         days.append(dict(day=x['day'], km=round(km, 1), price=round(p, 3), cost=round(lit * p, 2), kind=kind))
     ev = round(ev_kwh * ev_cost / kwh_charged, 2) if (kwh_charged and ev_cost is not None and ev_kwh) else None
     avg = round(cost / liters, 3) if liters else None
     return dict(enabled=True, type=fc['type'], l100=l100, currency=CURRENCY, km=round(km_tot, 1), liters=round(liters, 1), cost=round(cost, 2), avg_price=avg,
                 ev_cost=ev, saving=round(cost - ev, 2) if ev is not None else None, per100_ice=round(l100 * avg, 2) if avg else None,
-                per100_ev=round(ev / km_tot * 100, 2) if (ev is not None and km_tot) else None, est_days=est, missing_days=miss, days=days[-90:],
+                per100_ev=round(ev / km_tot * 100, 2) if (ev is not None and km_tot) else None, est_days=sum(est_all[-90:]), missing_days=miss, days=days[-90:],
                 prices=[dict(day=d, price=p) for d, p in book if not by_day or d >= by_day[0]['day']][-200:])
 
 
@@ -582,9 +591,9 @@ def activity(car, days, limit):
         if _dtp(d['start_date']) >= since:
             ev.append(dict(type='drive', t=d['start_date'], end=d['end_date'], id=d['id'], title='%s → %s' % (d['start_name'], d['end_name']),
                            km=d['distance'], kwh=d['kwh'], soc0=d['start_soc'], soc1=d['end_soc']))
-    for c in _charges_rows(car, 300, 0):
+    for c in decorate(_charges_rows(car, 300, 0)):
         if _dtp(c['start_date']) >= since:
-            ev.append(dict(type='charge', t=c['start_date'], end=c['end_date'], id=c['id'], title=c['name'], kwh=c['charge_energy_added'], soc0=c['start_soc'], soc1=c['end_soc'], dc=c['dc'], cost=c['cost']))
+            ev.append(dict(type='charge', t=c['start_date'], end=c['end_date'], id=c['id'], title=c['name'], kwh=c['charge_energy_added'], soc0=c['start_soc'], soc1=c['end_soc'], dc=c['dc'], cost=c['cost_eff']))
     try:
         for i in sleep_report(car, min(days, 30))['idle']:
             if i['hours'] >= 1:
@@ -675,18 +684,19 @@ def drive_events(did):
 
 def overview(car, days):
     since = dt.datetime.utcnow() - dt.timedelta(days=days)
-    d = q("""select count(*) n, coalesce(sum(d.distance),0) km, coalesce(sum(d.duration_min),0) minutes,
+    d = q("""select count(*) n, coalesce(sum(d.distance),0) km, coalesce(sum(d.distance) filter (where d.start_ideal_range_km is not null and d.end_ideal_range_km is not null),0) km_e,
+        coalesce(sum(d.duration_min),0) minutes,
         coalesce(sum((d.start_ideal_range_km-d.end_ideal_range_km)*c.efficiency),0) kwh, coalesce(max(d.speed_max),0) vmax
         from drives d join cars c on c.id=d.car_id where d.car_id=%s and d.start_date>=%s and d.end_date is not null""", (car, since))[0]
     ch = q("""select count(*) n, coalesce(sum(charge_energy_added),0) kwh, coalesce(sum(cost),0) cost, coalesce(sum(duration_min),0) minutes
         from charging_processes where car_id=%s and start_date>=%s and end_date is not null""", (car, since))[0]
-    byday = q("""select to_char(date_trunc('day', d.start_date),'YYYY-MM-DD') as day, sum(d.distance) km,
+    byday = q(f"""select to_char(date_trunc('day', d.start_date at time zone 'UTC' at time zone '{LOCAL_TZ}'),'YYYY-MM-DD') as day, sum(d.distance) km,
         sum((d.start_ideal_range_km-d.end_ideal_range_km)*c.efficiency) kwh from drives d join cars c on c.id=d.car_id
-        where d.car_id=%s and d.start_date>=%s group by 1 order by 1""", (car, since))
-    chday = q("""select to_char(date_trunc('day', start_date),'YYYY-MM-DD') as day, sum(charge_energy_added) kwh, sum(cost) cost
-        from charging_processes where car_id=%s and start_date>=%s group by 1 order by 1""", (car, since))
+        where d.car_id=%s and d.start_date>=%s and d.end_date is not null group by 1 order by 1""", (car, since))
+    chday = q(f"""select to_char(date_trunc('day', start_date at time zone 'UTC' at time zone '{LOCAL_TZ}'),'YYYY-MM-DD') as day, sum(charge_energy_added) kwh, sum(cost) cost
+        from charging_processes where car_id=%s and start_date>=%s and end_date is not null group by 1 order by 1""", (car, since))
     try:                                                      # cost efectiv: manual > real (AC acasa = import retea x tarif) > cost TeslaMate
-        budget, tot, man = 60, 0.0, 0
+        budget, tot, man, kwh_c = 60, 0.0, 0, 0.0         # kwh_c = kWh doar din sesiunile cu cost cunoscut (pentru pretul mediu pe kWh)
         meta = meta_load()
         for r in _charges_rows(car, 600, 0):
             if _dtp(r['start_date']) < since:
@@ -695,6 +705,7 @@ def overview(car, days):
             if me.get('cost') is not None:
                 tot += me['cost']
                 man += 1
+                kwh_c += r['charge_energy_added'] or 0
                 continue
             val = None
             if ha_ok() and HA['grid']:
@@ -705,14 +716,17 @@ def overview(car, days):
                     budget = 0
                     print('overview real cost:', ex, flush=True)
             tot += val if val is not None else (r['cost'] or 0)
+            if val is not None or r['cost'] is not None:
+                kwh_c += r['charge_energy_added'] or 0
         ch['cost_eff'] = round(tot, 2)
         ch['manual_n'] = man
+        ch['kwh_c'] = round(kwh_c, 2)
         if ha_ok() and HA['grid']:
             ch['cost_real'] = ch['cost_eff']
     except Exception as e:  # noqa
         print('overview cost:', e, flush=True)
     odo = q("select max(odometer) odo from positions where car_id=%s", (car,))
-    ice = ice_calc(byday, d['kwh'], ch.get('cost_eff', ch['cost']), ch['kwh'])
+    ice = ice_calc(byday, d['kwh'], ch.get('cost_eff', ch['cost']), ch.get('kwh_c', ch['kwh']))
     return dict(days=days, drives=d, charges=ch, by_day=byday, charge_by_day=chday, odometer=(odo[0]['odo'] if odo else None), ice=ice)
 
 
@@ -849,7 +863,7 @@ def demo_overview(days):
     D = DEMO['drives']
     C = DEMO['charges']
     return dict(days=days, drives=dict(n=len(D), km=sum(d['distance'] for d in D), minutes=sum(d['duration_min'] for d in D), kwh=sum(d['kwh'] for d in D), vmax=max(d['speed_max'] for d in D)),
-                charges=dict(n=len(C), kwh=sum(c['charge_energy_added'] for c in C), cost=sum(c['cost'] for c in C), cost_eff=sum(c['cost'] for c in C), manual_n=0, minutes=sum(c['duration_min'] for c in C)),
+                charges=dict(n=len(C), kwh=sum(c['charge_energy_added'] for c in C), cost=sum(c['cost'] for c in C), cost_eff=sum(c['cost'] for c in C), kwh_c=sum(c['charge_energy_added'] for c in C), manual_n=0, minutes=sum(c['duration_min'] for c in C)),
                 by_day=sorted(by_day.values(), key=lambda x: x['day']), charge_by_day=sorted(ch.values(), key=lambda x: x['day']), odometer=18432.4,
                 ice=ice_calc(sorted(by_day.values(), key=lambda x: x['day']), sum(d['kwh'] for d in D), sum(c['cost'] for c in C), sum(c['charge_energy_added'] for c in C), l100=7.2, book=[(x['day'], round(7.3 + .3 * math.sin(i / 3), 3)) for i, x in enumerate(sorted(by_day.values(), key=lambda x: x['day']))], manual=0))
 
@@ -940,7 +954,7 @@ def ble_plan(name, arg):
     if name == 'charging_amps':
         return 'number', 'set_value', dict(E('number', 'charging_amps'), value=int(max(1, min(48, float(a.get('amps', 0))))))
     if name == 'set_temps':
-        return 'climate', 'set_temperature', dict(E('climate', 'climate'), temperature=float(a.get('driver', 21)))
+        return 'climate', 'set_temperature', dict(E('climate', 'climate'), temperature=_num(a, 'driver', 15, 28, 21))
     if name == 'steering_heater':
         return 'switch', 'turn_on' if a.get('on') else 'turn_off', E('switch', 'heated_steering')
     if name == 'defrost':
@@ -948,11 +962,14 @@ def ble_plan(name, arg):
     if name == 'cop':
         return 'select', 'select_option', dict(E('select', 'cabin_overheat_protection'), option='Off' if not a.get('on') else ('Fan only' if a.get('fan_only') else 'On'))
     if name == 'cop_temp':
-        return 'select', 'select_option', dict(E('select', 'cabin_overheat_temperature'), option=['Low', 'Medium', 'High'][int(a.get('level', 2))])
+        return 'select', 'select_option', dict(E('select', 'cabin_overheat_temperature'), option=['Low', 'Medium', 'High'][int(_num(a, 'level', 0, 2, 2))])
     if name == 'seat_heater' and int(a.get('seat', -1)) in (0, 1):
         return 'select', 'select_option', dict(E('select', 'front_left_seat_climate' if int(a['seat']) == 0 else 'front_right_seat_climate'),
-                                                option=['Off', 'Low heat', 'Medium heat', 'High heat'][int(a.get('level', 0))])
+                                                option=['Off', 'Low heat', 'Medium heat', 'High heat'][int(_num(a, 'level', 0, 3, 0))])
     return None
+
+
+TOGGLES = ('trunk', 'frunk')       # comenzi care inverseaza starea: la un timeout nu le repetam automat pe alta cale
 
 
 def ble_run(name, arg):
@@ -964,11 +981,21 @@ def ble_run(name, arg):
         return None
     st = ha_state('binary_sensor.%s_status' % HA['prefix'])
     if not st or st.get('state') != 'on':
+        if _once('ble-off', 600):
+            print('ble: ESP32 indisponibil sau Home Assistant nu raspunde -> comenzile merg pe Fleet API (pot trezi masina)', flush=True)
         return None
     last = lambda: (ha_state('sensor.%s_last_command' % HA['prefix']) or {}).get('state')
     before = last()
-    c, r = ha_req('POST', '/api/services/%s/%s' % plan[:2], plan[2])
+    try:
+        c, r = ha_req('POST', '/api/services/%s/%s' % plan[:2], plan[2])
+    except Exception as e:  # noqa
+        print('ble: apelul catre HA a esuat (%s): %s' % (name, e), flush=True)
+        if name in TOGGLES:
+            return dict(ok=False, via='ble', code=0, reason='Home Assistant nu a răspuns la timp — comanda poate fi totuși executată. Verifică starea înainte s-o repeți.')
+        return None
     if c >= 300:
+        if _once('ble-http', 300):
+            print('ble: HA a raspuns %s la %s -> Fleet API' % (c, name), flush=True)
         return None
     for _ in range(9):
         time.sleep(.7)
@@ -998,7 +1025,7 @@ def _integral(series, t0, t1):
     """kWh dintr-o serie de puteri (W), functie constanta pe portiuni."""
     if not series:
         return 0.0
-    pts = [(max(t, t0), v) for t, v in series]
+    pts = [(max(t, t0), max(v, 0.0)) for t, v in series]           # valorile negative (export) nu scad costul
     pts.append((t1, pts[-1][1]))
     e = 0.0
     for (ta, v), (tb, _) in zip(pts, pts[1:]):
@@ -1082,8 +1109,8 @@ def proxy_ctx():
     c = ssl.create_default_context()
     try:
         c.load_verify_locations(FL['cert'])
-    except Exception:
-        c.check_hostname, c.verify_mode = False, ssl.CERT_NONE
+    except Exception as e:  # noqa
+        raise RuntimeError('Nu pot încărca certificatul proxy-ului de comenzi (%s): %s' % (FL['cert'], e))   # nu mai trimitem tokenul fara verificarea TLS
     return c
 
 
@@ -1167,8 +1194,16 @@ CMDS = {  # nume -> (endpoint, payload)
 
 
 def vehicle_call(vin, path, data=None, method=None):
-    tk = access_token()
-    return http('%s/api/1/vehicles/%s/%s' % (FL['proxy'], vin, path), data, headers={'Authorization': 'Bearer ' + tk}, ctx=proxy_ctx(), timeout=40, method=method)
+    for attempt in (0, 1):
+        tk = access_token()
+        c, r = http('%s/api/1/vehicles/%s/%s' % (FL['proxy'], vin, path), data, headers={'Authorization': 'Bearer ' + tk}, ctx=proxy_ctx(), timeout=40, method=method)
+        if c == 401 and attempt == 0:                   # token revocat/invalid inainte de expirare: il reinnoim o data si reincercam
+            with TLOCK:
+                t = tok_load()
+                t['exp'] = 0
+                tok_save(t)
+            continue
+        return c, r
 
 
 def _num(a, k, lo, hi, default=None):
@@ -1226,6 +1261,8 @@ def build_cmd(name, arg, lv):
         return 'set_scheduled_departure', {'enable': True, 'departure_time': _min(a, 'time'), 'preconditioning_enabled': bool(a.get('precond')),
                                            'preconditioning_weekdays_only': bool(a.get('weekdays')), 'off_peak_charging_enabled': bool(a.get('offpeak')),
                                            'off_peak_charging_weekdays_only': bool(a.get('weekdays')), 'end_off_peak_time': _min(a, 'end_offpeak')}
+    if name in ('charge_schedule_add', 'precond_add') and (lv.get('latitude') is None or lv.get('longitude') is None):
+        raise RuntimeError('Nu cunosc poziția mașinii (programările au nevoie de locație).')
     if name == 'charge_schedule_add':
         pl = dict(loc, days_of_week=_days(a), start_enabled=bool(a.get('start_on', True)), start_time=_min(a, 'start'),
                   end_enabled=bool(a.get('end_on')), end_time=_min(a, 'end'), enabled=True, one_time=bool(a.get('one_time')))
@@ -1258,7 +1295,35 @@ def ensure_awake(vin, lv):
             time.sleep(2.5)
 
 
+NOREPEAT = {'homelink': 8, 'trunk': 6, 'frunk': 6, 'charge_start': 5, 'charge_stop': 5, 'lock': 3, 'unlock': 3, 'flash': 3, 'honk': 3, 'port_open': 5, 'port_close': 5}
+CMD_LAST = {}
+CMD_LOCK = threading.Lock()
+
+
 def run_command(car, name, arg=None):
+    """Ocolire dublu-tap / retry: aceeasi comanda (cu aceiasi parametri) nu se retrimite in fereastra NOREPEAT (poarta/portbagajul sunt toggle)."""
+    gap = NOREPEAT.get(name)
+    key = (car, name, json.dumps(arg, sort_keys=True, default=str))
+    if gap:
+        with CMD_LOCK:
+            now = time.time()
+            for k in [k for k, v in CMD_LAST.items() if now - v > 60]:
+                del CMD_LAST[k]
+            if now - CMD_LAST.get(key, 0) < gap:
+                return dict(ok=False, code=429, reason='Comanda a fost trimisă acum câteva secunde — n-o repet ca să nu inverseze efectul. Așteaptă %d s.' % gap)
+            CMD_LAST[key] = now
+    try:
+        res = _run_command(car, name, arg)
+    except Exception:
+        if gap:
+            CMD_LAST.pop(key, None)
+        raise
+    if gap and not (res or {}).get('ok'):
+        CMD_LAST.pop(key, None)                       # a esuat: reincercarea e permisa imediat
+    return res
+
+
+def _run_command(car, name, arg=None):
     lv = LIVE.get(car, {})
     ep, pl = ('wake_up', {}) if name == 'wake' else build_cmd(name, arg, lv)       # valideaza inainte sa trezeasca masina
     ble = ble_run(name, arg)
@@ -1342,7 +1407,7 @@ def _vehicle_data(car, force=False):
     if c and time.time() - c[0] < 45 and not force:
         return dict(c[1], cached=True)
     lv = LIVE.get(car, {})
-    if lv.get('state') in ('asleep', 'offline', None):
+    if lv.get('state') in ('asleep', 'offline', 'suspended', None):          # si "suspended": interogarea ar tine masina trează
         return dict(c[1], stale=True, asleep=True) if c else dict(asleep=True)
     vin = vin_for(car)
     if not vin:
@@ -1375,6 +1440,8 @@ CFG = {}
 CFG_SECRETS = ('fleet_secret', 'pin', 'ha_token', 'notify_webhook', 'app_password', 'tessie_token')
 CFG_KEYS = CFG_SECRETS + ('app_url', 'price_grid', 'fleet_id', 'fleet_domain', 'fleet_base', 'ha_url', 'ha_prefix', 'ha_ble', 'ha_grid', 'ha_pv', 'currency', 'ice_l100', 'fuel_type', 'fuel_price', 'fuel_country', 'link_tm', 'link_gf', 'acc_team', 'acc_aud', 'acc_email', 'roles')
 EU_BASE = 'https://fleet-api.prd.eu.vn.cloud.tesla.com'
+_tz = os.environ.get('TZ', '') or 'UTC'
+LOCAL_TZ = _tz if re.fullmatch(r'[A-Za-z0-9_+\-/]{1,40}', _tz) else 'UTC'      # zilele din statistici se grupeaza pe ora locala, nu UTC
 
 
 def cfg_load():
@@ -1409,16 +1476,26 @@ def apply_config():
     if not os.environ.get('SESSION_SECRET'):          # secret persistent pentru cookie-urile de sesiune (supravietuiesc repornirii)
         try:
             sf = os.path.join(os.path.dirname(CFGFILE), 'session_secret')
-            if not os.path.isfile(sf):
-                fd = os.open(sf, os.O_WRONLY | os.O_CREAT, 0o600)
+            try:
+                sec = open(sf).read().strip()
+            except OSError:
+                sec = ''
+            if len(sec) < 32:                                  # lipsa sau trunchiat (oprire in timpul scrierii): regeneram, atomic
+                sec = secrets.token_hex(32)
+                os.makedirs(os.path.dirname(sf), exist_ok=True)
+                fd = os.open(sf + '.tmp', os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
                 with os.fdopen(fd, 'w') as f:
-                    f.write(secrets.token_hex(32))
-            AUTH['secret'] = open(sf).read().strip().encode()
+                    f.write(sec)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(sf + '.tmp', sf)
+            AUTH['secret'] = sec.encode()
         except Exception:
             pass
     _JWKS.clear()
     ROLES.clear()
-    ROLES.update({k.strip().lower(): v.strip() for k, _, v in (x.partition(':') for x in str(cget('roles', 'ROLES')).split(',') if ':' in x)})
+    ROLES.update({k.strip().lower(): (v.strip().lower() if v.strip().lower() in ('admin', 'family', 'viewer') else 'viewer')        # rol necunoscut/typo = cel mai mic (viewer)
+                  for k, _, v in (x.partition(':') for x in str(cget('roles', 'ROLES')).split(',') if ':' in x)})
 
 
 def cfg_public():
@@ -1434,6 +1511,10 @@ def cfg_public():
 def cfg_update(b):
     errs = []
     new = dict(CFG)
+    if 'ha_url' in b:                                  # tokenul HA nu trebuie sa ajunga la un alt server fara sa-l introduci din nou
+        nu = str(b['ha_url'] or '').strip().rstrip('/')
+        if nu and nu != str(HA['url']).rstrip('/') and HA['token'] and not str(b.get('ha_token') or '').strip():
+            errs.append('Ai schimbat adresa Home Assistant: introdu din nou și tokenul de acces (nu îl trimit către o adresă nouă fără să-l reconfirmi).')
     for k in CFG_KEYS:
         if k not in b:
             continue
@@ -1576,7 +1657,7 @@ def pf_unit(name):
 
 
 PF_META = {n: dict(cat=pf_cat(n), unit=pf_unit(n), miles=n in MILES) for n in PF_ALL if not PF_EXCLUDE.search(n)}
-PF = dict(values={}, hist={}, log=[], session=None, clients=set(), lock=threading.Lock(), last_rx=0.0, sim=False, conn=None, diag=(0, None))
+PF = dict(values={}, hist={}, log=collections.deque(maxlen=300000), session=None, clients=set(), lock=threading.Lock(), last_rx=0.0, sim=False, conn=None, diag=(0, None))
 PFILE = '/data/profiler.json'
 
 
@@ -1623,8 +1704,7 @@ def pf_ingest(records):
                     h.append((now, v))
                     del h[:-600]
                 if PF['session']:
-                    PF['log'].append((now, k, v))
-                    del PF['log'][:-300000]
+                    PF['log'].append((now, k, v))                # deque cu maxlen: taierea e O(1)
         PF['last_rx'] = now
     if batch:
         pf_broadcast(dict(t=now, d=batch))
@@ -1669,6 +1749,18 @@ def pf_cfg_post(vin, cfg):
     return ok, (resp.get('skipped_vehicles') or r.get('error') or r.get('raw') or resp or r)
 
 
+def pf_post_safe(vin, cfg, base):
+    """Trimite configuratia; daca apelul expira/esueaza (nu stim daca Tesla a aplicat-o), incearca sa readuca configuratia de baza."""
+    try:
+        return pf_cfg_post(vin, cfg)
+    except Exception as e:  # noqa
+        try:
+            pf_cfg_post(vin, base)
+        except Exception as e2:  # noqa
+            print('profiler: revenirea dupa eroare a esuat:', e2, flush=True)
+        raise RuntimeError('Tesla nu a răspuns la timp (%s); am încercat să revin la configurația de bază.' % e)
+
+
 def pf_start(car, profile, minutes):
     if profile not in PF_PROFILES:
         raise ValueError('profil necunoscut')
@@ -1694,15 +1786,20 @@ def pf_start(car, profile, minutes):
     base, resp, code = pf_cfg_get(vin)
     if not base:
         raise RuntimeError('Nu pot citi configurația de telemetrie a mașinii (%s). Telemetria trebuie configurată întâi (hostname/ca).' % code)
-    try:
-        jsave('/data/profiler_base.json', base)        # configuratia de dinainte (Sentry), la care se revine la oprire
-    except Exception as e:  # noqa
-        print('profiler base save:', e, flush=True)
+    prof_like = sum(1 for f in ((base or {}).get('fields') or {}).values() if isinstance(f, dict) and f.get('interval_seconds') == 1) >= 40
+    have_base = os.path.exists('/data/profiler_base.json')
+    if prof_like and not have_base:
+        raise RuntimeError('Mașina pare să fie încă pe configurația profilerului, iar configurația de bază (Sentry) nu mai există. Nu pornesc o sesiune nouă: restabilește telemetria din serverul de telemetrie.')
+    if not (prof_like and have_base):                  # daca masina e inca pe config. de profiler dintr-o sesiune nerestaurata, pastram baza veche
+        try:
+            jsave('/data/profiler_base.json', base)    # configuratia de dinainte (Sentry), la care se revine la oprire
+        except Exception as e:  # noqa
+            print('profiler base save:', e, flush=True)
     fields = {n: {'interval_seconds': 1} for n in names}
     fields['SentryMode'] = {'interval_seconds': 1}                      # alerta Sentry ramane activa
     dropped = []
     for _ in range(80):                     # Tesla refuza campurile problematice pe rand: corectam automat (delta minim / scope lipsa / camp neacceptat)
-        ok, info = pf_cfg_post(vin, dict(base, fields=fields))
+        ok, info = pf_post_safe(vin, dict(base, fields=fields), base)
         if ok:
             break
         msg = info if isinstance(info, str) else json.dumps(info)
@@ -1742,10 +1839,15 @@ def pf_start(car, profile, minutes):
     return dict(ok=True, fields=len(fields))
 
 
-def pf_stop(car=1, reason=''):
+def pf_stop(car=1, reason='', force=False):
     se = PF['session']
     if not se:
         return dict(ok=True, was_active=False)
+    if force and not se.get('sim'):                    # iesire de urgenta cand restaurarea nu reuseste: inchide sesiunea FARA sa mai atinga masina
+        PF['session'] = None
+        pf_session_save()
+        pf_broadcast(dict(status=pf_status()))
+        return dict(ok=True, was_active=True, warning='Sesiunea a fost închisă fără să restabilesc configurația mașinii. Verifică telemetria (Sentry) din serverul de telemetrie.')
     err = ''
     if not se.get('sim'):
         try:
@@ -1767,14 +1869,25 @@ def pf_stop(car=1, reason=''):
 
 
 def pf_watch():
-    """Opreste automat sesiunea la expirare (si readuce configuratia Sentry)."""
+    """Opreste automat sesiunea la expirare (si readuce configuratia Sentry). Daca restaurarea esueaza, reincearca cu pauze tot mai mari (max. 30 min)."""
+    fails, nxt = 0, 0.0
     while True:
         time.sleep(15)
         try:
             se = PF['session']
-            if se and time.time() > se['until']:
+            if not se:
+                fails, nxt = 0, 0.0
+            elif time.time() > se['until'] and time.time() >= nxt:
                 print('profiler: auto-stop', flush=True)
-                pf_stop(1, 'timp expirat')
+                r = pf_stop(1, 'timp expirat')
+                if r.get('ok'):
+                    fails, nxt = 0, 0.0
+                else:
+                    fails += 1
+                    nxt = time.time() + min(1800, 30 * 2 ** fails)
+                    if PF['session']:
+                        PF['session']['stop_fails'] = fails
+                    print('profiler: auto-stop esuat (%d): %s' % (fails, r.get('reason')), flush=True)
         except Exception as e:  # noqa
             print('profiler watch:', e, flush=True)
 
@@ -2193,15 +2306,19 @@ LOGIN = {
 }
 
 
+def _sess_key():
+    return AUTH['secret'] + hashlib.sha256(str(AUTH['pw']).encode('utf-8', 'replace')).digest()
+
+
 def sess_make():
     ts = str(int(time.time()))
-    return ts + '.' + hmac.new(AUTH['secret'], ts.encode(), hashlib.sha256).hexdigest()
+    return ts + '.' + hmac.new(_sess_key(), ts.encode(), hashlib.sha256).hexdigest()
 
 
 def sess_ok(v):
     try:
         ts, sig = v.split('.', 1)
-        good = hmac.new(AUTH['secret'], ts.encode(), hashlib.sha256).hexdigest()
+        good = hmac.new(_sess_key(), ts.encode(), hashlib.sha256).hexdigest()
         return hmac.compare_digest(sig, good) and time.time() - int(ts) < 30 * 86400
     except Exception:
         return False
@@ -2225,7 +2342,7 @@ def access_ok(token):
         key = _JWKS[0].get_signing_key_from_jwt(token).key
         claims = jwt.decode(token, key, algorithms=['RS256'], audience=ACCESS['aud'], issuer='https://' + ACCESS['team'])
         em = str(claims.get('email') or '').lower()
-        return em or True if (ROLES or not ACCESS['email'] or em == ACCESS['email'].lower()) else False
+        return (em or '__noemail__') if (ROLES or not ACCESS['email'] or em == ACCESS['email'].lower()) else False     # fara email in JWT (service token) = viewer, nu admin
     except Exception as e:  # noqa
         print('access jwt:', e, flush=True)
         return False
@@ -2294,7 +2411,7 @@ def api_state():
             out.append(c)
         return dict(demo=False, cars=out, links=LINKS, mqtt=bool(LIVE), lan_open=not AUTH['pw'] and not DEMO_ONLY, currency=CURRENCY)
     return dict(demo=True, public_demo=DEMO_ONLY, cars=[dict(DEMO_CAR, live=DEMO_LIVE, live_age=0, image=car_image(DEMO_CAR), sleep=DEMO_SLEEP)],
-                links=({} if DEMO_ONLY else LINKS), mqtt=False, currency=CURRENCY, db_error=(cl is None and not DEMO_ONLY), lan_open=not AUTH['pw'] and not DEMO_ONLY)
+                links=({} if DEMO_ONLY else LINKS), mqtt=False, db_error=(cl is None and not DEMO_ONLY), lan_open=not AUTH['pw'] and not DEMO_ONLY, currency=CURRENCY)
 
 
 class DBDown(Exception):
@@ -2359,7 +2476,7 @@ class H(BaseHTTPRequestHandler):
         if self.via_internet():
             em = access_ok(self.headers.get('Cf-Access-Jwt-Assertion', ''))
             if em:
-                self.role = 'admin' if em is True else ROLES.get(em, 'admin' if em == ACCESS['email'].lower() else 'viewer')
+                self.role = ROLES.get(em, 'admin' if (ACCESS['email'] and em == ACCESS['email'].lower()) else 'viewer')
                 return True            # a trecut de Cloudflare Access (verificat criptografic)
             if not AUTH['pw']:
                 return False           # din internet fara parola configurata: totul inchis
@@ -2509,10 +2626,14 @@ class H(BaseHTTPRequestHandler):
         if not self.authed():
             return self.send_json(dict(ok=False, reason='auth'), 401)
         try:
+            if not self.headers.get('Content-Type', '').lower().startswith('application/json'):
+                return self.send_json(dict(ok=False, reason='Content-Type trebuie să fie application/json.'), 415)
             raw = self.read_body()
             body = json.loads(raw) if raw else {}
             if not isinstance(body, dict):
                 raise ValueError('se aștepta un obiect JSON')
+            if u.path.startswith('/api/notify/') and self.role == 'viewer':
+                return self.send_json(dict(ok=False, reason='Rolul tău nu poate schimba notificările.'), 403)
             if u.path == '/api/notify/settings':
                 st = nset_load()
                 st.update({k: bool(v) for k, v in body.items() if k in NDEFAULT})
@@ -2537,7 +2658,7 @@ class H(BaseHTTPRequestHandler):
             if not pok:
                 return self.send_json(dict(ok=False, reason=why), pcode)
             name = u.path.rsplit('/', 1)[1] if u.path.startswith('/api/cmd/') else ''
-            if self.role == 'viewer' or (self.role == 'family' and (name not in FAMILY_OK)):
+            if self.role != 'admin' and not (self.role == 'family' and name in FAMILY_OK):
                 return self.send_json(dict(ok=False, reason='Nu ai permisiunea pentru această acțiune (rol: %s).' % self.role), 403)
             if u.path == '/api/import/tessie':
                 return self.send_json(imp_action(int(body.get('car', 1)), body))
@@ -2554,7 +2675,7 @@ class H(BaseHTTPRequestHandler):
             if u.path == '/api/profiler/start':
                 return self.send_json(pf_start(int(body.get('car', 1)), body.get('profile'), body.get('minutes', 5)))
             if u.path == '/api/profiler/stop':
-                return self.send_json(pf_stop(int(body.get('car', 1))))
+                return self.send_json(pf_stop(int(body.get('car', 1)), force=bool(body.get('force'))))
             if u.path == '/api/rules':
                 with FLOCK:                                   # doua cereri simultane nu mai pierd o modificare
                     rs = rules_load()
@@ -2630,7 +2751,7 @@ class H(BaseHTTPRequestHandler):
         if p == '/api/caps':
             return dict(rear_seats=True) if demo else caps_infer(car)
         if p == '/api/vdata':
-            return DEMO_VD if demo else vehicle_data(car, a.get('force') == '1')
+            return DEMO_VD if demo else vehicle_data(car, a.get('force') == '1' and self.role != 'viewer')
         if p == '/api/import/tessie/status':
             return dict(IMP)
         if p == '/api/profiler/diag':
@@ -2644,7 +2765,10 @@ class H(BaseHTTPRequestHandler):
             PF['diag'] = (time.time(), out)
             return out
         if p == '/api/profiler':
-            return dict(pf_status(), meta=PF_META, values={k: [v[0], v[1]] for k, v in PF['values'].items()}, hist={k: [x[1] for x in v[-120:]] for k, v in PF['hist'].items()})
+            with PF['lock']:                                  # pf_ingest modifica dictionarele din alt thread
+                vals = {k: [v[0], v[1]] for k, v in PF['values'].items()}
+                hist = {k: [x[1] for x in list(v)[-120:]] for k, v in PF['hist'].items()}
+            return dict(pf_status(), meta=PF_META, values=vals, hist=hist)
         if p == '/api/config':
             if self.role != 'admin':
                 return dict(error='forbidden')

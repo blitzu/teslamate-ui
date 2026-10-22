@@ -55,7 +55,17 @@ ROLES=wife@example.com:family,guest@example.com:viewer
 * `family` — lock/unlock, climate, temperature, seats, steering heater, defrost, charge start/stop, flash/honk, wake, sentry. No frunk/trunk, windows, HomeLink, charge schedules/amps, automations.
 * `viewer` — read-only.
 
-Enforced on the server; everyone still needs the command PIN.
+Enforced on the server with an **allowlist**: only `admin` can do everything, `family` only the commands listed above, everyone else (including a typo such as `ROLES=a@b.c:editor`) is treated as `viewer`. A valid Cloudflare Access token **without an e-mail** (a service token) is `viewer`. Everyone still needs the command PIN.
+
+Sessions made with the app password are bound to that password: **changing the password signs out every device**.
+
+## Other protections
+
+* JSON `POST`s must be sent as `Content-Type: application/json` (blocks simple cross-site form posts); bodies over 1 MB are refused.
+* The same command (same parameters) is not sent twice within a few seconds (HomeLink 8 s, frunk/trunk 6 s, charge start/stop 5 s, lock/unlock/flash/honk 3 s): a double tap or a retry cannot reverse the effect of a toggle command.
+* Changing the Home Assistant address requires entering the access token again, so the stored token is never sent to a new address you did not confirm.
+* Viewers cannot change notification settings or force a live read from the car.
+* If the BLE path times out for a toggle command (frunk/trunk), the app reports *"may have been executed"* instead of silently retrying on the Fleet API.
 
 ## Hardening checklist
 

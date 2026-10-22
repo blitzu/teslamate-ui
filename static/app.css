@@ -302,3 +302,11 @@ body.nav-open #nav{transform:none;box-shadow:0 0 40px #000a}
 .pchip small{color:var(--mut);font-weight:700;margin-left:4px}
 .pchip.on{background:#6fd6b822;border-color:#6fd6b866;color:var(--mint)}.pchip.on small{color:var(--mint)}
 h3.sub{margin:14px 2px 6px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);font-weight:800}
+
+/* iOS: campurile sub 16px fac zoom la focus; tinte tactile de minim 44px; focus vizibil; fara animatii daca utilizatorul cere asta */
+@media (max-width:900px){input,select,textarea{font-size:16px!important}}
+.seg button,.pchip{min-height:44px}
+.back{display:inline-block;padding:10px 6px}
+.links a{display:inline-flex;align-items:center;min-height:40px}
+:focus-visible{outline:2px solid var(--mint);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}

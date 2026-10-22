@@ -24,7 +24,7 @@ def tget(token, path, params=None, timeout=90):
                 return json.loads(r.read().decode('utf-8'))
         except urllib.error.HTTPError as e:
             body = e.read()[:200].decode('utf-8', 'replace')
-            if e.code == 429 and attempt < 3:
+            if (e.code == 429 or 500 <= e.code < 600) and attempt < 3:            # limita de rata sau eroare temporara la Tessie: reincercam
                 time.sleep(3 * (attempt + 1))
                 continue
             if e.code in (401, 403):
@@ -248,14 +248,18 @@ def run(conn, token, vin, car, progress, cutoff=None, dry_run=False):
     if dry_run:
         conn.rollback()
     else:
-        conn.commit()
         ctx.ledger['at'] = time.time()
-        tmp = LEDGER + '.tmp'
-        with open(tmp, 'w') as lf:
+        pend = LEDGER + '.pending'                     # jurnalul se scrie INAINTE de commit: daca procesul cade intre ele, undo-ul il gaseste tot
+        with open(pend, 'w') as lf:
             json.dump(ctx.ledger, lf)
             lf.flush()
             os.fsync(lf.fileno())
-        os.replace(tmp, LEDGER)
+        try:
+            conn.commit()
+        except Exception:
+            os.remove(pend)
+            raise
+        os.replace(pend, LEDGER)
     cur.close()
     progress.update(phase='Gata', done=progress.get('total', 0))
     return res
@@ -263,7 +267,8 @@ def run(conn, token, vin, car, progress, cutoff=None, dry_run=False):
 
 def undo(conn):
     """Sterge exact randurile inserate de import (dupa ledger). Ordinea respecta cheile straine."""
-    led = json.load(open(LEDGER))
+    src = LEDGER if os.path.exists(LEDGER) else LEDGER + '.pending'
+    led = json.load(open(src))
     cur = conn.cursor()
     q = lambda sql, ids: ids and cur.execute(sql, (list(ids),))
     q('delete from charging_processes where id = any(%s)', led['charging'])       # sterge si charges (cascade)
@@ -272,5 +277,5 @@ def undo(conn):
     q('delete from addresses where id = any(%s) and not exists (select 1 from drives d where d.start_address_id=addresses.id or d.end_address_id=addresses.id) and not exists (select 1 from charging_processes c where c.address_id=addresses.id)', led['addresses'])
     conn.commit()
     cur.close()
-    os.rename(LEDGER, LEDGER + '.undone-%d' % int(time.time()))
+    os.rename(src, LEDGER + '.undone-%d' % int(time.time()))
     return dict(drives=len(led['drives']), charges=len(led['charging']), positions=len(led['positions']))

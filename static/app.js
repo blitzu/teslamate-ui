@@ -253,7 +253,7 @@ function chargeItem(c) {
 }
 
 async function pageList(kind) {
-  const rows = await api('/api/' + kind + '?car=' + car + '&limit=120');
+  const rows = await fetchAll(kind);
   const ctl = kind === 'charges' ? chargeCtlShell() : '';
   if (!rows.length) return `<div class="top"><h1>${kind === 'drives' ? 'Curse' : 'Încărcări'}</h1></div>${ctl}<div class="empty">Nimic înregistrat încă.</div>`;
   let last = '', html = '', agg = {};
@@ -306,7 +306,7 @@ async function pageCharge(id) {
   const fx = (x) => new Date(x).toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' });
   return `<a class="back" href="#/charges">‹ Încărcări</a>
   <div class="top row"><div><h1 style="font-size:21px">${esc(c?.name)}</h1><small>${c ? T(c.start_date).toLocaleDateString(LOC(), { weekday: 'long', day: 'numeric', month: 'long' }) + ' · ' + tm(c.start_date) + '–' + tm(c.end_date) : ''}</small></div><div class="sp"></div><span class="badge ${c?.dc ? 'dc' : 'ac'}">${c?.dc ? 'DC' : 'AC'}</span></div>
-  <h2>Rezumat</h2><div class="grid g3">${stat('Adăugat', nf(c?.charge_energy_added, 1), 'kWh')}${stat('Durată', hm(c?.duration_min))}${stat('Putere max', nf(c?.power_max), 'kW')}${stat('Baterie', nf(c?.start_soc) + '→' + nf(c?.end_soc), '%')}${stat('Consumat din rețea', nf(c?.charge_energy_used, 1), 'kWh')}${stat('Cost', (c?.cost_eff ?? c?.cost) ? nf(c.cost_eff ?? c.cost, 2) : '—', S.currency ?? (S.currency ?? '€'))}${c?.cost_manual != null ? stat('Cost TeslaMate', c.cost ? nf(c.cost, 2) : '—', S.currency ?? (S.currency ?? '€')) : ''}</div>
+  <h2>Rezumat</h2><div class="grid g3">${stat('Adăugat', nf(c?.charge_energy_added, 1), 'kWh')}${stat('Durată', hm(c?.duration_min))}${stat('Putere max', nf(c?.power_max), 'kW')}${stat('Baterie', nf(c?.start_soc) + '→' + nf(c?.end_soc), '%')}${stat('Consumat din rețea', nf(c?.charge_energy_used, 1), 'kWh')}${stat('Cost', (c?.cost_eff ?? c?.cost) != null ? nf(c.cost_eff ?? c.cost, 2) : '—', CU())}${c?.cost_manual != null ? stat('Cost TeslaMate', c.cost ? nf(c.cost, 2) : '—', CU()) : ''}</div>
   <div id="chedit"></div>
   <div id="chsolar"></div>
   ${sec('Putere de încărcare (kW)', line(pts.map((p) => [t(p), p[1]]), { color: '#d9ba80', fx }))}
@@ -355,7 +355,7 @@ async function sendCmd(name, label, arg, tile) {
   if (S.public_demo) return;
   const pin = getPin(); if (!pin) return;
   label = tr(label);
-  const msg = (t, cls) => { const m = $('#cmdmsg'); if (m) { m.textContent = t; m.className = 'toast ' + (cls || ''); } };
+  const msg = (t, cls) => { window.__cm = [t, cls, Date.now()]; const m = $('#cmdmsg'); if (m) { m.textContent = t; m.className = 'toast ' + (cls || ''); } };
   msg(label + '…', 'busy'); if (tile) tile.classList.add('busy');
   try {
     const r = await fetch('/api/cmd/' + name, { method: 'POST', headers: { 'X-Pin': pin, 'Content-Type': 'application/json' }, body: JSON.stringify({ car, arg }) });
@@ -422,6 +422,7 @@ const rg = $('#fl-reg');
     <div class="lim-title"><span>Limită încărcare</span><b>${L.charge_limit_soc != null ? nf(L.charge_limit_soc) + '%' : '—'}</b></div>
     <div class="seg" style="margin-top:6px">${[70, 80, 90, 100].map((n) => `<button ${S.public_demo ? 'disabled' : ''} data-cmd="charge_limit" data-label="${tr('Limită')} ${n}%" data-arg="${n}" class="${L.charge_limit_soc === n ? 'on' : ''}">${n}%</button>`).join('')}</div>
     <div class="toast" id="cmdmsg">Comenzile pot trezi mașina (durează câteva secunde).</div>`);
+  { const cm = window.__cm; if (cm && Date.now() - cm[2] < 10000) { const m = $('#cmdmsg'); if (m) { m.textContent = cm[0]; m.className = 'toast ' + (cm[1] || ''); } } }
   box.querySelectorAll('[data-cmd]').forEach((el) => el.onclick = () => {
     if (el.dataset.ask && !confirm(tr(el.dataset.ask))) return;
     sendCmd(el.dataset.cmd, el.dataset.label, el.dataset.arg ? +el.dataset.arg : undefined, el);
@@ -444,7 +445,7 @@ async function render() {
   const h = location.hash.replace(/^#\/?/, '') || 'car';
   const [p, arg] = h.split('/');
   route = p;
-  if (typeof RP !== 'undefined' && RP && p !== 'trip') stopReplay();
+  if (p !== 'trip' && typeof stopReplay === 'function') stopReplay();            // si cand reluarea inca se incarca (RP nu e setat)
   if (p !== 'profiler' && typeof pfClose === 'function') pfClose();
   renderNav(['drive', 'trip'].includes(p) ? 'drives' : p === 'charge' ? 'charges' : p === 'sleep' ? 'parked' : p === 'stats' ? 'activity' : p === 'climate' ? 'car' : p);
   const seq = ++renderSeq;
@@ -465,7 +466,7 @@ async function render() {
     else if (p === 'settings') html = await pageSettings();
     else if (p === 'climate') html = pageClimate();
     else if (p === 'trip') html = '';
-    else html = pageCar();
+    else { location.replace('#/car'); return; }
   } catch (e) { html = `<div class="empty">${tr('Eroare la încărcare: ')}${esc(e.message)}</div>`; }
   if (seq !== renderSeq) return;
   if (map && p !== 'car' && p !== 'drive') { map.remove(); map = null; }
@@ -489,14 +490,31 @@ async function render() {
 addEventListener('hashchange', render);
 
 /* ---------- live ---------- */
-let t = null;
+let t = null, rrFirst = 0, sseUp = false;
+function carSoon(c) {                                   // redesenare cu throttle: cel mult 2 s de asteptare, chiar daca mesajele vin continuu
+  if (route !== 'car') return;
+  const now = Date.now(); if (!t) rrFirst = now;
+  clearTimeout(t);
+  t = setTimeout(() => { t = null; const y = scrollY; setHtml(view, pageCar()); drawMap($('#map'), c.live); afterCar(); scrollTo(0, y); }, Math.max(0, Math.min(400, 2000 - (now - rrFirst))));
+}
+async function refreshState() {                         // dupa ce iOS suspenda aplicatia sau SSE s-a reconectat, starea din memorie poate fi veche
+  try {
+    const n = await api('/api/state');
+    if (n.demo || S.demo) return;
+    S.lan_open = n.lan_open; S.role = n.role;
+    n.cars.forEach((nc) => { const c = S.cars.find((x) => x.id === nc.id); if (!c) return; c.sleep = nc.sleep; c.live = Object.assign(c.live || {}, nc.live || {}); c.live_age = nc.live_age; });
+    if (S.cars[0]) carSoon(S.cars[0]);
+  } catch (e) { /* ignore */ }
+}
 function live() {
   const es = new EventSource('/api/stream');
+  es.onopen = () => { if (sseUp) refreshState(); sseUp = true; };
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && !S.demo) refreshState(); });
   es.onmessage = (e) => {
     const m = JSON.parse(e.data), c = S.cars.find((x) => x.id === m.car);
     if (!c || S.demo) return;
     c.live = c.live || {}; c.live[m.k] = m.v; c.live_age = 0;
-    if (route === 'car') { clearTimeout(t); t = setTimeout(() => { const y = scrollY; setHtml(view, pageCar()); drawMap($('#map'), c.live); afterCar(); scrollTo(0, y); }, 400); }
+    carSoon(c);
   };
 }
 async function boot() {
@@ -504,7 +522,10 @@ async function boot() {
   document.title = (S.cars[0]?.name || 'Tesla') + (S.demo ? ' · demo' : '');
   render();
   live();
-  setInterval(async () => { try { const n = await api('/api/state'); if (!n.demo && !S.demo) return; S = n; if (route === 'car') render(); } catch (e) { /* ignore */ } }, 60000);
+  setInterval(async () => {
+    if (!S.demo) { refreshState(); return; }                  // instanta reala: sincronizeaza somnul si starea la 60 s
+    try { const n = await api('/api/state'); S = n; if (route === 'car') render(); } catch (e) { /* ignore */ }
+  }, 60000);
 }
 document.getElementById('burger')?.addEventListener('click', () => document.body.classList.toggle('nav-open'));
 document.getElementById('backdrop')?.addEventListener('click', () => document.body.classList.remove('nav-open'));

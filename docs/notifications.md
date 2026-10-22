@@ -73,7 +73,7 @@ Toggle it in the app (Notifications → *iPhone Live Activity*, and *while drivi
 
 ## Command buttons on notifications
 
-Regular notifications (cable connected, charging complete, door open) carry `actions` (buttons: *Start charging*, *Stop charging*, *Release cable*, *Turn climate on*, *Lock*). Home Assistant fires `mobile_app_notification_action` with the action id; add an automation that runs the matching command, e.g. through the ESP32 BLE entities (`switch.tesla_ble_charger`, `cover.tesla_ble_charge_port_door` opens the port and releases the cable, `lock.tesla_ble_doors`, `climate.tesla_ble_climate`). Live Activities cannot have buttons (an iOS limitation). Toggle: Notifications → *Command buttons*.
+Regular notifications (cable connected, charging complete, door open) carry `actions` (buttons: *Start charging*, *Stop charging*, *Release cable*, *Turn climate on*, *Lock*). Home Assistant fires `mobile_app_notification_action` with the action id; add an automation that runs the matching command, e.g. through the ESP32 BLE entities (`switch.tesla_ble_charger`, `lock.tesla_ble_doors`, `climate.tesla_ble_climate`). **Use the Fleet API entities as a fallback** (e.g. the Home Assistant *Tesla Fleet* integration: `switch.tesla_charge`, `lock.tesla_lock`, `climate.tesla_climate`) when the ESP32 is not connected, and for **releasing the cable always use the Fleet cover** (`cover.tesla_charge_port_door`): a BLE key with the *charging manager* role is not allowed to open the charge port. Live Activities cannot have buttons (an iOS limitation). Toggle: Notifications → *Command buttons*.
 
 ## Other targets
 

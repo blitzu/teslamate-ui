@@ -39,3 +39,11 @@ converts it to your currency with the ECB rate from [frankfurter.dev](https://fr
 any other currency: use `manual`) and **stores one entry per day** in `/data/fuel_prices.json`
 (both fuels and the rate, so switching fuel later is retroactive). Only the country name is sent. Days from before the first stored reading use the first known price
 (shown as "estimated" in the note). Disable the automatic lookup with `fuel_type=manual`.
+
+## How the numbers are defined
+
+* **Days** in *Stats* (km per day, kWh per day, the daily fuel price lookup) are **local days** (the `TZ` of the container), not UTC days.
+* **Average cost per kWh** = cost ÷ kWh, counting only the sessions that have a cost (a missing cost is not the same as zero).
+* **Charging cost / 100 km** (Stats → Charging) = money spent on charging in the period ÷ km driven (it includes losses and charging for later trips). **Cost / 100 km: ICE vs electric** (comparison card) uses the energy the drives actually consumed.
+* **Estimated real cost** of a home AC charge = grid import measured by your Home Assistant sensor during the session, capped at the energy the car drew, × the grid price; negative samples (export) are ignored. If Home Assistant has no history for that time the estimate is skipped (it is **not** cached as 0).
+* The fuel price history only contains readings for your current currency and country; readings stored under another currency/country are ignored.
