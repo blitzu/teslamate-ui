@@ -209,3 +209,7 @@ h2{margin:22px 4px 10px;font-size:13px;letter-spacing:.1em;text-transform:upperc
 .hint{margin-top:12px;border-color:#d9ba8040;background:#d9ba800d}.hint b{font-size:14px}.hint p{margin:6px 0 0;font-size:12.5px;color:#cfd5db;line-height:1.5}
 #rp.recording .rp-ctl,#rp.recording .rp-zoom,#rp.recording #rpx{display:none}
 #rp.recording::after{content:"● REC";position:absolute;left:12px;top:calc(14px + env(safe-area-inset-top));padding:5px 10px;border-radius:99px;background:#d9342bdd;color:#fff;font-weight:800;font-size:12px;z-index:5}
+.cfg .cf{display:block;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);font-weight:700;margin-top:12px}
+.cfg .cf input,.cfg .cf select{display:block;width:100%;margin-top:5px;background:#0b0d10;color:var(--tx);border:1px solid #ffffff1a;border-radius:12px;padding:11px;font:inherit;font-size:14.5px;font-weight:600;text-transform:none;letter-spacing:0;color-scheme:dark}
+.cfg .ch{display:block;margin:6px 2px 0;font-size:11.5px;color:var(--mut);line-height:1.45}
+.cfg .sw{margin-top:6px}

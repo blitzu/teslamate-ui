@@ -955,6 +955,130 @@ def vehicle_data(car, force=False):
     return dict(out)
 
 
+# ---------------------------------------------------------------- configurare din aplicatie (/data/config.json; suprascrie valorile din .env)
+CFGFILE = '/data/config.json'
+CFG = {}
+CFG_SECRETS = ('fleet_secret', 'pin', 'ha_token', 'notify_webhook', 'app_password')
+CFG_KEYS = CFG_SECRETS + ('fleet_id', 'fleet_domain', 'fleet_base', 'ha_url', 'ha_prefix', 'ha_ble', 'ha_grid', 'ha_pv', 'currency', 'link_tm', 'link_gf', 'acc_team', 'acc_aud', 'acc_email', 'roles')
+EU_BASE = 'https://fleet-api.prd.eu.vn.cloud.tesla.com'
+
+
+def cfg_load():
+    global CFG
+    try:
+        CFG = json.load(open(CFGFILE))
+    except Exception:
+        CFG = {}
+
+
+def cfg_save():
+    os.makedirs(os.path.dirname(CFGFILE), exist_ok=True)
+    fd = os.open(CFGFILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as f:
+        json.dump(CFG, f)
+
+
+def cget(k, env='', d=''):
+    v = CFG.get(k)
+    if v not in (None, ''):
+        return v
+    return os.environ.get(env, d) if env else d
+
+
+def apply_config():
+    """Aplica configuratia (aplicatie > .env) pe dictionarele folosite de restul serverului, fara repornire."""
+    global NHOOK, CURRENCY
+    FL.update(cid=cget('fleet_id', 'FLEET_CLIENT_ID'), secret=cget('fleet_secret', 'FLEET_CLIENT_SECRET'), domain=cget('fleet_domain', 'FLEET_DOMAIN'),
+              pin=cget('pin', 'APP_PIN'), base=cget('fleet_base', 'FLEET_BASE', EU_BASE))
+    HA.update(url=str(cget('ha_url', 'HA_URL')).rstrip('/'), token=cget('ha_token', 'HA_TOKEN'), prefix=cget('ha_prefix', 'HA_BLE_PREFIX', 'tesla_ble'),
+              ble=str(cget('ha_ble', 'BLE_FIRST', '1')).lower() in ('1', 'true'), grid=cget('ha_grid', 'HA_GRID_IMPORT'), pv=cget('ha_pv', 'HA_PV_POWER'))
+    NHOOK = cget('notify_webhook', 'NOTIFY_WEBHOOK')
+    CURRENCY = cget('currency', 'CURRENCY', '€')
+    LINKS.update(teslamate=cget('link_tm', 'TESLAMATE_URL'), grafana=cget('link_gf', 'GRAFANA_URL'))
+    AUTH['pw'] = cget('app_password', 'APP_PASSWORD')
+    ACCESS.update(team=cget('acc_team', 'ACCESS_TEAM'), aud=cget('acc_aud', 'ACCESS_AUD'), email=cget('acc_email', 'ACCESS_EMAIL'))
+    if not os.environ.get('SESSION_SECRET'):          # secret persistent pentru cookie-urile de sesiune (supravietuiesc repornirii)
+        try:
+            sf = os.path.join(os.path.dirname(CFGFILE), 'session_secret')
+            if not os.path.isfile(sf):
+                fd = os.open(sf, os.O_WRONLY | os.O_CREAT, 0o600)
+                with os.fdopen(fd, 'w') as f:
+                    f.write(secrets.token_hex(32))
+            AUTH['secret'] = open(sf).read().strip().encode()
+        except Exception:
+            pass
+    _JWKS.clear()
+    ROLES.clear()
+    ROLES.update({k.strip().lower(): v.strip() for k, _, v in (x.partition(':') for x in str(cget('roles', 'ROLES')).split(',') if ':' in x)})
+
+
+def cfg_public():
+    g = lambda k, env='', d='': cget(k, env, d)
+    return dict(
+        fleet=dict(id=g('fleet_id', 'FLEET_CLIENT_ID'), domain=g('fleet_domain', 'FLEET_DOMAIN'), base=g('fleet_base', 'FLEET_BASE', EU_BASE), secret_set=bool(FL['secret']), pin_set=bool(FL['pin'])),
+        ha=dict(url=HA['url'], token_set=bool(HA['token']), prefix=HA['prefix'], ble=HA['ble'], grid=HA['grid'], pv=HA['pv']),
+        notify=dict(webhook_set=bool(NHOOK)),
+        display=dict(currency=CURRENCY, teslamate=LINKS['teslamate'], grafana=LINKS['grafana']),
+        access=dict(team=ACCESS['team'], aud=ACCESS['aud'], email=ACCESS['email'], roles=str(cget('roles', 'ROLES')), password_set=bool(AUTH['pw'])))
+
+
+def cfg_update(b):
+    errs = []
+    new = dict(CFG)
+    for k in CFG_KEYS:
+        if k not in b:
+            continue
+        v = b[k]
+        v = '' if v is None else (str(v).strip() if not isinstance(v, bool) else ('1' if v else '0'))
+        if k in CFG_SECRETS and v == '':
+            continue                                   # camp secret lasat gol = pastreaza
+        if v == '__clear__':
+            new.pop(k, None)
+            continue
+        if k in ('ha_url', 'link_tm', 'link_gf') and v and not v.startswith(('http://', 'https://')):
+            errs.append('%s trebuie să înceapă cu http:// sau https://' % k)
+        if k == 'notify_webhook' and not v.startswith(('http://', 'https://')):
+            errs.append('webhook invalid')
+        if k == 'fleet_domain' and ('/' in v or ' ' in v):
+            errs.append('domeniul se scrie fără https:// și fără /')
+        if k == 'pin' and len(v) < 4:
+            errs.append('PIN-ul trebuie să aibă minim 4 caractere')
+        if k == 'app_password' and len(v) < 12:
+            errs.append('parola trebuie să aibă minim 12 caractere')
+        if k == 'fleet_base' and v and v not in (EU_BASE, 'https://fleet-api.prd.na.vn.cloud.tesla.com', 'https://fleet-api.prd.cn.vn.cloud.tesla.cn'):
+            errs.append('regiune invalidă')
+        if k == 'roles' and v and any((':' not in x or x.split(':')[1].strip() not in ('admin', 'family', 'viewer')) for x in v.split(',')):
+            errs.append('roluri: email:family,email2:viewer')
+        if len(v) > 600:
+            errs.append('%s prea lung' % k)
+        new[k] = v
+    if errs:
+        return False, '; '.join(errs)
+    CFG.clear()
+    CFG.update(new)
+    cfg_save()
+    apply_config()
+    return True, ''
+
+
+def cfg_test(what):
+    if what == 'ha':
+        if not ha_ok():
+            return dict(ok=False, msg='Home Assistant nu e configurat.')
+        try:
+            c, r = ha_req('GET', '/api/', timeout=6)
+        except Exception as e:  # noqa
+            return dict(ok=False, msg='Nu mă pot conecta: %s' % e)
+        if c != 200:
+            return dict(ok=False, msg='HA a răspuns %s (token invalid?).' % c)
+        st = ha_state('binary_sensor.%s_status' % HA['prefix'])
+        ble = 'ESP32 BLE conectat la mașină' if st and st.get('state') == 'on' else ('ESP32 găsit, dar nu e conectat la mașină' if st else 'entitățile BLE nu există (verifică prefixul)')
+        return dict(ok=True, msg='Conectat la Home Assistant. %s.' % ble)
+    if what == 'notify':
+        return dict(ok=True, msg='Trimis.' if notify('test', '🔔 Test notificare', 'Notificările din aplicația Tesla funcționează.') else 'Salvat doar în istoric (nu e configurat webhook-ul).')
+    return dict(ok=False, msg='necunoscut')
+
+
 # ---------------------------------------------------------------- notificari (cablu, incarcare gata, usi) -> telefon prin webhook Home Assistant + istoric in aplicatie
 NFILE = '/data/notify.json'
 NHOOK = os.environ.get('NOTIFY_WEBHOOK', '')
@@ -1376,6 +1500,17 @@ class H(BaseHTTPRequestHandler):
                 return self.send_json(dict(ok=True, settings=st))
             if u.path == '/api/notify/test':
                 return self.send_json(dict(ok=True, sent=notify('test', '🔔 Test notificare', 'Notificările din aplicația Tesla funcționează.')))
+            if u.path in ('/api/config', '/api/config/test'):
+                if self.role != 'admin':
+                    return self.send_json(dict(ok=False, reason='Doar administratorul poate schimba setările.'), 403)
+                if FL['pin'] and not secrets.compare_digest(self.headers.get('X-Pin', ''), FL['pin']):
+                    return self.send_json(dict(ok=False, reason='PIN greșit.'), 403)
+                if not FL['pin'] and self.via_internet():
+                    return self.send_json(dict(ok=False, reason='Setează mai întâi PIN-ul din rețeaua locală (acasă).'), 403)
+                if u.path == '/api/config/test':
+                    return self.send_json(cfg_test(body.get('what')))
+                ok, err = cfg_update(body)
+                return self.send_json(dict(ok=ok, reason=err, config=cfg_public()) if ok else dict(ok=False, reason=err), 200 if ok else 400)
             if not FL['pin'] or not secrets.compare_digest(self.headers.get('X-Pin', ''), FL['pin']):
                 return self.send_json(dict(ok=False, reason='PIN greșit sau neconfigurat.'), 403)
             name = u.path.rsplit('/', 1)[1] if u.path.startswith('/api/cmd/') else ''
@@ -1432,6 +1567,10 @@ class H(BaseHTTPRequestHandler):
             return dict(available=False) if demo else charge_solar(int(p.rsplit('/', 1)[1]))
         if p == '/api/vdata':
             return DEMO_VD if demo else vehicle_data(car, a.get('force') == '1')
+        if p == '/api/config':
+            if self.role != 'admin':
+                return dict(error='forbidden')
+            return dict(demo=True) if demo else dict(cfg_public(), role=self.role)
         if p == '/api/rules':
             fg = []
             try:
@@ -1535,6 +1674,10 @@ class PublicH(BaseHTTPRequestHandler):
 
 def serve_public():
     ThreadingHTTPServer(('0.0.0.0', int(os.environ.get('PUBLIC_PORT', '4101'))), PublicH).serve_forever()
+
+
+cfg_load()
+apply_config()
 
 
 if __name__ == '__main__':

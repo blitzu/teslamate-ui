@@ -10,7 +10,7 @@ Without HA nothing changes: everything keeps working through the Fleet API.
 ## Set up
 
 1. In HA: your profile → Security → *Long-lived access tokens* → create one. Prefer a dedicated, non-admin HA user for this token (it can call services).
-2. Run:
+2. Open the app → **⚙ Settings → Home Assistant**, fill the URL, token, entity prefix (and the optional grid/PV sensors), save, and press *Test connection*. Or run:
 
 ```bash
 ./scripts/set-ha.sh

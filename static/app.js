@@ -7,7 +7,7 @@ let LANG = 'ro';
 try { LANG = localStorage.getItem('lang') || ((navigator.language || 'ro').toLowerCase().startsWith('ro') ? 'ro' : 'en'); } catch (e) { /* ignore */ }
 const LOC = () => LANG === 'ro' ? 'ro-RO' : 'en-GB';
 const EN = {
-  'Mașină': 'Car', 'Curse': 'Drives', 'Încărcări': 'Charges', 'Statistici': 'Stats',
+  'Mașină': 'Car', 'Curse': 'Drives', 'Încărcări': 'Charges', 'Statistici': 'Stats', 'Setări': 'Settings',
   'Azi': 'Today', 'Ieri': 'Yesterday', 'Prea puține date': 'Not enough data', 'Nicio mașină': 'No car',
   'Doarme': 'Asleep', 'Se încarcă': 'Charging', 'În mișcare': 'Driving', 'Suspendată': 'Suspended', 'Se actualizează': 'Updating',
   'Blocată': 'Locked', 'Deblocată': 'Unlocked', 'Sentry activ': 'Sentry on', 'Sentry oprit': 'Sentry off',
@@ -366,6 +366,8 @@ async function renderCmds() {
   let f; if (S.public_demo) f = { ready: true }; else { try { f = await api('/api/fleet/status'); } catch (e) { return; } }
   const L = (cur() || {}).live || {};
   if (!(f.ready || f.ble)) {
+    setHtml(box, `<div class="card"><p class="note" style="margin:0">${X('Comenzile nu sunt configurate încă. Completează Tesla Fleet API (și PIN-ul) în Setări; apoi urmează pașii de aici.', 'Commands are not configured yet. Fill in the Tesla Fleet API (and PIN) in Settings, then follow the steps here.')}</p><div class="links"><a href="#/settings">⚙ ${tr('Setări')}</a></div></div>`);
+    if (!f.configured || !f.pin) return;
     const step = (ok, t) => `<div class="row" style="padding:5px 0"><span style="width:22px">${ok ? '✓' : '○'}</span><span class="${ok ? '' : 'mut'}">${t}</span></div>`;
     setHtml(box, `<div class="card">${step(f.configured, 'Aplicație Tesla (client id/secret) și domeniu configurate')}${step(f.key, 'Cheie publică generată')}${step(f.pin, 'PIN setat')}${step(f.registered, 'Domeniu înregistrat la Tesla')}${step(f.authorized, 'Cont Tesla autorizat')}
       <div class="links" style="flex-wrap:wrap">
@@ -426,14 +428,12 @@ const ICON = {
   drives: 'M19 15.18V7c0-2.21-1.79-4-4-4s-4 1.79-4 4v10c0 1.1-.9 2-2 2s-2-.9-2-2V8.82C8.16 8.4 9 7.3 9 6c0-1.66-1.34-3-3-3S3 4.34 3 6c0 1.3.84 2.4 2 2.82V17c0 2.21 1.79 4 4 4s4-1.79 4-4V7c0-1.1.9-2 2-2s2 .9 2 2v8.18c-1.16.41-2 1.51-2 2.82 0 1.66 1.34 3 3 3s3-1.34 3-3c0-1.3-.84-2.4-2-2.82z',
   charges: 'M11 21h-1l1-7H7.5c-.58 0-.57-.32-.38-.66.19-.34.05-.08.07-.12C8.48 10.94 10.42 7.54 13 3h1l-1 7h3.5c.49 0 .56.33.47.51l-.07.15C12.96 17.55 11 21 11 21z',
   climate: IC.climate,
+  settings: 'M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.488.488 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z',
   stats: 'M5 9.2h3V19H5V9.2zM10.6 5h2.8v14h-2.8V5zm5.6 8H19v6h-2.8v-6z',
 };
-const TABS = [['car', 'Mașină'], ['climate', 'Clima'], ['drives', 'Curse'], ['charges', 'Încărcări'], ['stats', 'Statistici']];
+const TABS = [['car', 'Mașină'], ['climate', 'Clima'], ['drives', 'Curse'], ['charges', 'Încărcări'], ['stats', 'Statistici'], ['settings', 'Setări']];
 function renderNav(active) {
-  setHtml(nav, '<div class="in">' + TABS.map(([k, l]) => `<a href="#/${k}" class="${active === k ? 'on' : ''}"><svg viewBox="0 0 24 24"><path d="${ICON[k]}"/></svg>${l}</a>`).join('') +
-    `<a href="#" id="lang" title="Language / Limba"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm6.9 6h-2.95a15.7 15.7 0 00-1.38-3.56A8.03 8.03 0 0118.9 8zM12 4.04c.83 1.2 1.48 2.53 1.91 3.96h-3.82c.43-1.43 1.08-2.76 1.91-3.96zM4.26 14a8.2 8.2 0 010-4h3.38a16.5 16.5 0 000 4H4.26zm.84 2h2.95c.32 1.25.78 2.45 1.38 3.56A7.99 7.99 0 015.1 16zM8.05 8H5.1a7.99 7.99 0 014.33-3.56A15.7 15.7 0 008.05 8zM12 19.96A14.2 14.2 0 0110.09 16h3.82A14.2 14.2 0 0112 19.96zM14.34 14H9.66a14.7 14.7 0 010-4h4.68a14.7 14.7 0 010 4zm.25 5.56c.6-1.11 1.06-2.31 1.38-3.56h2.95a8.03 8.03 0 01-4.33 3.56zM16.36 14a16.5 16.5 0 000-4h3.38a8.2 8.2 0 010 4h-3.38z"/></svg>${LANG.toUpperCase()}</a></div>`);
-  const lg = $('#lang');
-  if (lg) lg.onclick = (e) => { e.preventDefault(); LANG = LANG === 'ro' ? 'en' : 'ro'; try { localStorage.setItem('lang', LANG); } catch (x) { /* ignore */ } document.documentElement.lang = LANG; render(); };
+  setHtml(nav, '<div class="in">' + TABS.map(([k, l]) => `<a href="#/${k}" class="${active === k ? 'on' : ''}"><svg viewBox="0 0 24 24"><path d="${ICON[k]}"/></svg>${l}</a>`).join('') + '</div>');
 }
 let renderSeq = 0;
 async function render() {
@@ -453,6 +453,7 @@ async function render() {
     else if (p === 'stats') html = await pageStats();
     else if (p === 'sleep') html = await pageSleep();
     else if (p === 'auto') html = await pageAuto();
+    else if (p === 'settings') html = await pageSettings();
     else if (p === 'climate') html = pageClimate();
     else if (p === 'trip') html = '';
     else html = pageCar();
@@ -468,6 +469,7 @@ async function render() {
   if (p === 'trip') startReplay(arg);
   if (p === 'sleep') afterSleep();
   if (p === 'auto') afterAuto();
+  if (p === 'settings') afterSettings();
   if (p === 'charge') afterChargeSolar(arg);
   if (p === 'stats') afterHealth();
   if (p === 'stats') view.querySelectorAll('.seg button').forEach((b) => b.onclick = () => { days = +b.dataset.d; render(); });

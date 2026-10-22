@@ -584,3 +584,58 @@ async function afterChargeSolar(id) {
     <div class="grid" style="margin-top:12px">${stat(X('Din rețea (import)', 'From grid (import)'), nf(d.grid_kwh, 1), 'kWh')}${stat(X('Consumat de mașină', 'Used by the car'), nf(d.car_kwh, 1), 'kWh')}</div>
     <p class="note" style="margin:8px 0 0">${X('Estimare: importul din rețea al invertorului în timpul încărcării, comparat cu energia consumată de mașină. Consumul casei din rețea în acel interval poate umfla partea „din rețea”.', 'Estimate: the inverter’s grid import during the charge versus the energy the car used. House load drawn from the grid in that window can inflate the “from grid” part.')}</p></div>`);
 }
+
+/* ---------- SETARI (#/settings): configurare din aplicatie, fara scripturi ---------- */
+async function pageSettings() {
+  const lang = `<h2>${X('Limbă', 'Language')}</h2><div class="seg"><button data-lang="ro" class="${LANG === 'ro' ? 'on' : ''}">Română</button><button data-lang="en" class="${LANG === 'en' ? 'on' : ''}">English</button></div>`;
+  if (S.public_demo) return `<div class="top"><h1>${X('Setări', 'Settings')}</h1></div>${lang}<p class="note">${X('Setările sunt dezactivate în demonstrație.', 'Settings are disabled in the demo.')}</p>`;
+  let c; try { c = await api('/api/config'); } catch (e) { return `<div class="top"><h1>${X('Setări', 'Settings')}</h1></div>${lang}<div class="empty">${X('Setările pot fi schimbate doar de administrator.', 'Only the administrator can change settings.')}</div>`; }
+  if (c.error) return `<div class="top"><h1>${X('Setări', 'Settings')}</h1></div>${lang}<div class="empty">${X('Setările pot fi schimbate doar de administrator.', 'Only the administrator can change settings.')}</div>`;
+  const f = (label, id, val, o = {}) => `<label class="cf">${label}<input id="${id}" type="${o.secret ? 'password' : (o.type || 'text')}" value="${o.secret ? '' : esc(val ?? '')}" placeholder="${o.secret ? (o.set ? X('••••••  (setat — lasă gol ca să-l păstrezi)', '••••••  (set — leave empty to keep)') : (o.ph || '')) : (o.ph || '')}" autocomplete="off" ${o.attrs || ''}></label>${o.hint ? `<small class="ch">${o.hint}</small>` : ''}`;
+  const sec2 = (title, body, save, extra = '') => `<h2>${title}</h2><div class="card cfg">${body}<div class="links"><a href="#" data-save="${save}">${X('Salvează', 'Save')}</a>${extra}</div><div class="toast" id="cm-${save}" style="display:none"></div></div>`;
+  const fl = c.fleet, ha = c.ha, ac = c.access, dp = c.display;
+  window.__pinSet = fl.pin_set;
+  return `<div class="top"><h1>${X('Setări', 'Settings')}</h1><small>${X('Totul se salvează pe server și se aplică imediat. Câmpurile secrete nu se mai afișează după salvare.', 'Everything is saved on the server and applies immediately. Secret fields are never shown again after saving.')}</small></div>
+  ${lang}
+  ${sec2(X('PIN comenzi', 'Command PIN'), f(fl.pin_set ? X('PIN nou (lasă gol ca să-l păstrezi)', 'New PIN (leave empty to keep)') : X('Setează un PIN (min. 4 caractere)', 'Set a PIN (min. 4 characters)'), 'pin', '', { secret: true, set: false, attrs: 'inputmode="numeric"' }) + `<small class="ch">${fl.pin_set ? X('PIN-ul e setat. Orice schimbare cere PIN-ul actual.', 'A PIN is set. Any change asks for the current PIN.') : X('Fără PIN nu se pot trimite comenzi. Prima setare se face doar din rețeaua locală.', 'No commands without a PIN. The first setup must be done on the local network.')}</small>`, 'pin')}
+  ${sec2('Tesla Fleet API', f('Client ID', 'fleet_id', fl.id) + f('Client Secret', 'fleet_secret', '', { secret: true, set: fl.secret_set }) + f(X('Domeniu public (fără https://)', 'Public domain (without https://)'), 'fleet_domain', fl.domain, { ph: 'tesla.example.com' })
+    + `<label class="cf">${X('Regiune', 'Region')}<select id="fleet_base"><option value="https://fleet-api.prd.eu.vn.cloud.tesla.com" ${fl.base.includes('.eu.') ? 'selected' : ''}>Europa / Orientul Mijlociu / Africa</option><option value="https://fleet-api.prd.na.vn.cloud.tesla.com" ${fl.base.includes('.na.') ? 'selected' : ''}>America de Nord / Asia-Pacific</option><option value="https://fleet-api.prd.cn.vn.cloud.tesla.cn" ${fl.base.includes('.cn.') ? 'selected' : ''}>China</option></select></label>`
+    + `<small class="ch">${X('După salvare, pașii (înregistrare domeniu, conectare cont, cheie virtuală) apar în cardul „Comenzi” din pagina Mașină.', 'After saving, the steps (register domain, connect account, virtual key) appear in the “Controls” card on the Car page.')} <a href="https://github.com/blitzu/teslamate-ui/blob/main/docs/fleet-api.md" target="_blank" rel="noopener" style="color:var(--gold)">${X('Ghid complet', 'Full guide')}</a></small>`, 'fleet')}
+  ${sec2('Home Assistant (BLE + energie)', f('URL Home Assistant', 'ha_url', ha.url, { ph: 'http://homeassistant.local:8123' }) + f(X('Token de acces (long-lived)', 'Long-lived access token'), 'ha_token', '', { secret: true, set: ha.token_set })
+    + f(X('Prefix entități ESP32 BLE', 'ESP32 BLE entity prefix'), 'ha_prefix', ha.prefix, { ph: 'tesla_ble' }) + sw('ha_ble', ha.ble, X('Comenzi locale prin BLE când e disponibil', 'Local BLE commands when available'))
+    + f(X('Senzor import rețea (W) — opțional', 'Grid import sensor (W) — optional'), 'ha_grid', ha.grid, { ph: 'sensor.invertor_grid_import_power' }) + f(X('Senzor putere fotovoltaică (W) — opțional', 'PV power sensor (W) — optional'), 'ha_pv', ha.pv, { ph: 'sensor.invertor_pv_power' }), 'ha', `<a href="#" data-test="ha">${X('Testează conexiunea', 'Test connection')}</a>`)}
+  ${sec2(X('Notificări', 'Notifications'), f('Webhook (POST JSON: title, message, kind)', 'notify_webhook', '', { secret: true, set: c.notify.webhook_set, ph: 'http://homeassistant:8123/api/webhook/…' }), 'notify', `<a href="#" data-test="notify">${X('Trimite test', 'Send test')}</a>`)}
+  ${sec2(X('Acces din internet și roluri', 'Internet access & roles'), f(X('Parolă pentru acces din internet (min. 12 caractere)', 'Password for internet access (min. 12 characters)'), 'app_password', '', { secret: true, set: ac.password_set })
+    + f('Cloudflare Access — team domain', 'acc_team', ac.team, { ph: 'echipa.cloudflareaccess.com' }) + f('Cloudflare Access — AUD tag', 'acc_aud', ac.aud) + f(X('E-mail administrator', 'Administrator e-mail'), 'acc_email', ac.email)
+    + f(X('Roluri (email:rol, separate prin virgulă; roluri: admin, family, viewer)', 'Roles (email:role, comma-separated; roles: admin, family, viewer)'), 'roles', ac.roles, { ph: 'sotia@example.com:family' }), 'access')}
+  ${sec2(X('Afișare', 'Display'), f(X('Monedă (lângă costul încărcărilor)', 'Currency (next to charging cost)'), 'currency', dp.currency) + f('URL TeslaMate', 'link_tm', dp.teslamate, { ph: 'http://…:4000' }) + f('URL Grafana', 'link_gf', dp.grafana, { ph: 'http://…:3000' }), 'display')}`;
+}
+function afterSettings() {
+  view.querySelectorAll('[data-lang]').forEach((b) => b.onclick = () => { LANG = b.dataset.lang; try { localStorage.setItem('lang', LANG); } catch (x) { /* ignore */ } document.documentElement.lang = LANG; render(); });
+  const FIELDS = { pin: ['pin'], fleet: ['fleet_id', 'fleet_secret', 'fleet_domain', 'fleet_base'], ha: ['ha_url', 'ha_token', 'ha_prefix', 'ha_grid', 'ha_pv'], notify: ['notify_webhook'],
+    access: ['app_password', 'acc_team', 'acc_aud', 'acc_email', 'roles'], display: ['currency', 'link_tm', 'link_gf'] };
+  const say = (k, t, cls) => { const m = document.getElementById('cm-' + k); if (m) { m.style.display = ''; m.textContent = t; m.className = 'toast ' + (cls || ''); } };
+  const call = async (path, body, k) => {
+    const pinSet = (window.__pinSet !== false);
+    let pin = localStorage.getItem('pin') || '';
+    if (!pin && pinSet) pin = getPin();
+    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Pin': pin || '' }, body: JSON.stringify(body) });
+    const j = await r.json();
+    if (r.status === 403 && /PIN/.test(j.reason || '')) { localStorage.removeItem('pin'); }
+    return [r.ok, j];
+  };
+  view.querySelectorAll('[data-save]').forEach((b) => b.onclick = async (e) => {
+    e.preventDefault(); const k = b.dataset.save, body = {};
+    FIELDS[k].forEach((id) => { const el = document.getElementById(id); if (el) body[id] = el.value; });
+    if (k === 'ha') body.ha_ble = document.getElementById('ha_ble').checked ? '1' : '0';
+    say(k, X('Se salvează…', 'Saving…'), 'busy');
+    const [ok, j] = await call('/api/config', body, k);
+    if (ok && j.ok) { if (k === 'pin' && body.pin) localStorage.setItem('pin', body.pin); say(k, '✓ ' + X('Salvat', 'Saved'), 'ok'); setTimeout(render, 900); }
+    else say(k, '✗ ' + (j.reason || j.error || X('Eroare', 'Error')), 'bad');
+  });
+  view.querySelectorAll('[data-test]').forEach((b) => b.onclick = async (e) => {
+    e.preventDefault(); const k = b.dataset.test; say(k, X('Se testează…', 'Testing…'), 'busy');
+    const [ok, j] = await call('/api/config/test', { what: k }, k);
+    say(k, (j.ok ? '✓ ' : '✗ ') + (j.msg || j.reason || ''), j.ok ? 'ok' : 'bad');
+  });
+}

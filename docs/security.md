@@ -14,7 +14,7 @@ The private key (`fleet/private-key.pem`) never leaves your host.
 
 ## Layers of protection
 
-1. **PIN** — every command (`POST /api/cmd/*`) must carry your `APP_PIN`. Set by `scripts/set-fleet.sh`; stored in plain text in `.env.fleet`, so keep that file mode `600`.
+1. **PIN** — every command (`POST /api/cmd/*`) must carry your PIN. Set in **Settings → Command PIN** (or `scripts/set-fleet.sh`); stored in plain text in `.env.fleet`, so keep that file mode `600`.
 2. **LAN is open by default.** Requests that arrive *through a proxy or tunnel* (they carry `X-Forwarded-For` / `Cf-*` headers) are treated as "internet" and are **refused** unless one of these is configured:
    * **Cloudflare Access** (recommended, below), or
    * **an app password** — `./scripts/set-password.sh` (login form; cookie valid 30 days; 5 wrong attempts per 10 min per IP).

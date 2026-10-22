@@ -25,6 +25,9 @@ docker compose up -d --build
 
 Deschide `http://<server>:4100`. Valorile pentru `.env` le iei din containerul TeslaMate (`docker inspect … | grep -E 'DATABASE|MQTT'`), iar `TESLAMATE_NETWORK` din `docker network ls`.
 
+## Setări în aplicație
+Tot ce e mai jos se configurează din **⚙ Setări** (doar administrator): PIN, Tesla Fleet API, Home Assistant, webhook notificări, acces din internet și roluri. Se salvează în `data/config.json` și se aplică imediat. Primul PIN se poate seta doar din rețeaua locală.
+
 ## Comenzi, acces din internet, notificări
 Pașii complecți (în engleză): [docs/fleet-api.md](docs/fleet-api.md) (aplicația Tesla developer, domeniu, cheie virtuală), [docs/security.md](docs/security.md) (Cloudflare Access, PIN, parolă), [docs/notifications.md](docs/notifications.md) (webhook + exemplu Home Assistant), [docs/troubleshooting.md](docs/troubleshooting.md).
 

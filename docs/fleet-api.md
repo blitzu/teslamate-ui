@@ -48,6 +48,8 @@ At <https://developer.tesla.com> → create an app:
 
 ## 4. Give the app its credentials
 
+Open the app → **⚙ Settings** → *Command PIN* (set a PIN) and *Tesla Fleet API* (Client ID, Client Secret, domain, region) and save. Or, from a terminal:
+
 ```bash
 ./scripts/set-fleet.sh
 ```

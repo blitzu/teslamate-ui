@@ -71,6 +71,10 @@ docker inspect <teslamate-container> --format '{{range .Config.Env}}{{println .}
 
 Use those DB/MQTT values in `.env` (`DATABASE_HOST` and `MQTT_HOST` are the *service names* on that network, usually `database` and `mosquitto`).
 
+## Settings page
+
+Everything below can be configured **in the app** (⚙ Settings tab, administrator only): command PIN, Tesla Fleet API credentials, Home Assistant link, notification webhook, internet access/roles, currency and links. Values are saved in `./data/config.json` (mode 600) and apply immediately; secret fields are never shown again. The scripts in `scripts/` and the `.env.*` files remain available and act as defaults (the Settings page overrides them). The very first PIN can only be set from your local network.
+
 ## Enable commands (Fleet API)
 
 Controls need a Tesla developer app, a public HTTPS domain that serves your public key, and a virtual key installed in the car. Step by step in **[docs/fleet-api.md](docs/fleet-api.md)**.
