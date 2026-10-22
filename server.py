@@ -1814,7 +1814,7 @@ def la_payload(car):
     shift = lv.get('shift_state')
     opened = [w for k, w in OPEN_KEYS.items() if lv.get(k) is True]
     if opened and shift in (None, 'P') and lv.get('locked') is not False:
-        return 'open', '🚪 Deschis', '%s: %s e deschis(ă). Baterie %s%%.' % (nm, opened[0], soc), dict(base, critical_text='Deschis', notification_icon='mdi:car-door', notification_icon_color='#FFB15C', progress=soc, progress_max=100, progress_bar_color='#FFB15C')
+        return 'open', 'Deschis', opened[0].capitalize(), dict(base, critical_text='Deschis', notification_icon='mdi:car-door', notification_icon_color='#FFB15C', progress=soc, progress_max=100, progress_bar_color='#FFB15C')
     cs = lv.get('charging_state')
     if cs == 'Charging':
         tl = lv.get('time_to_full_charge') or 0
@@ -1822,14 +1822,14 @@ def la_payload(car):
         rest = ('%d h %02d min' % (int(tl), int(tl % 1 * 60))) if tl >= 1 else ('%d min' % max(1, round(tl * 60))) if tl else ''
         d = dict(base, critical_text=rest or '%s%%' % soc, notification_icon='mdi:ev-station', notification_icon_color='#4CC2A0', progress=soc, progress_max=max(lim, soc + 1), progress_bar_color='#4CC2A0',
                  background_color='#0B0D10', text_color='#FFFFFF')
-        return 'charge', 'Se încarcă · %d kW' % kw, ('%s%% → %s%%%s' % (soc, lim, (' · încă ' + rest) if rest else '')), d
+        return 'charge', '%s%% · %d kW' % (soc, kw), ('%s rămase' % rest) if rest else 'Se încarcă', d
     if cs == 'Complete' and lv.get('plugged_in'):
-        return 'complete', '✅ Încărcare terminată', '%s: baterie %s%%.' % (nm, soc), dict(base, critical_text='%s%%' % soc, notification_icon='mdi:battery-check', notification_icon_color='#4CC2A0', progress=soc, progress_max=100, progress_bar_color='#4CC2A0')
+        return 'complete', 'Încărcare terminată', '%s%%' % soc, dict(base, critical_text='%s%%' % soc, notification_icon='mdi:battery-check', notification_icon_color='#4CC2A0', progress=soc, progress_max=100, progress_bar_color='#4CC2A0')
     if st.get('live_drive') and shift in ('D', 'R', 'N'):
         v = lv.get('speed') or 0
-        return 'drive', 'În mers · %d km/h' % round(v), 'Baterie %s%%%s' % (soc, (' · ' + str(lv['geofence'])) if lv.get('geofence') else ''), dict(base, critical_text='%d km/h' % round(v), notification_icon='mdi:car', notification_icon_color='#7AA8FF', progress=soc, progress_max=100, progress_bar_color='#7AA8FF', silent=True)
+        return 'drive', 'În mers', '%d km/h' % round(v), dict(base, critical_text='%d km/h' % round(v), notification_icon='mdi:car', notification_icon_color='#7AA8FF', progress=soc, progress_max=100, progress_bar_color='#7AA8FF', silent=True)
     if lv.get('plugged_in') and cs in ('Stopped', 'NoPower', 'Starting', None, 'Disconnected') and shift in (None, 'P'):
-        return 'plugged', '🔌 Conectată', '%s: baterie %s%%, încărcarea nu rulează.' % (nm, soc), dict(base, critical_text='%s%%' % soc, notification_icon='mdi:ev-plug-type2', notification_icon_color='#8F99A4', progress=soc, progress_max=100, progress_bar_color='#8F99A4')
+        return 'plugged', 'Conectată', '%s%%' % soc, dict(base, critical_text='%s%%' % soc, notification_icon='mdi:ev-plug-type2', notification_icon_color='#8F99A4', progress=soc, progress_max=100, progress_bar_color='#8F99A4')
     return None
 
 
