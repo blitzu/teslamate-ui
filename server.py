@@ -661,10 +661,15 @@ def charge_solar(cid):
     """Estimare: cat din energia unei incarcari a venit din retea (import invertor) vs. restul (solar/baterie casa)."""
     if not (ha_ok() and HA['grid']):
         return dict(available=False)
-    cp = q("select start_date, end_date, charge_energy_used, charge_energy_added from charging_processes where id=%s", (cid,))
+    cp = q(f"""select cp.start_date, cp.end_date, cp.charge_energy_used, cp.charge_energy_added, {NAME_A} as name,
+        coalesce((select bool_or(fast_charger_present) from charges ch where ch.charging_process_id=cp.id), false) as dc,
+        coalesce((select max(charger_power) from charges ch where ch.charging_process_id=cp.id), 0) as pmax
+        from charging_processes cp left join geofences g on g.id=cp.geofence_id left join addresses a on a.id=cp.address_id where cp.id=%s""", (cid,))
     if not cp or not cp[0]['end_date']:
         return dict(available=False)
     cp = cp[0]
+    if cp['dc'] or (cp['pmax'] or 0) > 25 or not re.search(r'acas|home', cp['name'] or '', re.I):
+        return dict(available=False, reason='Estimarea se face doar pentru încărcări AC acasă.')
     t0, t1 = _dtp(cp['start_date']), _dtp(cp['end_date'])
     car_kwh = cp['charge_energy_used'] or cp['charge_energy_added'] or 0
     grid = _integral(ha_history(HA['grid'], t0 - dt.timedelta(minutes=1), t1), t0.replace(tzinfo=dt.timezone.utc).timestamp(), t1.replace(tzinfo=dt.timezone.utc).timestamp())
