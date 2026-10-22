@@ -917,7 +917,7 @@ async function refreshOpenings(c) {
     const n = JSON.stringify(d.openings || {});
     if (d.openings && n !== JSON.stringify(S.opens[c.id] || {})) {
       S.opens[c.id] = d.openings;
-      const sv = document.getElementById('sidev'); if (sv) sv.innerHTML = sideView(L, d.openings);
+      const pp = document.getElementById('pp'); if (pp) pp.outerHTML = openPhoto(L, d.openings);
       const ch = document.getElementById('openchips'); if (ch) ch.innerHTML = openChips(L, d.openings);
     }
   } catch (e) { /* ignore */ } finally { openBusy = false; }
@@ -958,4 +958,26 @@ function sideView(L, o) {
   if (left || !right) views.push(sideSvg('L', Object.assign({ fd: st.doors.fl || half, rd: st.doors.rl || half, half }, both)));
   if (right) views.push(sideSvg('R', Object.assign({ fd: st.doors.fr, rd: st.doors.rr }, left ? { win: st.windows } : both)));
   return `<div class="sideview ${views.length > 1 ? 'two' : ''}">${views.join('')}</div>`;
+}
+
+
+/* ---------- Deschideri realiste: portiuni din POZA REALA a masinii se rotesc/se ridica (nu desen) ---------- */
+function openPhoto(L, o) {
+  const st = openState(L, o);
+  const any = st.anyDoor || st.frunk || st.trunk || st.windows;
+  if (!any) return '<div class="pp" id="pp"></div>';
+  const bg = "background-image:url('/car.png')";
+  const piece = (poly, cls, origin, under) => `${under ? `<div class="ppu" style="clip-path:polygon(${poly})"></div>` : ''}<div class="ppc ${cls}" style="${bg};clip-path:polygon(${poly});transform-origin:${origin}"></div>`;
+  const rect = (x0, y0, x1, y1) => `${x0}% ${y0}%,${x1}% ${y0}%,${x1}% ${y1}%,${x0}% ${y1}%`;
+  let h = '';
+  if (st.doorsKnown) {
+    if (st.doors.fl) h += piece(rect(3.5, 33.5, 23.5, 58.6), 'dl', '5% 34%', 1);
+    if (st.doors.rl) h += piece(rect(3.5, 58.6, 23.5, 80), 'dl2', '5% 80%', 1);
+    if (st.doors.fr) h += piece(rect(76.5, 33.5, 96.5, 58.6), 'dr', '95% 34%', 1);
+    if (st.doors.rr) h += piece(rect(76.5, 58.6, 96.5, 80), 'dr2', '95% 80%', 1);
+  } else if (st.anyDoor) h += '<div class="pg" style="left:3%;top:33%;width:22%;height:48%"></div><div class="pg" style="left:75%;top:33%;width:22%;height:48%"></div>';
+  if (st.frunk) h += piece(rect(21, 3, 79, 24), 'hd', '50% 24%', 1);
+  if (st.trunk) h += piece(rect(19, 80.5, 81, 95), 'tk', '50% 80.5%', 1);
+  if (st.windows) h += '<svg class="pw" viewBox="0 0 640 1400"><path d="M62 540V1090M578 540V1090"/></svg>';
+  return `<div class="pp" id="pp">${h}</div>`;
 }

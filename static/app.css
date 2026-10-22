@@ -283,3 +283,14 @@ body.nav-open #nav{transform:none;box-shadow:0 0 40px #000a}
 .sv .hood.open{animation:shood .9s cubic-bezier(.2,.8,.3,1) forwards}.sv .tr.open{animation:str .9s cubic-bezier(.2,.8,.3,1) forwards}
 @keyframes shood{to{transform:rotate(24deg)}}@keyframes str{to{transform:rotate(-30deg)}}
 .sv .win{transition:transform .9s}.sv .win.dn{transform:translateY(32px)}
+
+/* piese din poza reala care se deschid */
+.pp{position:absolute;inset:0;pointer-events:none}
+.ppc,.ppu,.pg{position:absolute;inset:0;background-size:100% 100%;background-repeat:no-repeat}
+.ppu{background:#0a0b0d;opacity:.92}
+.ppc{filter:drop-shadow(0 6px 8px #000a);animation-duration:.9s;animation-timing-function:cubic-bezier(.2,.8,.3,1);animation-fill-mode:forwards}
+.ppc.dl{animation-name:pdl}.ppc.dl2{animation-name:pdl2}.ppc.dr{animation-name:pdr}.ppc.dr2{animation-name:pdr2}.ppc.hd{animation-name:phd}.ppc.tk{animation-name:ptk}
+@keyframes pdl{to{transform:rotate(38deg)}}@keyframes pdl2{to{transform:rotate(-38deg)}}@keyframes pdr{to{transform:rotate(-38deg)}}@keyframes pdr2{to{transform:rotate(38deg)}}
+@keyframes phd{to{transform:scaleY(.62);filter:brightness(.8) drop-shadow(0 8px 10px #000b)}}@keyframes ptk{to{transform:scaleY(.62);filter:brightness(.8) drop-shadow(0 -8px 10px #000b)}}
+.pg{border-radius:26px;border:3px solid #ffb15c;background:#ffb15c33;animation:glow 1.6s ease-in-out infinite}
+.pw{position:absolute;inset:0;width:100%;height:100%}.pw path{fill:none;stroke:#8fd3ff;stroke-width:6;stroke-linecap:round;stroke-dasharray:4 16;animation:dash 1.2s linear infinite}
