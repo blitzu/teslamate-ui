@@ -399,6 +399,18 @@ def overview(car, days):
         where d.car_id=%s and d.start_date>=%s group by 1 order by 1""", (car, since))
     chday = q("""select to_char(date_trunc('day', start_date),'YYYY-MM-DD') as day, sum(charge_energy_added) kwh, sum(cost) cost
         from charging_processes where car_id=%s and start_date>=%s group by 1 order by 1""", (car, since))
+    if ha_ok() and HA['grid']:
+        try:                                                  # cost real: AC acasa = import retea x tarif; restul (DC/public) = cost TeslaMate
+            budget, tot = 60, 0.0
+            for r in _charges_rows(car, 600, 0):
+                if _dtp(r['start_date']) < since:
+                    continue
+                val, fetched = real_cost(r, budget > 0)
+                budget -= 1 if fetched else 0
+                tot += val if val is not None else (r['cost'] or 0)
+            ch['cost_real'] = round(tot, 2)
+        except Exception as e:  # noqa
+            print('overview real cost:', e, flush=True)
     odo = q("select max(odometer) odo from positions where car_id=%s", (car,))
     return dict(days=days, drives=d, charges=ch, by_day=byday, charge_by_day=chday, odometer=(odo[0]['odo'] if odo else None))
 
