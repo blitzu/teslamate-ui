@@ -430,10 +430,11 @@ def update_check():
             notify('app_update', '🆕 Versiune nouă: v%s' % UPD['latest'], 'Ai v%s. Deschide Setări → Actualizări.' % APP_VERSION)
         return dict(ok=True, latest=UPD['latest'], newer=newer)
     except Exception as e:  # noqa
+        msg = 'niciun release publicat încă' if (isinstance(e, urllib.error.HTTPError) and e.code == 404) else str(e)[:200]
         with ULOCK:
-            UPD.update(error=str(e)[:200], checked=int(time.time()))
-        log('verificare versiune: %s' % e)
-        return dict(ok=False, reason=str(e)[:200])
+            UPD.update(error=msg, checked=int(time.time()))
+        log('verificare versiune: %s' % msg)
+        return dict(ok=False, reason=msg)
 
 
 def update_loop():
