@@ -536,7 +536,7 @@ async function pageAuto() {
   const d = await api('/api/rules');
   const nm = (r) => r.type === 'arrive_gate' ? X('La sosirea în „', 'On arriving at “') + esc(r.geofence) + X('” deschide poarta (HomeLink)', '” open the gate (HomeLink)')
     : r.type === 'plug_limit' ? X('La conectarea cablului', 'When the cable is plugged in') + (r.geofence ? X(' la „', ' at “') + esc(r.geofence) + '”' : '') + X(': limită ', ': limit ') + r.limit + '%'
-    : X('Pornește clima la ', 'Start climate at ') + r.time + ' · ' + (r.days === 'WEEKDAYS' ? X('Luni–Vineri', 'Weekdays') : r.days === 'WEEKEND' ? 'Weekend' : X('zilnic', 'daily'));
+    : X('Pornește clima la ', 'Start climate at ') + esc(r.time) + ' · ' + (r.days === 'WEEKDAYS' ? X('Luni–Vineri', 'Weekdays') : r.days === 'WEEKEND' ? 'Weekend' : X('zilnic', 'daily'));
   const list = d.rules.map((r) => `<div class="row srow"><div><b style="font-size:14px">${nm(r)}</b><small>${r.enabled ? X('activă', 'on') : X('oprită', 'off')}</small></div><div class="sp"></div>
     <label class="sw" style="padding:0"><input type="checkbox" data-rt="${r.id}" ${r.enabled ? 'checked' : ''}><i></i></label><button class="x" data-rd="${r.id}" style="margin-left:10px">✕</button></div>`).join('') || `<div class="mut" style="font-size:13px">${X('Nicio automatizare încă.', 'No automations yet.')}</div>`;
   const fg = d.geofences.map((g) => `<option>${esc(g)}</option>`).join('');
@@ -549,7 +549,7 @@ async function pageAuto() {
     <div class="links"><a href="#" id="radd">${X('Adaugă automatizarea', 'Add automation')}</a></div></div>
   <div class="toast" id="rmsg">${X('Poarta și deschiderile cer prudență: GPS-ul poate „sări”. Fiecare regulă are pauză de 10 minute între declanșări.', 'Gates and openings need care: GPS can jitter. Each rule has a 10-minute cooldown between triggers.')}</div>
   <h2>${X('Ultimele execuții', 'Recent runs')}</h2><div class="card">${log}</div>
-  <script type="application/json" id="rgf">${JSON.stringify(d.geofences)}</script>`;
+  <script type="application/json" id="rgf">${JSON.stringify(d.geofences).replace(/</g, '\\u003c')}</script>`;
 }
 function afterAuto() {
   const gf = JSON.parse(document.getElementById('rgf')?.textContent || '[]'), opt = gf.map((g) => `<option>${esc(g)}</option>`).join('');
@@ -610,6 +610,7 @@ async function pageSettings() {
   ${sec2(X('Notificări', 'Notifications'), f('Webhook (POST JSON: title, message, kind)', 'notify_webhook', '', { secret: true, set: c.notify.webhook_set, ph: 'http://homeassistant:8123/api/webhook/…' }), 'notify', `<a href="#" data-test="notify">${X('Trimite test', 'Send test')}</a>`)}
   ${sec2(X('Import din Tessie', 'Import from Tessie'), f(X('Token API Tessie', 'Tessie API token'), 'tessie_token', '', { secret: true, set: c.tessie.token_set, hint: X('Tokenul de acces din contul tău Tessie (vezi developer.tessie.com). Se folosește doar pentru a citi istoricul tău.', 'The access token from your Tessie account (see developer.tessie.com). Used only to read your history.') })
     + `<div id="timp" class="note" style="margin:12px 2px 0"></div>`, 'tessie', `<a href="#" data-imp="check">${X('Verifică', 'Check')}</a><a href="#" data-imp="dry">${X('Test (fără scriere)', 'Test (no writes)')}</a><a href="#" data-imp="run">${X('Importă', 'Import')}</a><a href="#" data-imp="undo">${X('Anulează importul', 'Undo import')}</a>`)}
+  ${S.lan_open ? `<div class="card" style="border:1px solid #ef7a7a66"><b style="color:#ffb3b3">${X('Rețeaua locală nu are parolă', 'The local network has no password')}</b><p class="note" style="margin:6px 0 0">${X('Oricine din Wi-Fi-ul tău poate vedea și comanda mașina. Setează mai jos o parolă (min. 12 caractere): după salvare, și accesul din rețeaua locală va cere autentificare (o singură dată pe dispozitiv, 30 de zile).', 'Anyone on your Wi-Fi can see and control the car. Set a password below (min. 12 characters): once saved, local network access also asks you to sign in (once per device, 30 days).')}</p></div>` : ''}
   ${sec2(X('Acces din internet și roluri', 'Internet access & roles'), f(X('Parolă pentru acces din internet (min. 12 caractere)', 'Password for internet access (min. 12 characters)'), 'app_password', '', { secret: true, set: ac.password_set })
     + f('Cloudflare Access — team domain', 'acc_team', ac.team, { ph: 'echipa.cloudflareaccess.com' }) + f('Cloudflare Access — AUD tag', 'acc_aud', ac.aud) + f(X('E-mail administrator', 'Administrator e-mail'), 'acc_email', ac.email)
     + f(X('Roluri (email:rol, separate prin virgulă; roluri: admin, family, viewer)', 'Roles (email:role, comma-separated; roles: admin, family, viewer)'), 'roles', ac.roles, { ph: 'sotia@example.com:family' }), 'access')}
@@ -810,7 +811,7 @@ async function pfDiag() {
   let line = [];
   if (se.sim) { box.innerHTML = ''; return; }
   if (se.waking) line.push('⏳ ' + X('Trezesc mașina…', 'Waking the car…'));
-  if (cn) line.push((cn.status === 'CONNECTED' ? '🟢 ' : '⚪ ') + X('Mașina ' + (cn.status === 'CONNECTED' ? 'e conectată la serverul de telemetrie' : 'nu e conectată acum') + (cn.net ? ' (' + cn.net + ')' : '') + ', acum ' + Math.round(now - cn.at) + ' s', 'Car ' + (cn.status === 'CONNECTED' ? 'is connected to the telemetry server' : 'is not connected now') + (cn.net ? ' (' + cn.net + ')' : '') + ', ' + Math.round(now - cn.at) + ' s ago'));
+  if (cn) line.push((cn.status === 'CONNECTED' ? '🟢 ' : '⚪ ') + X('Mașina ' + (cn.status === 'CONNECTED' ? 'e conectată la serverul de telemetrie' : 'nu e conectată acum') + (cn.net ? ' (' + esc(cn.net) + ')' : '') + ', acum ' + Math.round(now - cn.at) + ' s', 'Car ' + (cn.status === 'CONNECTED' ? 'is connected to the telemetry server' : 'is not connected now') + (cn.net ? ' (' + esc(cn.net) + ')' : '') + ', ' + Math.round(now - cn.at) + ' s ago'));
   line.push(age == null ? X('Nu am primit încă nicio dată.', 'No data received yet.') : X('Ultimul pachet: acum ' + age + ' s', 'Last packet: ' + age + ' s ago'));
   try { const dg = await api('/api/profiler/diag'); if (dg.ok && !dg.sim) line.push((dg.synced ? '✓ ' : '… ') + X('Configurația ' + (dg.synced ? 'e aplicată pe mașină' : 'așteaptă să fie preluată de mașină (trebuie să fie trează și online)'), 'Configuration ' + (dg.synced ? 'is applied on the car' : 'is waiting for the car to fetch it (it must be awake and online)'))); } catch (e) { /* ignore */ }
   if ((age == null || age > 20) && Date.now() / 1000 - se.started > 25) line.push('<a href="#" id="pfwake" style="color:var(--gold)">' + X('Trezește mașina', 'Wake the car') + '</a>');
@@ -848,7 +849,7 @@ function pfRenderData() {
   const T0 = PFS.values, v = (n) => (T0[n] ? T0[n][0] : null);
   const names = Object.keys(T0).filter((n) => !q2 || n.toLowerCase().includes(q2) || pfLabel(n).toLowerCase().includes(q2));
   const tiles = [[X('Viteză', 'Speed'), v('VehicleSpeed'), 'km/h'], [X('Baterie', 'Battery'), v('BatteryLevel') ?? v('Soc'), '%'], [X('Putere încărcare', 'Charging power'), v('DCChargingPower') || v('ACChargingPower'), 'kW'], [X('Tensiune pachet', 'Pack voltage'), v('PackVoltage'), 'V'], [X('Curent pachet', 'Pack current'), v('PackCurrent'), 'A'], [X('Temp. interior', 'Inside temp'), v('InsideTemp'), '°C']].filter((t) => t[1] != null);
-  const tl = $('#pftiles'); if (tl) tl.innerHTML = tiles.map((t) => `<div class="st"><i>${t[0]}</i><b>${pfFmt('', t[1])}<small>${t[2]}</small></b></div>`).join('');
+  const tl = $('#pftiles'); if (tl) tl.innerHTML = tiles.map((t) => `<div class="st"><i>${t[0]}</i><b>${esc(pfFmt('', t[1]))}<small>${esc(t[2])}</small></b></div>`).join('');
   const box = $('#pflist'); if (!box) return;
   if (!names.length) { box.innerHTML = `<div class="empty">${PFS.status.session ? X('Aștept date de la mașină… (mașina trebuie să fie trează și online)', 'Waiting for data from the car… (the car must be awake and online)') : X('Pornește o sesiune ca să vezi semnalele live.', 'Start a session to see live signals.')}</div>`; return; }
   // grupuri ca in Tessie: semnale inrudite (ex. DiMotorCurrentF/R/REL/RER) intr-un rand de celule; restul pe categorii
@@ -860,7 +861,7 @@ function pfRenderData() {
   Object.keys(PFS.cats).forEach((c) => { if (singles[c]) groups.push([PFS.cats[c], singles[c].sort(), '']); });
   const now = Date.now() / 1000;
   const cell = (n) => { const [val, ts] = T0[n], m = PFS.meta[n] || {}, h = PFS.hist[n], age = now - ts, num = typeof val === 'number';
-    return `<div class="pf-c ${age > 30 ? 'old' : ''}" data-n="${n}"><div class="pf-cn"><span>${n}</span><button class="pf-s ${fav.includes(n) ? 'on' : ''}" data-fav="${n}" aria-label="favorite">★</button></div><div class="pf-cv">${esc(pfFmt(n, val))}${m.unit && num ? '<small> ' + m.unit + '</small>' : ''}</div>${num ? spark(h, m.unit) : ''}</div>`; };
+    return `<div class="pf-c ${age > 30 ? 'old' : ''}" data-n="${esc(n)}"><div class="pf-cn"><span>${esc(n)}</span><button class="pf-s ${fav.includes(n) ? 'on' : ''}" data-fav="${esc(n)}" aria-label="favorite">★</button></div><div class="pf-cv">${esc(pfFmt(n, val))}${m.unit && num ? '<small> ' + m.unit + '</small>' : ''}</div>${num ? spark(h, m.unit) : ''}</div>`; };
   box.innerHTML = `<div class="pf-panel">${groups.map(([title, arr, unit]) => `<section class="pf-g"><h3><svg viewBox="0 0 24 24"><path d="${PF_ICO[unit] || PF_ICO.bar}"/></svg>${esc(title)}</h3><div class="pf-gr">${arr.map(cell).join('')}</div></section>`).join('')}</div>`;
   box.querySelectorAll('[data-fav]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); const f = lsGet('pf_fav', []), i = f.indexOf(b.dataset.fav); if (i < 0) f.push(b.dataset.fav); else f.splice(i, 1); lsSet('pf_fav', f); pfRenderData(); });
 }
@@ -1051,9 +1052,10 @@ function drawChargeList() {
   fb.querySelectorAll('[data-cd]').forEach((b) => b.onclick = () => { chF.d = +b.dataset.cd; drawChargeList(); });
   fb.querySelectorAll('[data-cp]').forEach((b) => b.onclick = () => { const i = +b.dataset.cp; chF.p = i < 0 ? null : chKeys[i]; drawChargeList(); });
 }
-function afterChargeEdit() {
+async function afterChargeEdit() {
   const box = $('#chedit'), c = window.__chrow; if (!box || !c) return;
-  const cu = esc(CU()), provs = [...new Set((window.__chrows || []).map((r) => r.provider).filter(Boolean))].sort();
+  if (!chRows.length) { try { chRows = await fetchCharges(); } catch (x) { /* ignore */ } }
+  const cu = esc(CU()), provs = [...new Set(chRows.map((r) => r.provider).filter(Boolean))].sort();
   const eff = c.cost_real ?? c.cost;
   setHtml(box, `<h2>${X('Cost și furnizor', 'Cost & provider')}</h2><div class="card">
     <div class="addf"><label>${X('Cost total', 'Total cost')} (${cu})<input id="ce_cost" type="number" inputmode="decimal" step="0.01" min="0" value="${c.cost_manual ?? ''}" placeholder="${eff != null ? nf(eff, 2) : ''}"></label>

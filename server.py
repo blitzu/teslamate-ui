@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """TeslaMate UI (stil Tessie): backend. MQTT (live) + Postgres TeslaMate (istoric) -> JSON/SSE. Fara date demo cat timp TeslaMate nu are masini => mod DEMO."""
-import json, math, os, re, queue, random, secrets, ssl, threading, time, datetime as dt
+import json, math, os, re, queue, random, secrets, shutil, ssl, threading, time, datetime as dt
 import urllib.request, urllib.error, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -64,6 +64,10 @@ def mqtt_thread():
         car, key = int(parts[0]), parts[1]
         val = conv(m.payload.decode('utf-8', 'replace'))
         d = LIVE.setdefault(car, {})
+        known = key in d
+        if not known and val is None:
+            d[key] = None                         # "gol" cunoscut (ex. in afara oricarui geofence): intrarea ulterioara intr-un geofence conteaza ca sosire
+            return
         if d.get(key) != val:
             prev = d.get(key)
             d[key] = val
@@ -71,7 +75,7 @@ def mqtt_thread():
             broadcast({'car': car, 'k': key, 'v': val})
             try:
                 notify_check(car, key, prev, val)
-                rules_check(car, key, prev, val)
+                rules_check(car, key, prev, val, known)
             except Exception as e:  # noqa
                 print('notify:', e, flush=True)
 
@@ -156,7 +160,10 @@ def real_cost(row, allow_fetch=True):
         return None, False
     t0, t1 = _dtp(row['start_date']), _dtp(row['end_date'])
     a, b = t0.replace(tzinfo=dt.timezone.utc).timestamp(), t1.replace(tzinfo=dt.timezone.utc).timestamp()
-    RC_CACHE[k] = round(_integral(ha_history(HA['grid'], t0 - dt.timedelta(minutes=1), t1), a, b) * price, 2)
+    hist = ha_history(HA['grid'], t0 - dt.timedelta(minutes=1), t1)
+    if not hist:                                      # eroare/lipsa istoric: nu cacha "0,00" pana la repornire
+        return None, True
+    RC_CACHE[k] = round(_integral(hist, a, b) * price, 2)
     return RC_CACHE[k], True
 
 
@@ -180,20 +187,53 @@ def provider_auto(name):
     return ''
 
 
-def _json_file(path, default):
-    try:
-        return json.load(open(path))
-    except Exception:
+FLOCK = threading.RLock()      # un singur lock pentru citire-modificare-scriere pe fisierele din /data
+
+
+def jload(path, default):
+    """JSON din fisier. Lipsa fisierului = valoarea implicita. Fisier corupt: pastreaza o copie .bad, incearca copia .bak si abia apoi valoarea implicita (cu log)."""
+    if not os.path.exists(path):
         return default
+    for p in (path, path + '.bak'):
+        try:
+            with open(p) as f:
+                return json.load(f)
+        except FileNotFoundError:
+            continue
+        except Exception as e:  # noqa
+            print('json corupt %s: %s' % (p, e), flush=True)
+            if p == path:
+                try:
+                    shutil.copy2(p, p + '.bad')
+                except OSError:
+                    pass
+    return default
+
+
+def jsave(path, obj):
+    """Scriere atomica: fisier temporar + fsync + replace; versiunea anterioara ramane in .bak (o oprire in timpul scrierii nu mai trunchiaza fisierul)."""
+    with FLOCK:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + '.tmp'
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w') as f:
+            json.dump(obj, f)
+            f.flush()
+            os.fsync(f.fileno())
+        if os.path.exists(path):
+            try:
+                shutil.copy2(path, path + '.bak')
+            except OSError:
+                pass
+        os.replace(tmp, path)
+
+
+def _json_file(path, default):
+    return jload(path, default)
 
 
 def _json_save(path, obj):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + '.tmp'
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, 'w') as f:
-        json.dump(obj, f)
-    os.replace(tmp, path)
+    jsave(path, obj)
 
 
 def meta_load():
@@ -362,8 +402,8 @@ def ice_calc(by_day, ev_kwh, ev_cost, kwh_charged, l100=None, book=None, manual=
                 prices=[dict(day=d, price=p) for d, p in book if not by_day or d >= by_day[0]['day']][-200:])
 
 
-def charges(car, limit, offset):
-    rows = _charges_rows(car, limit, offset)
+def charges(car, limit, offset, cid=None):
+    rows = _charges_rows(car, limit, offset, cid)
     if ha_ok() and HA['grid']:
         budget = 20                                   # max. interogari HA noi per cerere; restul se completeaza la urmatoarea deschidere a paginii
         for r in rows:
@@ -372,18 +412,19 @@ def charges(car, limit, offset):
                 budget -= 1 if fetched else 0
                 r['cost_real'] = val
             except Exception as e:  # noqa
+                budget = 0                            # HA nu raspunde: nu mai incerca pentru restul randurilor (altfel cererea dureaza minute)
                 print('real cost:', e, flush=True)
     return decorate(rows)
 
 
-def _charges_rows(car, limit, offset):
+def _charges_rows(car, limit, offset, cid=None):
     return q(f"""select cp.id, cp.start_date, cp.end_date, cp.charge_energy_added, cp.charge_energy_used, cp.duration_min, cp.cost, g.cost_per_unit as tariff,
         cp.start_battery_level as start_soc, cp.end_battery_level as end_soc, cp.outside_temp_avg,
         (select max(charger_power) from charges ch where ch.charging_process_id=cp.id) as power_max,
         coalesce((select bool_or(fast_charger_present) from charges ch where ch.charging_process_id=cp.id), false) as dc,
         {NAME_A} as name
       from charging_processes cp left join geofences g on g.id=cp.geofence_id left join addresses a on a.id=cp.address_id
-      where cp.car_id=%s and cp.end_date is not null order by cp.start_date desc limit %s offset %s""", (car, limit, offset))
+      where cp.car_id=%s and cp.end_date is not null {'and cp.id=%s' if cid else ''} order by cp.start_date desc limit %s offset %s""", (car,) + ((cid,) if cid else ()) + (limit, offset))
 
 
 def charge_points(cid):
@@ -657,8 +698,12 @@ def overview(car, days):
                 continue
             val = None
             if ha_ok() and HA['grid']:
-                val, fetched = real_cost(r, budget > 0)
-                budget -= 1 if fetched else 0
+                try:
+                    val, fetched = real_cost(r, budget > 0)
+                    budget -= 1 if fetched else 0
+                except Exception as ex:  # noqa
+                    budget = 0
+                    print('overview real cost:', ex, flush=True)
             tot += val if val is not None else (r['cost'] or 0)
         ch['cost_eff'] = round(tot, 2)
         ch['manual_n'] = man
@@ -977,7 +1022,10 @@ def charge_solar(cid):
         return dict(available=False, reason='Estimarea se face doar pentru încărcări AC acasă.')
     t0, t1 = _dtp(cp['start_date']), _dtp(cp['end_date'])
     car_kwh = cp['charge_energy_used'] or cp['charge_energy_added'] or 0
-    grid = _integral(ha_history(HA['grid'], t0 - dt.timedelta(minutes=1), t1), t0.replace(tzinfo=dt.timezone.utc).timestamp(), t1.replace(tzinfo=dt.timezone.utc).timestamp())
+    gh = ha_history(HA['grid'], t0 - dt.timedelta(minutes=1), t1)
+    if not gh:
+        return dict(available=False, reason='Istoricul din Home Assistant nu e disponibil acum.')
+    grid = _integral(gh, t0.replace(tzinfo=dt.timezone.utc).timestamp(), t1.replace(tzinfo=dt.timezone.utc).timestamp())
     pv = _integral(ha_history(HA['pv'], t0 - dt.timedelta(minutes=1), t1), t0.replace(tzinfo=dt.timezone.utc).timestamp(), t1.replace(tzinfo=dt.timezone.utc).timestamp()) if HA['pv'] else None
     share = max(0.0, min(1.0, 1 - grid / car_kwh)) if car_kwh else None
     try:
@@ -1000,17 +1048,11 @@ TLOCK = threading.Lock()
 
 
 def tok_load():
-    try:
-        return json.load(open(TOKENS))
-    except Exception:
-        return {}
+    return jload(TOKENS, {})
 
 
 def tok_save(d):
-    os.makedirs(os.path.dirname(TOKENS), exist_ok=True)
-    fd = os.open(TOKENS, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, 'w') as f:
-        json.dump(d, f)
+    jsave(TOKENS, d)
 
 
 def http(url, data=None, headers=None, form=False, ctx=None, timeout=25, method=None):
@@ -1086,9 +1128,10 @@ def oauth_callback(code, state):
                                                                audience=FL['base'], redirect_uri='https://%s/auth/callback' % FL['domain']), form=True)
     if c != 200 or 'refresh_token' not in r:
         return False, 'Tesla a refuzat schimbul de cod (%s).' % c
-    t = tok_load()
-    t.update(access_token=r['access_token'], refresh_token=r['refresh_token'], exp=time.time() + int(r.get('expires_in', 28800)))
-    tok_save(t)
+    with TLOCK:
+        t = tok_load()
+        t.update(access_token=r['access_token'], refresh_token=r['refresh_token'], exp=time.time() + int(r.get('expires_in', 28800)))
+        tok_save(t)
     return True, 'Contul Tesla este conectat.'
 
 
@@ -1099,9 +1142,10 @@ def partner_register():
         return dict(ok=False, step='token', code=c, detail=r)
     c, r = http(FL['base'] + '/api/1/partner_accounts', dict(domain=FL['domain']), headers={'Authorization': 'Bearer ' + r['access_token']})
     if c in (200, 201):
-        t = tok_load()
-        t['registered'] = True
-        tok_save(t)
+        with TLOCK:
+            t = tok_load()
+            t['registered'] = True
+            tok_save(t)
     return dict(ok=c in (200, 201), step='register', code=c, detail=r)
 
 
@@ -1238,22 +1282,15 @@ CAPFILE = '/data/caps.json'
 
 
 def caps_load(car):
-    try:
-        return json.load(open(CAPFILE)).get(str(car)) or {}
-    except Exception:
-        return {}
+    return (jload(CAPFILE, {}) or {}).get(str(car)) or {}
 
 
 def caps_save(car, d):
     try:
-        allc = {}
-        try:
-            allc = json.load(open(CAPFILE))
-        except Exception:
-            pass
-        allc[str(car)] = dict(allc.get(str(car)) or {}, **d)
-        os.makedirs(os.path.dirname(CAPFILE), exist_ok=True)
-        json.dump(allc, open(CAPFILE, 'w'))
+        with FLOCK:
+            allc = jload(CAPFILE, {}) or {}
+            allc[str(car)] = dict(allc.get(str(car)) or {}, **d)
+            jsave(CAPFILE, allc)
     except Exception as e:  # noqa
         print('caps:', e, flush=True)
 
@@ -1342,17 +1379,11 @@ EU_BASE = 'https://fleet-api.prd.eu.vn.cloud.tesla.com'
 
 def cfg_load():
     global CFG
-    try:
-        CFG = json.load(open(CFGFILE))
-    except Exception:
-        CFG = {}
+    CFG = jload(CFGFILE, {}) or {}
 
 
 def cfg_save():
-    os.makedirs(os.path.dirname(CFGFILE), exist_ok=True)
-    fd = os.open(CFGFILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, 'w') as f:
-        json.dump(CFG, f)
+    jsave(CFGFILE, CFG)
 
 
 def cget(k, env='', d=''):
@@ -1437,8 +1468,8 @@ def cfg_update(b):
                 v = v.replace(',', '.')
             except ValueError:
                 errs.append('preț invalid')
-        if k == 'pin' and len(v) < 4:
-            errs.append('PIN-ul trebuie să aibă minim 4 caractere')
+        if k == 'pin' and len(v) < 6:
+            errs.append('PIN-ul trebuie să aibă minim 6 caractere')
         if k == 'app_password' and len(v) < 12:
             errs.append('parola trebuie să aibă minim 12 caractere')
         if k == 'fleet_base' and v and v not in (EU_BASE, 'https://fleet-api.prd.na.vn.cloud.tesla.com', 'https://fleet-api.prd.cn.vn.cloud.tesla.cn'):
@@ -1614,15 +1645,12 @@ def pf_status():
 
 
 def pf_session_load():
-    try:
-        PF['session'] = json.load(open(PFILE)).get('session')
-    except Exception:
-        PF['session'] = None
+    PF['session'] = (jload(PFILE, {}) or {}).get('session')
 
 
 def pf_session_save():
     try:
-        json.dump(dict(session=PF['session']), open(PFILE, 'w'))
+        jsave(PFILE, dict(session=PF['session']))
     except Exception as e:  # noqa
         print('profiler save:', e, flush=True)
 
@@ -1647,8 +1675,12 @@ def pf_start(car, profile, minutes):
     minutes = int(max(1, min(minutes, 30)))
     if PF['session']:
         raise RuntimeError('Există deja o sesiune activă — oprește-o mai întâi.')
-    if not (PF['sim'] or DEMO_ONLY) and not has_cars():
-        PF['sim'] = True
+    if not (PF['sim'] or DEMO_ONLY):
+        hc = has_cars()
+        if hc is None:
+            raise RuntimeError('Baza de date TeslaMate nu răspunde — nu pornesc profilerul.')
+        if not hc:
+            PF['sim'] = True
     names = pf_fields(profile)
     if PF['sim'] or DEMO_ONLY:
         PF['session'] = dict(profile=profile, started=time.time(), until=time.time() + minutes * 60, fields=len(names), sim=True)
@@ -1663,7 +1695,7 @@ def pf_start(car, profile, minutes):
     if not base:
         raise RuntimeError('Nu pot citi configurația de telemetrie a mașinii (%s). Telemetria trebuie configurată întâi (hostname/ca).' % code)
     try:
-        json.dump(base, open('/data/profiler_base.json', 'w'))        # configuratia de dinainte (Sentry), la care se revine la oprire
+        jsave('/data/profiler_base.json', base)        # configuratia de dinainte (Sentry), la care se revine la oprire
     except Exception as e:  # noqa
         print('profiler base save:', e, flush=True)
     fields = {n: {'interval_seconds': 1} for n in names}
@@ -1718,7 +1750,9 @@ def pf_stop(car=1, reason=''):
     if not se.get('sim'):
         try:
             vin = vin_for(car)
-            base = json.load(open('/data/profiler_base.json'))
+            base = jload('/data/profiler_base.json', None)
+            if not base:
+                raise RuntimeError('lipseste configuratia de baza a telemetriei (profiler_base.json)')
             ok, info = pf_cfg_post(vin, base)
             if not ok:
                 err = 'Revenirea la configurația Sentry a eșuat: %s' % json.dumps(info)[:300]
@@ -1866,15 +1900,14 @@ LAST_SENT = {}
 
 def nset_load():
     try:
-        return dict(NDEFAULT, **{k: bool(v) for k, v in json.load(open(NFILE)).items() if k in NDEFAULT})
+        return dict(NDEFAULT, **{k: bool(v) for k, v in (jload(NFILE, {}) or {}).items() if k in NDEFAULT})
     except Exception:
         return dict(NDEFAULT)
 
 
 def nset_save(d):
     try:
-        os.makedirs(os.path.dirname(NFILE), exist_ok=True)
-        json.dump(d, open(NFILE, 'w'))
+        jsave(NFILE, d)
     except Exception as e:  # noqa
         print('notify save:', e, flush=True)
 
@@ -1952,15 +1985,12 @@ RLOCK = threading.Lock()
 
 
 def rules_load():
-    try:
-        return json.load(open(RFILE))
-    except Exception:
-        return []
+    r = jload(RFILE, [])
+    return r if isinstance(r, list) else []
 
 
 def rules_save(rs):
-    os.makedirs(os.path.dirname(RFILE), exist_ok=True)
-    json.dump(rs, open(RFILE, 'w'))
+    jsave(RFILE, rs)
 
 
 def rule_log(msg, ok=True):
@@ -1980,19 +2010,22 @@ def rule_exec(car, rule, name, arg=None):
     threading.Thread(target=go, daemon=True).start()
 
 
-def rules_check(car, key, old, new):
-    """Evenimente MQTT -> reguli de tip eveniment."""
-    if old is None or old == new:
+def rules_check(car, key, old, new, known=True):
+    """Evenimente MQTT -> reguli de tip eveniment. `known` = valoarea veche chiar a fost vazuta (nu e primul mesaj dupa repornire).
+    Fereastra anti-repetare (_once) se consuma doar cand regula chiar se potriveste, nu la orice mesaj MQTT."""
+    if old == new or not known:
         return
     lv = LIVE.get(car, {})
     for r in rules_load():
-        if not r.get('enabled') or not _once('rule:%s' % r['id'], 600):
+        if not r.get('enabled'):
             continue
         t = r.get('type')
         if t == 'arrive_gate' and key == 'geofence' and new == r.get('geofence') and old != new:
-            rule_exec(car, r, 'homelink')
+            if _once('rule:%s' % r['id'], 600):
+                rule_exec(car, r, 'homelink')
         elif t == 'plug_limit' and key == 'plugged_in' and new is True and (not r.get('geofence') or lv.get('geofence') == r.get('geofence')):
-            rule_exec(car, r, 'charge_limit', int(r.get('limit', 80)))
+            if _once('rule:%s' % r['id'], 600):
+                rule_exec(car, r, 'charge_limit', int(r.get('limit', 80)))
 
 
 def rules_clock():
@@ -2151,7 +2184,7 @@ def la_loop():
 
 
 # ---------------------------------------------------------------- acces din internet (parola + cookie semnat)
-import hashlib, hmac
+import hashlib, hmac, html as html_mod
 AUTH = dict(pw=os.environ.get('APP_PASSWORD', ''), secret=(os.environ.get('SESSION_SECRET') or secrets.token_hex(32)).encode())
 FAILS = {}   # ip -> [timestamps]
 LOGIN = {
@@ -2259,13 +2292,29 @@ def api_state():
             c['image'] = car_image(c)
             c['live_age'] = (time.time() - LIVE_TS[c['id']]) if c['id'] in LIVE_TS else None
             out.append(c)
-        return dict(demo=False, cars=out, links=LINKS, mqtt=bool(LIVE), currency=CURRENCY)
+        return dict(demo=False, cars=out, links=LINKS, mqtt=bool(LIVE), lan_open=not AUTH['pw'] and not DEMO_ONLY, currency=CURRENCY)
     return dict(demo=True, public_demo=DEMO_ONLY, cars=[dict(DEMO_CAR, live=DEMO_LIVE, live_age=0, image=car_image(DEMO_CAR), sleep=DEMO_SLEEP)],
-                links=({} if DEMO_ONLY else LINKS), mqtt=False, currency=CURRENCY, db_error=(cl is None and not DEMO_ONLY))
+                links=({} if DEMO_ONLY else LINKS), mqtt=False, currency=CURRENCY, db_error=(cl is None and not DEMO_ONLY), lan_open=not AUTH['pw'] and not DEMO_ONLY)
+
+
+class DBDown(Exception):
+    pass
+
+
+class NotFound(Exception):
+    pass
+
+
+DB_ROUTES = ('/api/drives', '/api/charges', '/api/overview', '/api/battery', '/api/sleep', '/api/activity', '/api/health_battery', '/api/caps', '/api/vdata')
+DB_PREFIXES = ('/api/drive/', '/api/drive_row/', '/api/trip/', '/api/charge/', '/api/charge_row/', '/api/charge_solar/')
+PINF = {}                       # ip -> [momente cu PIN gresit]
+PIN_LOCK = threading.Lock()
+FAILS_LOCK = threading.Lock()
 
 
 class H(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.0'
+    timeout = 30                 # socket: o conexiune care nu trimite nimic nu mai tine un thread la nesfarsit
     role = 'admin'
 
     def log_message(self, *a):
@@ -2275,17 +2324,47 @@ class H(BaseHTTPRequestHandler):
         return any(k in self.headers for k in ('Cf-Connecting-Ip', 'Cf-Ray', 'Cf-Visitor', 'X-Forwarded-For'))
 
     def client_ip(self):
-        return self.headers.get('Cf-Connecting-Ip') or self.headers.get('X-Forwarded-For', '').split(',')[0].strip() or self.client_address[0]
+        return self.headers.get('Cf-Connecting-Ip') or self.client_address[0]     # X-Forwarded-For nu mai e crezut (il poate scrie orice client)
+
+    def read_body(self, limit=1 << 20):
+        try:
+            n = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            raise ValueError('Content-Length invalid')
+        if n < 0 or n > limit:
+            raise ValueError('corpul cererii e prea mare')
+        return self.rfile.read(n) if n else b''
+
+    def pin_check(self):
+        """(ok, motiv, cod HTTP). Max. 5 PIN-uri gresite / 10 min per IP si 30 in total; comparatie in timp constant, pe octeti."""
+        ip, now = self.client_ip(), time.time()
+        with PIN_LOCK:
+            for k in list(PINF):
+                PINF[k] = [x for x in PINF[k] if now - x < 600]
+                if not PINF[k]:
+                    del PINF[k]
+            if len(PINF.get(ip, [])) >= 5 or sum(len(v) for v in PINF.values()) >= 30:
+                return False, 'Prea multe încercări greșite. Reia peste 10 minute.', 429
+        got = self.headers.get('X-Pin', '')
+        if FL['pin'] and secrets.compare_digest(got.encode('utf-8', 'replace'), FL['pin'].encode('utf-8', 'replace')):
+            return True, '', 200
+        if FL['pin'] and got:
+            with PIN_LOCK:
+                PINF.setdefault(ip, []).append(now)
+        return False, 'PIN greșit.' if FL['pin'] else 'PIN greșit sau neconfigurat.', 403
 
     def authed(self):
-        if DEMO_ONLY or not self.via_internet():
-            return True            # LAN: ca pana acum
-        em = access_ok(self.headers.get('Cf-Access-Jwt-Assertion', ''))
-        if em:
-            self.role = 'admin' if em is True else ROLES.get(em, 'admin' if em == ACCESS['email'].lower() else 'viewer')
-            return True            # a trecut de Cloudflare Access (verificat criptografic)
-        if not AUTH['pw']:
-            return False           # din internet fara parola configurata: totul inchis
+        if DEMO_ONLY:
+            return True
+        if self.via_internet():
+            em = access_ok(self.headers.get('Cf-Access-Jwt-Assertion', ''))
+            if em:
+                self.role = 'admin' if em is True else ROLES.get(em, 'admin' if em == ACCESS['email'].lower() else 'viewer')
+                return True            # a trecut de Cloudflare Access (verificat criptografic)
+            if not AUTH['pw']:
+                return False           # din internet fara parola configurata: totul inchis
+        elif not AUTH['pw']:
+            return True                # LAN fara parola setata: ramane deschis (UI avertizeaza); cu parola setata cere autentificare si in LAN
         for part in self.headers.get('Cookie', '').split(';'):
             k, _, v = part.strip().partition('=')
             if k == 'sess' and sess_ok(v):
@@ -2309,29 +2388,37 @@ class H(BaseHTTPRequestHandler):
     def do_login(self):
         t = LOGIN['ro' if self.lang().lower().startswith('ro') else 'en']
         ip, now = self.client_ip(), time.time()
-        FAILS[ip] = [x for x in FAILS.get(ip, []) if now - x < 600]
         if not AUTH['pw']:
             return self.page(403, login_html(self.lang(), t['off']))
-        if len(FAILS[ip]) >= 5:
-            return self.page(429, login_html(self.lang(), t['lock']))
-        n = int(self.headers.get('Content-Length') or 0)
-        form = parse_qs(self.rfile.read(min(n, 2048)).decode('utf-8', 'replace'))
+        with FAILS_LOCK:                                       # rezervam incercarea inainte de verificare: cererile paralele nu mai trec de limita
+            for k in list(FAILS):
+                FAILS[k] = [x for x in FAILS[k] if now - x < 600]
+                if not FAILS[k]:
+                    del FAILS[k]
+            if len(FAILS.get(ip, [])) >= 5 or sum(len(v) for v in FAILS.values()) >= 50:
+                return self.page(429, login_html(self.lang(), t['lock']))
+            FAILS.setdefault(ip, []).append(now)
+        try:
+            form = parse_qs(self.read_body(4096).decode('utf-8', 'replace'))
+        except ValueError:
+            return self.page(400, login_html(self.lang(), t['bad']))
         pw = (form.get('password') or [''])[0]
-        if secrets.compare_digest(pw, AUTH['pw']):
-            FAILS.pop(ip, None)
+        if secrets.compare_digest(pw.encode('utf-8', 'replace'), AUTH['pw'].encode('utf-8', 'replace')):
+            with FAILS_LOCK:
+                FAILS.pop(ip, None)
             ck = 'sess=%s; Path=/; Max-Age=%d; HttpOnly; SameSite=Strict%s' % (sess_make(), 30 * 86400, '; Secure' if self.via_internet() else '')
             self.send_response(303)
             self.send_header('Location', '/')
             self.send_header('Set-Cookie', ck)
             self.end_headers()
             return
-        FAILS[ip].append(now)
         return self.page(401, login_html(self.lang(), t['bad']))
 
     def send_json(self, obj, code=200):
         b = json.dumps(obj, default=str).encode()
         self.send_response(code)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Cache-Control', 'no-store')
         self.send_header('Content-Length', str(len(b)))
         self.end_headers()
@@ -2378,6 +2465,8 @@ class H(BaseHTTPRequestHandler):
             if p == '/api/fleet/status':
                 return self.send_json(fleet_status())
             if p == '/api/fleet/login':
+                if self.role != 'admin':
+                    return self.send_json(dict(error='Doar administratorul poate conecta contul Tesla.'), 403)
                 if not (FL['cid'] and FL['domain']):
                     return self.send_json(dict(error='Fleet API nu e configurat.'), 400)
                 self.send_response(302)
@@ -2386,26 +2475,30 @@ class H(BaseHTTPRequestHandler):
                 return
             if p.startswith('/api/'):
                 return self.send_json(self.api(p, a))
+        except DBDown:
+            return self.send_json(dict(error='db', reason='Baza de date TeslaMate nu răspunde.'), 503)
+        except NotFound:
+            return self.send_json(dict(error='not found'), 404)
         except Exception as e:  # noqa
-            return self.send_json(dict(error=str(e)), 500)
+            print('GET %s: %s' % (p, e), flush=True)
+            return self.send_json(dict(error='eroare internă'), 500)
         return self.static(p)
 
     def do_POST(self):
         u = urlparse(self.path)
         if u.path == '/api/profiler/ingest':
             tok = os.environ.get('INGEST_TOKEN', '')
-            if not tok or not secrets.compare_digest(self.headers.get('X-Ingest-Token', ''), tok):
+            if not tok or not secrets.compare_digest(self.headers.get('X-Ingest-Token', '').encode('utf-8', 'replace'), tok.encode('utf-8', 'replace')):
                 return self.send_json(dict(ok=False), 401)
             try:
-                n = int(self.headers.get('Content-Length') or 0)
-                pf_ingest((json.loads(self.rfile.read(min(n, 2_000_000)) or b'{}')).get('records') or [])
+                pf_ingest((json.loads(self.read_body(2_000_000) or b'{}')).get('records') or [])
             except Exception as e:  # noqa
                 return self.send_json(dict(ok=False, error=str(e)), 400)
             return self.send_json(dict(ok=True))
         if DEMO_ONLY and u.path in ('/api/profiler/start', '/api/profiler/stop'):
             try:
-                n = int(self.headers.get('Content-Length') or 0)
-                body = json.loads(self.rfile.read(n) or b'{}') if n else {}
+                raw = self.read_body(65536)
+                body = json.loads(raw) if raw else {}
                 return self.send_json(pf_start(1, body.get('profile'), body.get('minutes', 5)) if u.path.endswith('start') else pf_stop())
             except Exception as e:  # noqa
                 return self.send_json(dict(ok=False, reason=str(e)), 400)
@@ -2416,8 +2509,10 @@ class H(BaseHTTPRequestHandler):
         if not self.authed():
             return self.send_json(dict(ok=False, reason='auth'), 401)
         try:
-            n = int(self.headers.get('Content-Length') or 0)
-            body = json.loads(self.rfile.read(n) or b'{}') if n else {}
+            raw = self.read_body()
+            body = json.loads(raw) if raw else {}
+            if not isinstance(body, dict):
+                raise ValueError('se aștepta un obiect JSON')
             if u.path == '/api/notify/settings':
                 st = nset_load()
                 st.update({k: bool(v) for k, v in body.items() if k in NDEFAULT})
@@ -2428,16 +2523,19 @@ class H(BaseHTTPRequestHandler):
             if u.path in ('/api/config', '/api/config/test'):
                 if self.role != 'admin':
                     return self.send_json(dict(ok=False, reason='Doar administratorul poate schimba setările.'), 403)
-                if FL['pin'] and not secrets.compare_digest(self.headers.get('X-Pin', ''), FL['pin']):
-                    return self.send_json(dict(ok=False, reason='PIN greșit.'), 403)
+                if FL['pin']:
+                    pok, why, pcode = self.pin_check()
+                    if not pok:
+                        return self.send_json(dict(ok=False, reason=why), pcode)
                 if not FL['pin'] and self.via_internet():
                     return self.send_json(dict(ok=False, reason='Setează mai întâi PIN-ul din rețeaua locală (acasă).'), 403)
                 if u.path == '/api/config/test':
                     return self.send_json(cfg_test(body.get('what')))
                 ok, err = cfg_update(body)
                 return self.send_json(dict(ok=ok, reason=err, config=cfg_public()) if ok else dict(ok=False, reason=err), 200 if ok else 400)
-            if not FL['pin'] or not secrets.compare_digest(self.headers.get('X-Pin', ''), FL['pin']):
-                return self.send_json(dict(ok=False, reason='PIN greșit sau neconfigurat.'), 403)
+            pok, why, pcode = self.pin_check()
+            if not pok:
+                return self.send_json(dict(ok=False, reason=why), pcode)
             name = u.path.rsplit('/', 1)[1] if u.path.startswith('/api/cmd/') else ''
             if self.role == 'viewer' or (self.role == 'family' and (name not in FAMILY_OK)):
                 return self.send_json(dict(ok=False, reason='Nu ai permisiunea pentru această acțiune (rol: %s).' % self.role), 403)
@@ -2458,27 +2556,34 @@ class H(BaseHTTPRequestHandler):
             if u.path == '/api/profiler/stop':
                 return self.send_json(pf_stop(int(body.get('car', 1))))
             if u.path == '/api/rules':
-                rs = rules_load()
-                if body.get('delete'):
-                    rs = [r for r in rs if r['id'] != body['delete']]
-                elif body.get('toggle'):
-                    for r in rs:
-                        if r['id'] == body['toggle']:
-                            r['enabled'] = not r.get('enabled')
-                else:
-                    rs.append(rule_clean(body))
-                rules_save(rs[:30])
+                with FLOCK:                                   # doua cereri simultane nu mai pierd o modificare
+                    rs = rules_load()
+                    if body.get('delete'):
+                        rs = [r for r in rs if r['id'] != body['delete']]
+                    elif body.get('toggle'):
+                        for r in rs:
+                            if r['id'] == body['toggle']:
+                                r['enabled'] = not r.get('enabled')
+                    else:
+                        rs.append(rule_clean(body))
+                    rules_save(rs[:30])
                 return self.send_json(dict(ok=True, rules=rs))
             if u.path == '/api/fleet/register':
                 return self.send_json(partner_register())
             if u.path.startswith('/api/cmd/'):
                 return self.send_json(run_command(int(body.get('car', 1)), u.path.rsplit('/', 1)[1], body.get('arg')))
+        except ValueError as e:
+            return self.send_json(dict(ok=False, reason='Cerere invalidă: %s' % e), 400)
         except Exception as e:  # noqa
-            return self.send_json(dict(ok=False, reason=str(e)), 500)
+            print('POST %s: %s' % (u.path, e), flush=True)
+            return self.send_json(dict(ok=False, reason=str(e)[:300]), 500)
         return self.send_json(dict(error='not found'), 404)
 
     def api(self, p, a):
-        demo = not has_cars()
+        hc = has_cars()
+        if hc is None and (p in DB_ROUTES or p.startswith(DB_PREFIXES)):
+            raise DBDown()                              # baza TeslaMate nu raspunde: eroare 503, NU date demo
+        demo = hc is False
         car = int(a.get('car', 1))
         lim, off = min(int(a.get('limit', 40)), 200), int(a.get('offset', 0))
         if p == '/api/drives':
@@ -2491,6 +2596,18 @@ class H(BaseHTTPRequestHandler):
             return demo_trip(did) if demo else trip(car, did)
         if p == '/api/charges':
             return decorate([dict(x) for x in DEMO['charges'][off:off + lim]]) if demo else charges(car, lim, off)
+        if p.startswith('/api/charge_row/'):
+            cid = int(p.rsplit('/', 1)[1])
+            rows = decorate([dict(x) for x in DEMO['charges'] if x['id'] == cid]) if demo else charges(car, 1, 0, cid)
+            if not rows:
+                raise NotFound()
+            return rows[0]
+        if p.startswith('/api/drive_row/'):
+            did = int(p.rsplit('/', 1)[1])
+            rows = [x for x in DEMO['drives'] if x['id'] == did] if demo else drives_by_ids(car, [did])
+            if not rows:
+                raise NotFound()
+            return rows[0]
         if p.startswith('/api/charge/'):
             cid = int(p.rsplit('/', 1)[1])
             return dict(points=demo_charge_points(cid) if demo else charge_points(cid))
@@ -2584,7 +2701,7 @@ class H(BaseHTTPRequestHandler):
         if p == '/car.png':
             user = os.path.join(os.path.dirname(TOKENS), 'car.png')
             f = user if os.path.isfile(user) else (f if os.path.isfile(f) else os.path.join(STATIC, 'car-default.svg'))
-        elif not f.startswith(STATIC):
+        elif not (f == STATIC or f.startswith(STATIC + os.sep)):
             f = ''
         if not f or not os.path.isfile(f):
             self.send_response(404)
@@ -2604,6 +2721,7 @@ class H(BaseHTTPRequestHandler):
 class PublicH(BaseHTTPRequestHandler):
     """Singurul lucru expus public (prin tunel): cheia publica Tesla + callback-ul OAuth. Nimic altceva."""
     protocol_version = 'HTTP/1.0'
+    timeout = 30
 
     def log_message(self, *a):
         pass
@@ -2627,7 +2745,7 @@ class PublicH(BaseHTTPRequestHandler):
                 ok, msg = oauth_callback(a['code'], a['state'])
             else:
                 ok, msg = False, a.get('error_description') or a.get('error') or 'Lipseste codul de autorizare.'
-            msg = msg.replace('<', '').replace('>', '')
+            msg = html_mod.escape(msg)
             html = ('<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">'
                     '<body style="font-family:system-ui;background:#0b0d10;color:#eceff3;padding:40px;text-align:center">'
                     '<h2>%s %s</h2><p style="color:#8f99a4">Poti inchide pagina si reveni in aplicatie.</p>' % ('&#10003;' if ok else '&#9888;', msg))

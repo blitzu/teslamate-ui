@@ -20,8 +20,9 @@ if [ ! -f fleet/private-key.pem ]; then
   openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:secp384r1 -pkeyopt ec_param_enc:named_curve \
     -subj "/CN=proxy" -keyout fleet/tls-key.pem -out fleet/tls-cert.pem -sha256 -days 3650 \
     -addext "subjectAltName=DNS:proxy,DNS:localhost,IP:127.0.0.1" 2>/dev/null
-  # the proxy container runs as a non-root user and must read these; the folder stays on your host only
-  chmod 644 fleet/public-key.pem fleet/tls-cert.pem fleet/private-key.pem fleet/tls-key.pem
+  # only the proxy container reads the private keys (it runs as root, so 600 is enough); the UI mounts just the two public files
+  chmod 644 fleet/public-key.pem fleet/tls-cert.pem
+  chmod 600 fleet/private-key.pem fleet/tls-key.pem
   echo "Generated Tesla key pair and TLS certificate in ./fleet (back up fleet/private-key.pem; never share it)."
 fi
 cat <<'EOF'

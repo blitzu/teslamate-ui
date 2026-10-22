@@ -250,7 +250,12 @@ def run(conn, token, vin, car, progress, cutoff=None, dry_run=False):
     else:
         conn.commit()
         ctx.ledger['at'] = time.time()
-        json.dump(ctx.ledger, open(LEDGER, 'w'))
+        tmp = LEDGER + '.tmp'
+        with open(tmp, 'w') as lf:
+            json.dump(ctx.ledger, lf)
+            lf.flush()
+            os.fsync(lf.fileno())
+        os.replace(tmp, LEDGER)
     cur.close()
     progress.update(phase='Gata', done=progress.get('total', 0))
     return res

@@ -79,8 +79,15 @@ const ago = (s) => {
   if (LANG === 'en') return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.floor(m / 60) + ' h ago' : Math.floor(m / 1440) + ' days ago';
   return m < 1 ? 'chiar acum' : m < 60 ? 'acum ' + m + ' min' : m < 1440 ? 'acum ' + Math.floor(m / 60) + ' h' : 'acum ' + Math.floor(m / 1440) + ' zile';
 };
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const api = async (p) => { const r = await fetch(p, { cache: 'no-store' }); if (!r.ok) throw new Error(r.status); return r.json(); };
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const safeUrl = (u) => (/^https?:\/\//i.test(String(u || '')) ? u : '#');
+const api = async (p) => {
+  const r = await fetch(p, { cache: 'no-store' });
+  if (r.status === 401) { location.href = '/login'; throw new Error(401); }   // sesiune expirata / parola ceruta in retea locala
+  if (r.status === 503) throw new Error(tr('baza de date TeslaMate nu răspunde'));
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+};
 const stat = (l, v, u = '') => `<div class="st"><i>${l}</i><b>${v}${u ? '<small>' + u + '</small>' : ''}</b></div>`;
 const socCls = (s) => s < 20 ? 'low' : s < 45 ? 'mid' : '';
 
@@ -163,6 +170,7 @@ function pageCar() {
     L.sentry_mode != null ? chip(L.sentry_mode ? 'Sentry activ' : 'Sentry oprit', L.sentry_mode) : '',
     L.is_climate_on != null ? chip(L.is_climate_on ? 'Climatizare pornită' : 'Climatizare oprită', L.is_climate_on) : '',
     L.plugged_in != null ? chip(L.plugged_in ? 'Conectată la priză' : 'Neconectată', L.plugged_in) : '',
+    (S.lan_open && S.role === 'admin') ? `<a href="#/settings" class="chip alert" style="text-decoration:none"><i></i>${X('Rețeaua locală nu are parolă — Setări', 'Local network has no password — Settings')}</a>` : '',
     (L.doors_open || L.windows_open || L.trunk_open || L.frunk_open) ? `<span id="openchips">${openChips(L, (S.opens || {})[c.id]) || chip('Ceva e deschis', false, true)}</span>` : '',
     L.update_available ? chip(tr('Update disponibil') + (L.update_version ? ' ' + esc(L.update_version) : ''), false) : '',
     L.healthy === false ? chip('Conexiune TeslaMate instabilă', false, true) : '',
@@ -178,7 +186,7 @@ function pageCar() {
     charging ? stat('Tensiune · curent', nf(L.charger_voltage) + ' V · ' + nf(L.charger_actual_current) + ' A') : stat(driving ? 'Viteză' : 'Baterie utilizabilă', nf(driving ? L.speed : L.usable_battery_level), driving ? 'km/h' : '%'),
   ].join('');
   return `
-<div class="top row"><div><h1>${esc(c.name || L.display_name || 'Tesla')}</h1><small>${esc(c.marketing_name || ('Model ' + (c.model || '')))}${c.trim && !/^\d+$/.test(c.trim) ? ' · ' + esc(c.trim) : ''}${age ? ' · ' + age : ''}</small></div><div class="sp"></div>${S.demo ? '<span class="pill demo">DEMO</span>' : ''}<span class="pill ${pc}">${st}</span></div>
+<div class="top row"><div><h1>${esc(c.name || L.display_name || 'Tesla')}</h1><small>${esc(c.marketing_name || ('Model ' + (c.model || '')))}${c.trim && !/^\d+$/.test(c.trim) ? ' · ' + esc(c.trim) : ''}${age ? ' · ' + age : ''}</small></div><div class="sp"></div>${S.demo ? '<span class="pill demo">DEMO</span>' : ''}<span class="pill ${pc}">${esc(st)}</span></div>
 <div class="card" style="margin-top:12px">
   <div class="stage photo ${c.image === '/car.png' ? 'top' : ''} ${charging ? 'chg' : ''}" id="stage">${c.image ? `<div class="cw"><img src="${esc(c.image)}" alt="">${c.image === '/car.png' ? openPhoto(L, (S.opens || {})[c.id]) : ''}</div>` : carSvg(L)}${c.image === '/car.png' ? ['fl', 'fr', 'rl', 'rr'].map((k) => { const v = L['tpms_pressure_' + k]; return `<span class="tw ${k} ${v != null && v < 2.5 ? 'low' : ''}">${v == null ? '—' : nf(v, 1)}<small>bar</small></span>`; }).join('') : ''}</div>
   <div class="tpr ${c.image === '/car.png' ? 'hide' : ''}">${['fl', 'fr', 'rl', 'rr'].map((k, i) => { const v = L['tpms_pressure_' + k]; return `<span class="${v != null && v < 2.5 ? 'low' : ''}"><i>${['Față stânga', 'Față dreapta', 'Spate stânga', 'Spate dreapta'][i]}</i><b>${v == null ? '—' : nf(v, 1)}</b> bar</span>`; }).join('')}</div>
@@ -193,7 +201,7 @@ function pageCar() {
 <h2>Detalii</h2><div class="grid">${stats}</div>
 <h2>Ultima cursă · ultima încărcare</h2><div id="last"></div>
 <div class="links"><a href="#/climate">🌡 ${X('Clima', 'Climate')} ›</a></div>
-${S.links && S.links.teslamate ? `<div class="links"><a href="${esc(S.links.teslamate)}" target="_blank" rel="noopener">TeslaMate</a><a href="${esc(S.links.grafana)}" target="_blank" rel="noopener">Grafana</a></div>` : ''}
+${S.links && S.links.teslamate ? `<div class="links"><a href="${esc(safeUrl(S.links.teslamate))}" target="_blank" rel="noopener">TeslaMate</a><a href="${esc(safeUrl(S.links.grafana))}" target="_blank" rel="noopener">Grafana</a></div>` : ''}
 ${S.public_demo ? '<p class="note">' + (LANG === 'en' ? 'Demo with sample data - no real vehicle is connected.' : 'Demonstrație cu date fictive - nicio mașină reală nu este conectată.') + '</p>' : S.demo ? '<p class="note">' + (LANG === 'en' ? 'Demo data. Connect your Tesla account in TeslaMate (' + esc(S.links.teslamate) + ') and every page fills in with real data.' : 'Date demonstrative. Conectează contul Tesla în TeslaMate (' + esc(S.links.teslamate) + ') și toate paginile se umplu singure cu datele reale.') + '</p>' : ''}
 ${S.db_error ? '<p class="note">' + (LANG === 'en' ? 'The TeslaMate database is not responding right now.' : 'Baza de date TeslaMate nu răspunde momentan.') + '</p>' : ''}`;
 }
@@ -261,8 +269,7 @@ async function pageList(kind) {
 function sec(title, inner) { return `<h2>${title}</h2><div class="card chart">${inner}</div>`; }
 
 async function pageDrive(id) {
-  const rows = await api('/api/drives?car=' + car + '&limit=200');
-  const d = rows.find((r) => r.id == id) || rows[0];
+  const d = await api('/api/drive_row/' + id + '?car=' + car);
   const dd = await api('/api/drive/' + id), pts = dd.points;
   const wh = d && d.distance > 0 && d.kwh != null ? d.kwh * 1000 / d.distance : null;
   const t = (p) => +T(p[0]);
@@ -293,9 +300,8 @@ async function pageDrive(id) {
 }
 
 async function pageCharge(id) {
-  const rows = await api('/api/charges?car=' + car + '&limit=200');
-  const c = rows.find((r) => r.id == id) || rows[0];
-  window.__chrow = c; window.__chrows = rows;
+  const c = await api('/api/charge_row/' + id + '?car=' + car);
+  window.__chrow = c;
   const pts = (await api('/api/charge/' + id)).points, t = (p) => +T(p[0]);
   const fx = (x) => new Date(x).toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' });
   return `<a class="back" href="#/charges">‹ Încărcări</a>
@@ -315,8 +321,8 @@ async function statsBody(embed) {
   const wh = d.km > 0 ? d.kwh * 1000 / d.km : null;
   const SM = { online: ['Online', '#6fd6b8'], asleep: ['Doarme', '#7aa8ff'], offline: ['Offline', '#7f8994'] };
   const tot = b.states.reduce((s, x) => s + x.hours, 0) || 1;
-  const stateBar = b.states.length ? `<div style="display:flex;height:16px;border-radius:99px;overflow:hidden;margin-top:6px">${b.states.map((x) => `<div title="${x.s}" style="width:${x.hours / tot * 100}%;background:${(SM[x.s] || ['', '#555'])[1]}"></div>`).join('')}</div>
-    <div class="legend">${b.states.map((x) => `<span><i style="background:${(SM[x.s] || ['', '#555'])[1]}"></i>${(SM[x.s] || [x.s])[0]} ${nf(x.hours / tot * 100)}%</span>`).join('')}</div>` : '<div class="mut" style="font-size:13px;padding:10px 0">Prea puține date</div>';
+  const stateBar = b.states.length ? `<div style="display:flex;height:16px;border-radius:99px;overflow:hidden;margin-top:6px">${b.states.map((x) => `<div title="${esc(x.s)}" style="width:${x.hours / tot * 100}%;background:${(SM[x.s] || ['', '#555'])[1]}"></div>`).join('')}</div>
+    <div class="legend">${b.states.map((x) => `<span><i style="background:${(SM[x.s] || ['', '#555'])[1]}"></i>${esc((SM[x.s] || [x.s])[0])} ${nf(x.hours / tot * 100)}%</span>`).join('')}</div>` : '<div class="mut" style="font-size:13px;padding:10px 0">Prea puține date</div>';
   const lab = (k) => new Date(k + 'T00:00:00').toLocaleDateString(LOC(), { day: 'numeric', month: 'short' });
   return `${embed ? '' : '<div class="top"><h1>Statistici</h1></div>'}
   <div class="seg" style="margin-top:12px">${[7, 30, 90, 365].map((n) => `<button data-d="${n}" class="${n === days ? 'on' : ''}">${n === 365 ? tr('1 an') : n + tr(' zile')}</button>`).join('')}</div>

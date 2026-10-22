@@ -14,13 +14,14 @@ The private key (`fleet/private-key.pem`) never leaves your host.
 
 ## Layers of protection
 
-1. **PIN** — every command (`POST /api/cmd/*`) must carry your PIN. Set in **Settings → Command PIN** (or `scripts/set-fleet.sh`); stored in plain text in `.env.fleet`, so keep that file mode `600`.
-2. **LAN is open by default.** Requests that arrive *through a proxy or tunnel* (they carry `X-Forwarded-For` / `Cf-*` headers) are treated as "internet" and are **refused** unless one of these is configured:
-   * **Cloudflare Access** (recommended, below), or
-   * **an app password** — `./scripts/set-password.sh` (login form; cookie valid 30 days; 5 wrong attempts per 10 min per IP).
-3. HomeLink/gate and unlock actions ask for confirmation in the UI.
+1. **PIN** — every command (`POST /api/cmd/*`) and every settings change must carry your PIN. Set in **Settings → Command PIN** (or `scripts/set-fleet.sh`; minimum 6 characters). It is kept in `/data/config.json` (mode `600`) or in `.env.fleet` — keep those files private. **Wrong PINs are throttled:** 5 per 10 minutes per client address and 30 in total, then the server answers `429` until the window passes.
+2. **App password.** Set one in **Settings → Internet access & roles** (or `./scripts/set-password.sh`, minimum 12 characters). Once a password exists it protects **everything, also on your local network**: you sign in once per device (cookie valid 30 days; 5 wrong attempts per 10 min per address). *Until a password is set, the LAN stays open* so you cannot lock yourself out — the app shows a red notice on the dashboard and in Settings while that is the case.
+3. **Requests that arrive through a proxy or tunnel** (they carry `X-Forwarded-For` / `Cf-*` headers) are treated as "internet" and are **refused** unless **Cloudflare Access** (recommended, below) or the app password above authorizes them.
+4. HomeLink/gate and unlock actions ask for confirmation in the UI.
 
-If you put a reverse proxy in front of port 4100 that does **not** add `X-Forwarded-For` (or a `Cf-*` header), the app cannot tell the request is external and treats it as LAN. Make sure your proxy adds it (most do), or keep 4100 off the proxy.
+Your data files live in `/data` and are written atomically (temporary file + `fsync` + rename); the previous version is kept next to each file as `*.bak`, and a corrupted file is copied to `*.bad` and replaced by its backup instead of silently resetting your settings.
+
+If you put a reverse proxy in front of port 4100 that does **not** add `X-Forwarded-For` (or a `Cf-*` header), the app cannot tell the request is external and treats it as LAN — so **set an app password** (step 2): with a password, even such requests need to sign in. Better still, bind port 4100 to your LAN address only (`"192.168.x.y:4100:4100"` in `docker-compose.yml`).
 
 ## Cloudflare Access (recommended)
 
