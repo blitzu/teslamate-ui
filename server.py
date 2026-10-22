@@ -1621,9 +1621,16 @@ APPURL = os.environ.get('APP_URL', '').rstrip('/')
 KIND_ROUTE = dict(plugged='#/charges', charge_done='#/charges', door='#/car', update='#/car', low_batt='#/car', rule='#/auto', live='#/car', test='#/notifications')
 
 
+KIND_ACTIONS = {           # butoane pe notificarile obisnuite (Live Activity nu are butoane); executate de automatizarea din HA prin ESP32 BLE
+    'plugged': [('TESLA_CHARGE_START', 'Pornește încărcarea'), ('TESLA_CHARGE_STOP', 'Oprește încărcarea'), ('TESLA_CABLE_RELEASE', 'Deblochează cablul')],
+    'charge_done': [('TESLA_CABLE_RELEASE', 'Deblochează cablul'), ('TESLA_CLIMATE_ON', 'Pornește clima')],
+    'door': [('TESLA_LOCK', 'Încuie mașina')],
+}
+
+
 def app_link(kind='live'):
     return (APPURL + '/' + KIND_ROUTE.get(kind, '#/car')) if APPURL else None
-NDEFAULT = dict(plugged=True, charge_done=True, door=True, update=True, low_batt=True, live=True, live_drive=False)
+NDEFAULT = dict(plugged=True, charge_done=True, door=True, update=True, low_batt=True, live=True, live_drive=False, actions=True)
 EVENTS = []          # cele mai noi primele, max 60
 NLOCK = threading.Lock()
 LAST_SENT = {}
@@ -1652,8 +1659,13 @@ def notify(kind, title, msg, data=None, log=True):
             del EVENTS[60:]
     if NHOOK:
         payload = dict(title=title, message=msg, kind=kind)
-        if data is None and app_link(kind):
-            data = dict(url=app_link(kind))                                  # atingerea notificarii deschide aplicatia
+        if data is None:
+            data = {}
+            if app_link(kind):
+                data['url'] = app_link(kind)                                # atingerea notificarii deschide aplicatia
+            if KIND_ACTIONS.get(kind) and nset_load().get('actions', True):
+                data['actions'] = [dict(action=a, title=t) for a, t in KIND_ACTIONS[kind]]
+                data['tag'] = 'tesla_' + kind
         if data:
             payload['data'] = data
         threading.Thread(target=lambda: http(NHOOK, payload, timeout=10), daemon=True).start()

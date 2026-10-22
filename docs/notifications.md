@@ -71,6 +71,10 @@ actions:
 
 Toggle it in the app (Notifications → *iPhone Live Activity*, and *while driving*). Apple limits activities to 8 hours and throttles frequent updates.
 
+## Command buttons on notifications
+
+Regular notifications (cable connected, charging complete, door open) carry `actions` (buttons: *Start charging*, *Stop charging*, *Release cable*, *Turn climate on*, *Lock*). Home Assistant fires `mobile_app_notification_action` with the action id; add an automation that runs the matching command, e.g. through the ESP32 BLE entities (`switch.tesla_ble_charger`, `cover.tesla_ble_charge_port_door` opens the port and releases the cable, `lock.tesla_ble_doors`, `climate.tesla_ble_climate`). Live Activities cannot have buttons (an iOS limitation). Toggle: Notifications → *Command buttons*.
+
 ## Other targets
 
 Any endpoint that accepts a JSON POST works (n8n, Node-RED, a small relay to Telegram/ntfy/Pushover…). The payload has `title`, `message`, `kind`.
