@@ -287,7 +287,7 @@ body.nav-open #nav{transform:none;box-shadow:0 0 40px #000a}
 /* piese din poza reala care se deschid */
 .pp{position:absolute;inset:0;pointer-events:none}
 .ppc,.ppu,.pg{position:absolute;inset:0;background-size:100% 100%;background-repeat:no-repeat}
-.ppu{background:#0a0b0d;opacity:.92}
+.ppu{background:linear-gradient(180deg,#14161a,#07080a);opacity:.96}
 .ppc{filter:drop-shadow(0 6px 8px #000a);animation-duration:.9s;animation-timing-function:cubic-bezier(.2,.8,.3,1);animation-fill-mode:forwards}
 .ppc.dl{animation-name:pdl}.ppc.dl2{animation-name:pdl2}.ppc.dr{animation-name:pdr}.ppc.dr2{animation-name:pdr2}.ppc.hd{animation-name:phd}.ppc.tk{animation-name:ptk}
 @keyframes pdl{to{transform:rotate(38deg)}}@keyframes pdl2{to{transform:rotate(-38deg)}}@keyframes pdr{to{transform:rotate(-38deg)}}@keyframes pdr2{to{transform:rotate(38deg)}}
