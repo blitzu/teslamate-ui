@@ -270,3 +270,16 @@ body.nav-open #nav{transform:none;box-shadow:0 0 40px #000a}
 @keyframes glow{0%,100%{opacity:.55}50%{opacity:1}}
 @keyframes dash{to{stroke-dashoffset:-20}}
 #openchips{display:contents}
+
+/* vedere laterala cu elemente deschise */
+.sideview{margin:2px 0 8px;padding:6px 4px 0;border-radius:18px;background:radial-gradient(70% 90% at 50% 75%,#ffffff12,#0000);animation:fadein .4s ease}
+.sideview.two{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+@keyframes fadein{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.sv{width:100%;height:auto;display:block;overflow:visible}.sv.mir{transform:scaleX(-1)}
+.sv .fd.open{animation:sfd .9s cubic-bezier(.2,.8,.3,1) forwards}.sv .rd.open{animation:srd .9s cubic-bezier(.2,.8,.3,1) forwards}
+.sv .fd.open.half{animation-name:sfdh}.sv .rd.open.half{animation-name:srdh}
+@keyframes sfd{to{transform:translate(-10px,0) skewY(-13deg) scaleX(.36)}}@keyframes srd{to{transform:translate(10px,0) skewY(13deg) scaleX(.36)}}
+@keyframes sfdh{to{transform:skewY(-5deg) scaleX(.8)}}@keyframes srdh{to{transform:skewY(5deg) scaleX(.8)}}
+.sv .hood.open{animation:shood .9s cubic-bezier(.2,.8,.3,1) forwards}.sv .tr.open{animation:str .9s cubic-bezier(.2,.8,.3,1) forwards}
+@keyframes shood{to{transform:rotate(24deg)}}@keyframes str{to{transform:rotate(-30deg)}}
+.sv .win{transition:transform .9s}.sv .win.dn{transform:translateY(32px)}

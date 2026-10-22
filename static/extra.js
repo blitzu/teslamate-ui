@@ -917,8 +917,45 @@ async function refreshOpenings(c) {
     const n = JSON.stringify(d.openings || {});
     if (d.openings && n !== JSON.stringify(S.opens[c.id] || {})) {
       S.opens[c.id] = d.openings;
-      const ov = document.querySelector('#stage .ovl'); if (ov) ov.outerHTML = openOverlay(L, d.openings);
+      const sv = document.getElementById('sidev'); if (sv) sv.innerHTML = sideView(L, d.openings);
       const ch = document.getElementById('openchips'); if (ch) ch.innerHTML = openChips(L, d.openings);
     }
   } catch (e) { /* ignore */ } finally { openBusy = false; }
+}
+
+/* ---------- Vedere laterala a masinii cu elementele deschise (ca pe ecranul masinii) ---------- */
+function sideSvg(side, f) {
+  // side: 'L' (partea soferului, botul spre stanga) sau 'R' (oglindit); f = { fd, rd, hood, trunk, win, half }
+  const id = 'sv' + side, op = (b, c) => (b ? ' ' + c + (f.half ? ' half' : '') : '');
+  const wheel = (cx) => `<g><circle cx="${cx}" cy="214" r="50" fill="#0c0d0f"/><circle cx="${cx}" cy="214" r="35" fill="url(#${id}r)"/><g stroke="#69717c" stroke-width="3.4" stroke-linecap="round">${[0, 72, 144, 216, 288].map((a) => `<path d="M${cx} 214L${(cx + 28 * Math.cos((a - 90) * Math.PI / 180)).toFixed(1)} ${(214 + 28 * Math.sin((a - 90) * Math.PI / 180)).toFixed(1)}"/>`).join('')}</g><circle cx="${cx}" cy="214" r="7" fill="#454c55"/></g>`;
+  const FD = 'M258 116H410V232H262L255 164Z', RD = 'M412 116H590L584 172Q574 198 552 214L546 232H412Z';
+  return `<svg class="sv ${side === 'R' ? 'mir' : ''}" viewBox="0 0 800 300" role="img" aria-label="${X('Mașina din lateral', 'Car side view')}">
+<defs><linearGradient id="${id}b" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset=".5" stop-color="#eef1f4"/><stop offset="1" stop-color="#c2c9d0"/></linearGradient>
+<linearGradient id="${id}g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a4552"/><stop offset="1" stop-color="#10151b"/></linearGradient>
+<radialGradient id="${id}r"><stop offset="0" stop-color="#e1e5ea"/><stop offset="1" stop-color="#8b939d"/></radialGradient></defs>
+<ellipse cx="400" cy="266" rx="352" ry="10" fill="#000" opacity=".5"/>
+<path d="M258 116C272 94 302 70 342 59C386 48 468 46 518 57C558 66 588 88 606 110L600 118H258Z" fill="url(#${id}g)"/>
+<path class="bdy" fill="url(#${id}b)" stroke="#a6aeb8" stroke-width="1.3" d="M58 238C50 226 48 206 54 192C62 172 100 152 150 142L262 116L590 116L600 108L722 118C738 120 746 132 748 150V226C748 234 744 238 736 238H658.8A58 58 0 1 0 553.2 238H227.8A58 58 0 1 0 122.2 238H66C60 238 58 238 58 238Z"/>
+<path d="M258 116L262 114C300 80 330 66 360 60L404 56V116Z" fill="url(#${id}g)" opacity="0"/>
+<path d="${FD}" fill="#13161a"/><path d="${RD}" fill="#13161a"/>
+<g class="fd${op(f.fd, 'open')}" style="transform-origin:258px 176px"><path class="win${f.win ? ' dn' : ''}" d="M262 114C288 84 316 68 346 62C372 58 392 57 404 57V114Z" fill="url(#${id}g)"/><path d="${FD}" fill="url(#${id}b)" stroke="#a6aeb8" stroke-width="1.3"/><rect x="362" y="150" width="30" height="7" rx="3.5" fill="#aab2bb"/></g>
+<g class="rd${op(f.rd, 'open')}" style="transform-origin:588px 176px"><path class="win${f.win ? ' dn' : ''}" d="M416 57C462 57 512 59 546 70C570 80 590 98 600 114H416Z" fill="url(#${id}g)"/><path d="${RD}" fill="url(#${id}b)" stroke="#a6aeb8" stroke-width="1.3"/><rect x="426" y="150" width="30" height="7" rx="3.5" fill="#aab2bb"/></g>
+<path d="M404 57H416V232H404Z" fill="#1b1f24"/>
+<g class="hood${op(f.hood, 'open')}" style="transform-origin:262px 118px"><path d="M58 188C70 168 104 152 150 142L262 116L266 126L152 154C112 162 84 176 70 198Z" fill="url(#${id}b)" stroke="#a6aeb8" stroke-width="1.3"/></g>
+<g class="tr${op(f.trunk, 'open')}" style="transform-origin:600px 112px"><path d="M600 108L722 118C738 120 746 132 748 150L740 152C738 138 732 130 720 128L600 118Z" fill="url(#${id}b)" stroke="#a6aeb8" stroke-width="1.3"/></g>
+<rect x="56" y="196" width="22" height="9" rx="4.5" fill="#e6eef8" opacity=".95"/><rect x="728" y="170" width="19" height="10" rx="5" fill="#e5483f"/>
+<path d="M120 238H66M740 238H664" stroke="#b9c0c8" stroke-width="3" opacity=".5"/>
+${wheel(175)}${wheel(606)}
+</svg>`;
+}
+function sideView(L, o) {
+  const st = openState(L, o);
+  if (!(st.anyDoor || st.frunk || st.trunk || st.windows)) return '';
+  const half = !st.doorsKnown && st.anyDoor;
+  const left = st.doorsKnown ? (st.doors.fl || st.doors.rl) : half, right = st.doorsKnown && (st.doors.fr || st.doors.rr);
+  const views = [];
+  const both = { hood: st.frunk, trunk: st.trunk, win: st.windows };
+  if (left || !right) views.push(sideSvg('L', Object.assign({ fd: st.doors.fl || half, rd: st.doors.rl || half, half }, both)));
+  if (right) views.push(sideSvg('R', Object.assign({ fd: st.doors.fr, rd: st.doors.rr }, left ? { win: st.windows } : both)));
+  return `<div class="sideview ${views.length > 1 ? 'two' : ''}">${views.join('')}</div>`;
 }
