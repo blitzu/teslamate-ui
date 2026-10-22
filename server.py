@@ -1120,7 +1120,7 @@ def _vehicle_data(car, force=False):
 CFGFILE = '/data/config.json'
 CFG = {}
 CFG_SECRETS = ('fleet_secret', 'pin', 'ha_token', 'notify_webhook', 'app_password', 'tessie_token')
-CFG_KEYS = CFG_SECRETS + ('price_grid', 'fleet_id', 'fleet_domain', 'fleet_base', 'ha_url', 'ha_prefix', 'ha_ble', 'ha_grid', 'ha_pv', 'currency', 'link_tm', 'link_gf', 'acc_team', 'acc_aud', 'acc_email', 'roles')
+CFG_KEYS = CFG_SECRETS + ('app_url', 'price_grid', 'fleet_id', 'fleet_domain', 'fleet_base', 'ha_url', 'ha_prefix', 'ha_ble', 'ha_grid', 'ha_pv', 'currency', 'link_tm', 'link_gf', 'acc_team', 'acc_aud', 'acc_email', 'roles')
 EU_BASE = 'https://fleet-api.prd.eu.vn.cloud.tesla.com'
 
 
@@ -1148,12 +1148,13 @@ def cget(k, env='', d=''):
 
 def apply_config():
     """Aplica configuratia (aplicatie > .env) pe dictionarele folosite de restul serverului, fara repornire."""
-    global NHOOK, CURRENCY
+    global NHOOK, CURRENCY, APPURL
     FL.update(cid=cget('fleet_id', 'FLEET_CLIENT_ID'), secret=cget('fleet_secret', 'FLEET_CLIENT_SECRET'), domain=cget('fleet_domain', 'FLEET_DOMAIN'),
               pin=cget('pin', 'APP_PIN'), base=cget('fleet_base', 'FLEET_BASE', EU_BASE))
     HA.update(url=str(cget('ha_url', 'HA_URL')).rstrip('/'), token=cget('ha_token', 'HA_TOKEN'), prefix=cget('ha_prefix', 'HA_BLE_PREFIX', 'tesla_ble'),
               ble=str(cget('ha_ble', 'BLE_FIRST', '1')).lower() in ('1', 'true'), grid=cget('ha_grid', 'HA_GRID_IMPORT'), pv=cget('ha_pv', 'HA_PV_POWER'))
     NHOOK = cget('notify_webhook', 'NOTIFY_WEBHOOK')
+    APPURL = str(cget('app_url', 'APP_URL')).rstrip('/')
     CURRENCY = cget('currency', 'CURRENCY', '€')
     LINKS.update(teslamate=cget('link_tm', 'TESLAMATE_URL'), grafana=cget('link_gf', 'GRAFANA_URL'))
     AUTH['pw'] = cget('app_password', 'APP_PASSWORD')
@@ -1179,7 +1180,7 @@ def cfg_public():
         fleet=dict(id=g('fleet_id', 'FLEET_CLIENT_ID'), domain=g('fleet_domain', 'FLEET_DOMAIN'), base=g('fleet_base', 'FLEET_BASE', EU_BASE), secret_set=bool(FL['secret']), pin_set=bool(FL['pin'])),
         ha=dict(url=HA['url'], token_set=bool(HA['token']), prefix=HA['prefix'], ble=HA['ble'], grid=HA['grid'], pv=HA['pv']),
         notify=dict(webhook_set=bool(NHOOK)), tessie=dict(token_set=bool(cget('tessie_token', 'TESSIE_TOKEN'))),
-        display=dict(price_grid=cget('price_grid', 'PRICE_GRID', ''), currency=CURRENCY, teslamate=LINKS['teslamate'], grafana=LINKS['grafana']),
+        display=dict(app_url=APPURL, price_grid=cget('price_grid', 'PRICE_GRID', ''), currency=CURRENCY, teslamate=LINKS['teslamate'], grafana=LINKS['grafana']),
         access=dict(team=ACCESS['team'], aud=ACCESS['aud'], email=ACCESS['email'], roles=str(cget('roles', 'ROLES')), password_set=bool(AUTH['pw'])))
 
 
@@ -1196,7 +1197,7 @@ def cfg_update(b):
         if v == '__clear__':
             new.pop(k, None)
             continue
-        if k in ('ha_url', 'link_tm', 'link_gf') and v and not v.startswith(('http://', 'https://')):
+        if k in ('ha_url', 'link_tm', 'link_gf', 'app_url') and v and not v.startswith(('http://', 'https://')):
             errs.append('%s trebuie să înceapă cu http:// sau https://' % k)
         if k == 'notify_webhook' and not v.startswith(('http://', 'https://')):
             errs.append('webhook invalid')
@@ -1614,6 +1615,12 @@ def imp_action(car, body):
 # ---------------------------------------------------------------- notificari (cablu, incarcare gata, usi) -> telefon prin webhook Home Assistant + istoric in aplicatie
 NFILE = '/data/notify.json'
 NHOOK = os.environ.get('NOTIFY_WEBHOOK', '')
+APPURL = os.environ.get('APP_URL', '').rstrip('/')
+KIND_ROUTE = dict(plugged='#/charges', charge_done='#/charges', door='#/car', update='#/car', low_batt='#/car', rule='#/auto', live='#/car', test='#/notifications')
+
+
+def app_link(kind='live'):
+    return (APPURL + '/' + KIND_ROUTE.get(kind, '#/car')) if APPURL else None
 NDEFAULT = dict(plugged=True, charge_done=True, door=True, update=True, low_batt=True, live=True, live_drive=False)
 EVENTS = []          # cele mai noi primele, max 60
 NLOCK = threading.Lock()
@@ -1643,6 +1650,8 @@ def notify(kind, title, msg, data=None, log=True):
             del EVENTS[60:]
     if NHOOK:
         payload = dict(title=title, message=msg, kind=kind)
+        if data is None and app_link(kind):
+            data = dict(url=app_link(kind))                                  # atingerea notificarii deschide aplicatia
         if data:
             payload['data'] = data
         threading.Thread(target=lambda: http(NHOOK, payload, timeout=10), daemon=True).start()
@@ -1809,7 +1818,9 @@ def la_payload(car):
     nm = lv.get('display_name') or 'Tesla'
     soc = lv.get('battery_level')
     lim = lv.get('charge_limit_soc') or 100
-    base = dict(tag=LA_TAG, live_update=True, url='/')
+    base = dict(tag=LA_TAG, live_update=True)
+    if app_link('live'):
+        base['url'] = app_link('live')
     if soc is None:
         return None
     shift = lv.get('shift_state')

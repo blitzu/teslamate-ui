@@ -43,6 +43,8 @@ mode: queued
 
 3. `docker compose up -d`, then press *Send test* in the app.
 
+Set the app's public address in **Settings → Display → App address** (or `APP_URL` in `.env.notify`): every notification then carries a `url`, so tapping it opens the right page of the app (charges, dashboard, automations…).
+
 ## iPhone Live Activities (Home Assistant Companion app)
 
 With the Home Assistant Companion app for iOS (iOS 17.2+, Core 2026.7+, Live Activities enabled in the app) the app can show a **Live Activity** on the Lock Screen / Dynamic Island: *charging* (progress bar towards your charge limit, power and countdown to full), *door/trunk open*, *plugged in but not charging*, *charging complete*, and optionally *driving*. One activity (tag `tesla_status`) is updated in place and closed automatically.
