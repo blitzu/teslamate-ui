@@ -1838,11 +1838,9 @@ def la_payload(car):
         rest = ('%d h %02d min' % (int(tl), int(tl % 1 * 60))) if tl >= 1 else ('%d min' % max(1, round(tl * 60))) if tl else ''
         d = dict(base, critical_text=rest or '%s%%' % soc, notification_icon='mdi:ev-station', notification_icon_color='#4CC2A0', progress=soc, progress_max=max(lim, soc + 1), progress_bar_color='#4CC2A0',
                  background_color='#0B0D10', text_color='#FFFFFF')
-        added = lv.get('charge_energy_added')
-        parts = [('%s rămase' % rest) if rest else 'Se încarcă']
-        if added:
-            parts.append('+%s kWh' % ('%.1f' % float(added)).replace('.', ','))
-        return 'charge', '%s%% · %s kW' % (soc, kw), ' · '.join(parts), d
+        # titlu: procent · putere · timp ramas; mesajul e inlocuit de cronometrul care numara de la ultima actualizare (cresc singur pe ecran, fara actualizari)
+        d.update(chronometer=True, when=int(time.time()), when_relative=False)
+        return 'charge', '%s%% · %s kW%s' % (soc, kw, (' · ' + rest) if rest else ''), 'actualizat', d
     if cs == 'Complete' and lv.get('plugged_in'):
         return 'complete', 'Încărcare terminată', '%s%%' % soc, dict(base, critical_text='%s%%' % soc, notification_icon='mdi:battery-check', notification_icon_color='#4CC2A0', progress=soc, progress_max=100, progress_bar_color='#4CC2A0')
     if st.get('live_drive') and shift in ('D', 'R', 'N'):
@@ -1879,7 +1877,7 @@ def la_sync(car=1):
         if changed:
             LA['since'] = now
         LA.update(kind=kind, sent=now, soc=soc)
-        notify('live', title, '%s  ᵃᶜᵗ %s' % (msg, time.strftime('%H·%M·%S').translate(SUP)), data, log=False)       # ora ultimei actualizari, cu cifre mici (indice superior) - fontul nu se poate seta
+        notify('live', title, msg, data, log=False)
 
 
 def la_poke(car):
