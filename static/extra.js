@@ -798,7 +798,12 @@ async function pageProfiler() {
   <div id="pflist"></div>`;
 }
 async function pfDiag() {
-  const box = $('#pfdiag'); if (!box || !PFS || !PFS.status.session) return; const st = PFS.status, se = st.session, now = Date.now() / 1000;
+  const box = $('#pfdiag'); if (!box || !PFS) return;
+  if (!PFS.status.session) {                       // fara sesiune: arata ce configuratie de telemetrie are acum masina (verificare ca s-a revenit la normal)
+    try { const dg = await api('/api/profiler/diag'); if (dg.ok && !dg.sim) { const normal = dg.fields <= 1; box.innerHTML = (normal && dg.synced ? '✓ ' : normal ? '… ' : '⚠ ') + X(normal ? 'Configurația mașinii: normală (doar Sentry)' + (dg.synced ? ' — aplicată pe mașină.' : ' — așteaptă să fie preluată de mașină.') : 'Mașina trimite încă ' + dg.fields + ' semnale — nu a revenit la normal!', normal ? 'Car configuration: normal (Sentry only)' + (dg.synced ? ' — applied on the car.' : ' — waiting for the car to fetch it.') : 'The car is still streaming ' + dg.fields + ' signals — it has not reverted!'); } else if (dg.sim) box.innerHTML = ''; } catch (e) { /* ignore */ }
+    return;
+  }
+  const st = PFS.status, se = st.session, now = Date.now() / 1000;
   const age = st.last_rx ? Math.round(now - st.last_rx) : null, cn = st.conn;
   let line = [];
   if (se.sim) { box.innerHTML = ''; return; }
@@ -824,7 +829,8 @@ function pfRenderCtl() {
       ${(se.dropped || []).length ? `<p class="note" style="margin:8px 0 0">${X('Omise (lipsește permisiunea de locație vehicle_location sau nu sunt acceptate): ', 'Skipped (missing vehicle_location scope or not accepted): ')}${esc(se.dropped.slice(0, 8).join(', '))}${se.dropped.length > 8 ? '…' : ''}</p>` : ''}</div>`
     : `<div class="pf-cards">${cards}</div><div class="card" style="margin-top:10px"><div class="row"><label class="cf" style="margin:0;flex:1">${X('Durată', 'Duration')}<select id="pfmin" style="width:100%">${[5, 10, 15, 30].map((m) => `<option value="${m}" ${m === PFMIN ? 'selected' : ''}>${m} min</option>`).join('')}</select></label><button class="pf-btn" id="pfgo" style="margin-top:14px">${X('Pornește sesiunea', 'Start session')}</button></div>
       <p class="note" style="margin:8px 0 0">${X('Mașina trebuie să fie trează și conectată; cât durează sesiunea NU adoarme. Alerta Sentry rămâne activă. La final revine automat la configurația normală. Tesla poate taxa semnalele de telemetrie.', 'The car must be awake and connected; it will NOT sleep during the session. Sentry alerts stay active. At the end it automatically reverts to the normal configuration. Tesla may bill telemetry signals.')}</p></div>
-      <div class="toast" id="pfmsg" style="display:none"></div>`);
+      <div class="note" id="pfdiag" style="margin:10px 2px 0"></div><div class="toast" id="pfmsg" style="display:none"></div>`);
+  pfDiag();
   box.querySelectorAll('[data-pf]').forEach((b) => b.onclick = () => { PFSEL = b.dataset.pf; pfRenderCtl(); });
   const m = $('#pfmin'); if (m) m.onchange = () => { PFMIN = +m.value; };
   const go = $('#pfgo'); if (go) go.onclick = async () => {
