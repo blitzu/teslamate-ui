@@ -41,7 +41,7 @@ jobs:
           curl -fs localhost:4110/api/trip/3 >/dev/null
           curl -fs -o /dev/null localhost:4110/car.png
           curl -fs -o /dev/null localhost:4110/vendor/maplibre-gl.min.js
-          curl -fsI localhost:4110/ | grep -qi "content-security-policy"
+          curl -fs -D - -o /dev/null localhost:4110/ | grep -qi "content-security-policy"
           kill $pid
       - name: No secrets or key material in the repository
         run: |
