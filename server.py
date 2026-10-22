@@ -1793,6 +1793,7 @@ def rule_clean(b):
 
 # ---------------------------------------------------------------- Live Activities iOS (prin webhook HA -> notify.mobile_app_*: live_update + tag)
 LA_TAG = 'tesla_status'
+SUP = str.maketrans('0123456789', '⁰¹²³⁴⁵⁶⁷⁸⁹')
 LA = dict(kind=None, sent=0.0, soc=None, since=0.0, timer=None)
 
 
@@ -1863,7 +1864,7 @@ def la_sync(car=1):
         if changed:
             LA['since'] = now
         LA.update(kind=kind, sent=now, soc=soc)
-        notify('live', title, '%s · act. %s' % (msg, time.strftime('%H:%M')), data, log=False)       # ora ultimei actualizari (ora locala a serverului)
+        notify('live', title, '%s  ᵃᶜᵗ %s' % (msg, time.strftime('%H·%M·%S').translate(SUP)), data, log=False)       # ora ultimei actualizari, cu cifre mici (indice superior) - fontul nu se poate seta
 
 
 def la_poke(car):
