@@ -1119,7 +1119,7 @@ def _vehicle_data(car, force=False):
 # ---------------------------------------------------------------- configurare din aplicatie (/data/config.json; suprascrie valorile din .env)
 CFGFILE = '/data/config.json'
 CFG = {}
-CFG_SECRETS = ('fleet_secret', 'pin', 'ha_token', 'notify_webhook', 'app_password')
+CFG_SECRETS = ('fleet_secret', 'pin', 'ha_token', 'notify_webhook', 'app_password', 'tessie_token')
 CFG_KEYS = CFG_SECRETS + ('price_grid', 'fleet_id', 'fleet_domain', 'fleet_base', 'ha_url', 'ha_prefix', 'ha_ble', 'ha_grid', 'ha_pv', 'currency', 'link_tm', 'link_gf', 'acc_team', 'acc_aud', 'acc_email', 'roles')
 EU_BASE = 'https://fleet-api.prd.eu.vn.cloud.tesla.com'
 
@@ -1178,7 +1178,7 @@ def cfg_public():
     return dict(
         fleet=dict(id=g('fleet_id', 'FLEET_CLIENT_ID'), domain=g('fleet_domain', 'FLEET_DOMAIN'), base=g('fleet_base', 'FLEET_BASE', EU_BASE), secret_set=bool(FL['secret']), pin_set=bool(FL['pin'])),
         ha=dict(url=HA['url'], token_set=bool(HA['token']), prefix=HA['prefix'], ble=HA['ble'], grid=HA['grid'], pv=HA['pv']),
-        notify=dict(webhook_set=bool(NHOOK)),
+        notify=dict(webhook_set=bool(NHOOK)), tessie=dict(token_set=bool(cget('tessie_token', 'TESSIE_TOKEN'))),
         display=dict(price_grid=cget('price_grid', 'PRICE_GRID', ''), currency=CURRENCY, teslamate=LINKS['teslamate'], grafana=LINKS['grafana']),
         access=dict(team=ACCESS['team'], aud=ACCESS['aud'], email=ACCESS['email'], roles=str(cget('roles', 'ROLES')), password_set=bool(AUTH['pw'])))
 
@@ -1314,7 +1314,7 @@ def pf_unit(name):
 
 
 PF_META = {n: dict(cat=pf_cat(n), unit=pf_unit(n), miles=n in MILES) for n in PF_ALL if not PF_EXCLUDE.search(n)}
-PF = dict(values={}, hist={}, log=[], session=None, clients=set(), lock=threading.Lock(), last_rx=0.0, sim=False)
+PF = dict(values={}, hist={}, log=[], session=None, clients=set(), lock=threading.Lock(), last_rx=0.0, sim=False, conn=None, diag=(0, None))
 PFILE = '/data/profiler.json'
 
 
@@ -1342,6 +1342,9 @@ def pf_ingest(records):
     batch = {}
     with PF['lock']:
         for rec in records[:200]:
+            if isinstance(rec, dict) and isinstance(rec.get('conn'), dict):
+                PF['conn'] = dict(status=rec['conn'].get('Status'), net=rec['conn'].get('NetworkInterface'), at=now)
+                continue
             d = rec.get('data') if isinstance(rec, dict) else None
             if not isinstance(d, dict):
                 continue
@@ -1375,7 +1378,7 @@ def pf_broadcast(msg):
 
 def pf_status():
     se = PF['session']
-    return dict(active=bool(se), session=se, last_rx=PF['last_rx'], sim=PF['sim'], fields=len(PF_META),
+    return dict(active=bool(se), session=se, last_rx=PF['last_rx'], conn=PF['conn'], sim=PF['sim'], fields=len(PF_META),
                 profiles={k: dict(ro=v['ro'], en=v['en'], count=len(pf_fields(k))) for k, v in PF_PROFILES.items()})
 
 
@@ -1459,7 +1462,17 @@ def pf_start(car, profile, minutes):
         raise RuntimeError('Tesla a refuzat configurația: %s' % msg[:400])
     else:
         raise RuntimeError('Tesla a refuzat configurația (prea multe corecturi).')
-    PF['session'] = dict(profile=profile, started=time.time(), until=time.time() + minutes * 60, fields=len(fields), vin_tail=vin[-4:], dropped=dropped[:60])
+    asleep = LIVE.get(car, {}).get('state') in ('asleep', 'offline', None)
+    PF['session'] = dict(profile=profile, started=time.time(), until=time.time() + minutes * 60, fields=len(fields), vin_tail=vin[-4:], dropped=dropped[:60], waking=asleep)
+    if asleep:                                  # masina adormita nu aplica configuratia si nu trimite nimic: o trezim (BLE sau Fleet), ca Tessie
+        def wake():
+            try:
+                run_command(car, 'wake')
+            except Exception as e:  # noqa
+                print('profiler wake:', e, flush=True)
+            if PF['session']:
+                PF['session']['waking'] = False
+        threading.Thread(target=wake, daemon=True).start()
     PF['values'].clear(); PF['hist'].clear(); PF['log'].clear()
     pf_session_save()
     pf_broadcast(dict(status=pf_status()))
@@ -1526,10 +1539,82 @@ def pf_csv():
     return out.getvalue()
 
 
+# ---------------------------------------------------------------- import din Tessie (vezi importer.py)
+IMP = dict(running=False, phase='', done=0, total=0, result=None, error='', dry=False, started=0)
+ILOCK = threading.Lock()
+
+
+def imp_conn():
+    import psycopg2
+    return psycopg2.connect(**DB)
+
+
+def imp_action(car, body):
+    import importer
+    token = cget('tessie_token', 'TESSIE_TOKEN')
+    act = body.get('action')
+    if act == 'undo':
+        if not os.path.isfile(importer.LEDGER):
+            return dict(ok=False, reason='Nu există niciun import de anulat.')
+        cn = imp_conn()
+        try:
+            return dict(ok=True, undone=importer.undo(cn))
+        finally:
+            cn.close()
+    if not token:
+        return dict(ok=False, reason='Salvează mai întâi tokenul Tessie în Setări.')
+    if act == 'vehicles':
+        try:
+            vs = importer.vehicles(token)
+        except importer.TessieError as e:
+            return dict(ok=False, reason=str(e))
+        return dict(ok=True, vehicles=[dict(vin_tail=v['vin'][-6:], name=v['name'], match=(v['vin'] == vin_for(car))) for v in vs])
+    vin = vin_for(car)
+    if not vin:
+        return dict(ok=False, reason='Nu există VIN în TeslaMate.')
+    if act == 'preview':
+        cn = imp_conn()
+        try:
+            r = importer.preview(cn, token, vin, car)
+        except importer.TessieError as e:
+            return dict(ok=False, reason=str(e))
+        finally:
+            cn.close()
+        r['already'] = os.path.isfile(importer.LEDGER)
+        return r
+    if act in ('dry', 'run'):
+        if act == 'run' and not body.get('confirm'):
+            return dict(ok=False, reason='Confirmă importul.')
+        if act == 'run' and os.path.isfile(importer.LEDGER):
+            return dict(ok=False, reason='Există deja un import neanulat. Anulează-l mai întâi (sau păstrează-l).')
+        with ILOCK:
+            if IMP['running']:
+                return dict(ok=False, reason='Un import rulează deja.')
+            IMP.update(running=True, phase='Pornesc…', done=0, total=0, result=None, error='', dry=(act == 'dry'), started=time.time())
+
+        def work():
+            cn = None
+            try:
+                cn = imp_conn()
+                IMP['result'] = importer.run(cn, token, vin, car, IMP, dry_run=(act == 'dry'))
+            except Exception as e:  # noqa
+                if cn:
+                    cn.rollback()
+                IMP['error'] = str(e)[:400]
+                print('import tessie:', e, flush=True)
+            finally:
+                if cn:
+                    cn.close()
+                IMP['running'] = False
+        threading.Thread(target=work, daemon=True).start()
+        return dict(ok=True, started=True)
+    return dict(ok=False, reason='acțiune necunoscută')
+
+
 # ---------------------------------------------------------------- notificari (cablu, incarcare gata, usi) -> telefon prin webhook Home Assistant + istoric in aplicatie
 NFILE = '/data/notify.json'
 NHOOK = os.environ.get('NOTIFY_WEBHOOK', '')
-NDEFAULT = dict(plugged=True, charge_done=True, door=True, update=True, low_batt=True)
+NDEFAULT = dict(plugged=True, charge_done=True, door=True, update=True, low_batt=True, live=True, live_drive=False)
 EVENTS = []          # cele mai noi primele, max 60
 NLOCK = threading.Lock()
 LAST_SENT = {}
@@ -1550,13 +1635,17 @@ def nset_save(d):
         print('notify save:', e, flush=True)
 
 
-def notify(kind, title, msg):
+def notify(kind, title, msg, data=None, log=True):
     ev = dict(t=dt.datetime.utcnow().replace(microsecond=0).isoformat(), kind=kind, title=title, msg=msg)
-    with NLOCK:
-        EVENTS.insert(0, ev)
-        del EVENTS[60:]
+    if log:
+        with NLOCK:
+            EVENTS.insert(0, ev)
+            del EVENTS[60:]
     if NHOOK:
-        threading.Thread(target=lambda: http(NHOOK, dict(title=title, message=msg, kind=kind), timeout=10), daemon=True).start()
+        payload = dict(title=title, message=msg, kind=kind)
+        if data:
+            payload['data'] = data
+        threading.Thread(target=lambda: http(NHOOK, payload, timeout=10), daemon=True).start()
     return bool(NHOOK)
 
 
@@ -1572,6 +1661,8 @@ OPEN_KEYS = {'doors_open': 'o ușă', 'trunk_open': 'portbagajul', 'frunk_open':
 
 
 def notify_check(car, key, old, new):
+    if key in ('charging_state', 'plugged_in', 'battery_level', 'shift_state', 'doors_open', 'trunk_open', 'frunk_open', 'windows_open', 'locked', 'charge_limit_soc', 'time_to_full_charge'):
+        la_poke(car)
     if old is None or old == new:
         return
     lv = LIVE.get(car, {})
@@ -1698,6 +1789,105 @@ def rule_clean(b):
         r['time'] = hh
         r['days'] = b.get('days') if b.get('days') in ('ALL', 'WEEKDAYS', 'WEEKEND') else 'ALL'
     return r
+
+
+# ---------------------------------------------------------------- Live Activities iOS (prin webhook HA -> notify.mobile_app_*: live_update + tag)
+LA_TAG = 'tesla_status'
+LA = dict(kind=None, sent=0.0, soc=None, since=0.0, timer=None)
+
+
+def la_clear():
+    if NHOOK:
+        threading.Thread(target=lambda: http(NHOOK, dict(clear=True, tag=LA_TAG, kind='live'), timeout=10), daemon=True).start()
+
+
+def la_payload(car):
+    """Starea curenta -> (tip, titlu, mesaj, data pentru Live Activity) sau None cand nu e nimic de aratat."""
+    lv = LIVE.get(car, {})
+    st = nset_load()
+    nm = lv.get('display_name') or 'Tesla'
+    soc = lv.get('battery_level')
+    lim = lv.get('charge_limit_soc') or 100
+    base = dict(tag=LA_TAG, live_update=True, url='/')
+    if soc is None:
+        return None
+    shift = lv.get('shift_state')
+    opened = [w for k, w in OPEN_KEYS.items() if lv.get(k) is True]
+    if opened and shift in (None, 'P') and lv.get('locked') is not False:
+        return 'open', '🚪 Deschis', '%s: %s e deschis(ă). Baterie %s%%.' % (nm, opened[0], soc), dict(base, critical_text='Deschis', notification_icon='mdi:car-door', notification_icon_color='#FFB15C', progress=soc, progress_max=100, progress_bar_color='#FFB15C')
+    cs = lv.get('charging_state')
+    if cs == 'Charging':
+        tl = lv.get('time_to_full_charge') or 0
+        kw = lv.get('charger_power') or 0
+        d = dict(base, critical_text='%s%%' % soc, notification_icon='mdi:ev-station', notification_icon_color='#4CC2A0', progress=soc, progress_max=max(lim, soc + 1), progress_bar_color='#4CC2A0',
+                 background_color='#0B0D10', text_color='#FFFFFF')
+        if tl:
+            d.update(chronometer=True, when=int(tl * 3600), when_relative=True)
+        rest = ('încă %d h %02d min' % (int(tl), int(tl % 1 * 60))) if tl >= 1 else ('încă %d min' % round(tl * 60)) if tl else ''
+        return 'charge', 'Se încarcă · %s%%' % soc, ('%s kW · limită %s%%%s' % (round(kw), lim, (' · ' + rest) if rest else '')), d
+    if cs == 'Complete' and lv.get('plugged_in'):
+        return 'complete', '✅ Încărcare terminată', '%s: baterie %s%%.' % (nm, soc), dict(base, critical_text='%s%%' % soc, notification_icon='mdi:battery-check', notification_icon_color='#4CC2A0', progress=soc, progress_max=100, progress_bar_color='#4CC2A0')
+    if st.get('live_drive') and shift in ('D', 'R', 'N'):
+        v = lv.get('speed') or 0
+        return 'drive', 'În mers · %d km/h' % round(v), 'Baterie %s%%%s' % (soc, (' · ' + str(lv['geofence'])) if lv.get('geofence') else ''), dict(base, critical_text='%d km/h' % round(v), notification_icon='mdi:car', notification_icon_color='#7AA8FF', progress=soc, progress_max=100, progress_bar_color='#7AA8FF', silent=True)
+    if lv.get('plugged_in') and cs in ('Stopped', 'NoPower', 'Starting', None, 'Disconnected') and shift in (None, 'P'):
+        return 'plugged', '🔌 Conectată', '%s: baterie %s%%, încărcarea nu rulează.' % (nm, soc), dict(base, critical_text='%s%%' % soc, notification_icon='mdi:ev-plug-type2', notification_icon_color='#8F99A4', progress=soc, progress_max=100, progress_bar_color='#8F99A4')
+    return None
+
+
+def la_sync(car=1):
+    """Trimite/actualizeaza/inchide Live Activity-ul in functie de starea masinii (apelat dupa evenimente MQTT si periodic)."""
+    st = nset_load()
+    if not (NHOOK and st.get('live')):
+        return
+    now = time.time()
+    pl = la_payload(car)
+    if pl is None:
+        if LA['kind'] not in (None, 'cleared'):
+            la_clear()
+        LA.update(kind=None, soc=None)
+        return
+    kind, title, msg, data = pl
+    soc = LIVE.get(car, {}).get('battery_level')
+    if kind == 'complete' and LA['kind'] == 'complete' and now - LA['since'] > 900:       # dupa 15 min incheie cardul "terminat"
+        la_clear()
+        LA.update(kind='cleared', soc=None)
+        return
+    if LA['kind'] == 'cleared' and kind == 'complete':
+        return
+    changed = kind != LA['kind']
+    min_gap = 55 if kind == 'drive' else 90
+    if changed or (soc != LA['soc'] and now - LA['sent'] > min_gap) or (kind in ('charge', 'drive') and now - LA['sent'] > 240):
+        if changed:
+            LA['since'] = now
+        LA.update(kind=kind, sent=now, soc=soc)
+        notify('live', title, msg, data, log=False)
+
+
+def la_poke(car):
+    """Debounce: dupa un eveniment MQTT asteapta 4 s (sa se adune mai multe campuri) si abia apoi sincronizeaza."""
+    if LA['timer']:
+        return
+
+    def go():
+        LA['timer'] = None
+        try:
+            la_sync(car)
+        except Exception as e:  # noqa
+            print('live activity:', e, flush=True)
+    LA['timer'] = threading.Timer(4.0, go)
+    LA['timer'].daemon = True
+    LA['timer'].start()
+
+
+def la_loop():
+    while True:
+        time.sleep(45)
+        try:
+            for c in list(LIVE):
+                la_sync(c)
+        except Exception as e:  # noqa
+            print('live loop:', e, flush=True)
 
 
 # ---------------------------------------------------------------- acces din internet (parola + cookie semnat)
@@ -1991,6 +2181,8 @@ class H(BaseHTTPRequestHandler):
             name = u.path.rsplit('/', 1)[1] if u.path.startswith('/api/cmd/') else ''
             if self.role == 'viewer' or (self.role == 'family' and (name not in FAMILY_OK)):
                 return self.send_json(dict(ok=False, reason='Nu ai permisiunea pentru această acțiune (rol: %s).' % self.role), 403)
+            if u.path == '/api/import/tessie':
+                return self.send_json(imp_action(int(body.get('car', 1)), body))
             if u.path == '/api/profiler/start':
                 return self.send_json(pf_start(int(body.get('car', 1)), body.get('profile'), body.get('minutes', 5)))
             if u.path == '/api/profiler/stop':
@@ -2050,6 +2242,18 @@ class H(BaseHTTPRequestHandler):
             return dict(rear_seats=True) if demo else caps_infer(car)
         if p == '/api/vdata':
             return DEMO_VD if demo else vehicle_data(car, a.get('force') == '1')
+        if p == '/api/import/tessie/status':
+            return dict(IMP)
+        if p == '/api/profiler/diag':
+            if DEMO_ONLY or PF['sim']:
+                return dict(ok=True, sim=True)
+            if time.time() - PF['diag'][0] < 8 and PF['diag'][1]:
+                return PF['diag'][1]
+            vin = vin_for(car)
+            b, resp, c = pf_cfg_get(vin) if vin else (None, {}, 0)
+            out = dict(ok=bool(b), synced=resp.get('synced'), fields=len((b or {}).get('fields') or {}), state=LIVE.get(car, {}).get('state'), code=c)
+            PF['diag'] = (time.time(), out)
+            return out
         if p == '/api/profiler':
             return dict(pf_status(), meta=PF_META, values={k: [v[0], v[1]] for k, v in PF['values'].items()}, hist={k: [x[1] for x in v[-120:]] for k, v in PF['hist'].items()})
         if p == '/api/config':
@@ -2176,5 +2380,6 @@ if __name__ == '__main__':
         threading.Thread(target=mqtt_thread, daemon=True).start()
         threading.Thread(target=rules_clock, daemon=True).start()
         threading.Thread(target=pf_watch, daemon=True).start()
+        threading.Thread(target=la_loop, daemon=True).start()
         threading.Thread(target=serve_public, daemon=True).start()
     ThreadingHTTPServer(('0.0.0.0', PORT), H).serve_forever()

@@ -53,7 +53,12 @@ def run():
         except ValueError:
             continue
         d = j.get('data')
-        if (j.get('metadata') or {}).get('txtype') != 'V' or not isinstance(d, dict):
+        tx = (j.get('metadata') or {}).get('txtype')
+        if tx == 'connectivity' and isinstance(d, dict):
+            with LOCK:
+                BATCH.append({'conn': {'Status': d.get('Status'), 'NetworkInterface': d.get('NetworkInterface')}})
+            continue
+        if tx != 'V' or not isinstance(d, dict):
             continue
         with LOCK:
             BATCH.append({'data': d})

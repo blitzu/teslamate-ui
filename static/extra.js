@@ -139,11 +139,11 @@ async function afterNotif() {
   const box = $('#notif'); if (!box || S.public_demo) { if (box) box.innerHTML = ''; return; }
   let n; try { n = await api('/api/notify'); } catch (e) { return; }
   const st = n.settings || {};
-  setHtml(box, `<div class="card">${sw('n_plugged', st.plugged, tr('Cablu conectat'))}${sw('n_charge_done', st.charge_done, tr('Încărcare terminată'))}${sw('n_door', st.door, tr('Ușă / portbagaj deschise'))}${sw('n_update', st.update, X('Update software disponibil', 'Software update available'))}${sw('n_low_batt', st.low_batt, X('Baterie sub 20% la parcare', 'Battery below 20% while parked'))}
+  setHtml(box, `<div class="card">${sw('n_plugged', st.plugged, tr('Cablu conectat'))}${sw('n_charge_done', st.charge_done, tr('Încărcare terminată'))}${sw('n_door', st.door, tr('Ușă / portbagaj deschise'))}${sw('n_update', st.update, X('Update software disponibil', 'Software update available'))}${sw('n_low_batt', st.low_batt, X('Baterie sub 20% la parcare', 'Battery below 20% while parked'))}${sw('n_live', st.live, X('Live Activity pe iPhone (încărcare, ușă deschisă, conectată)', 'iPhone Live Activity (charging, open door, plugged in)'))}${sw('n_live_drive', st.live_drive, X('Live Activity și în timpul condusului', 'Live Activity while driving'))}
     ${n.hook ? '' : `<p class="note" style="margin:8px 0 0">${X('Telefonul nu e legat încă (lipsește NOTIFY_WEBHOOK) — notificările apar doar aici.', 'Phone not linked yet (NOTIFY_WEBHOOK missing) — notifications only show here.')}</p>`}
     <div class="links"><a href="#" id="ntest">${tr('Trimite test')}</a></div>
     <div id="nlist">${(n.events || []).slice(0, 40).map((e) => `<div class="row nrow"><div><b>${esc(e.title)}</b><small>${esc(e.msg)}</small></div><div class="sp"></div><span class="mut" style="font-size:11.5px">${ago(e.t)}</span></div>`).join('') || `<p class="note" style="margin:8px 0 0">${tr('Nicio notificare încă.')}</p>`}</div></div>`);
-  ['plugged', 'charge_done', 'door', 'update', 'low_batt'].forEach((k) => { const e = $('#n_' + k); if (e) e.onchange = () => fetch('/api/notify/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [k]: e.checked }) }); });
+  ['plugged', 'charge_done', 'door', 'update', 'low_batt', 'live', 'live_drive'].forEach((k) => { const e = $('#n_' + k); if (e) e.onchange = () => fetch('/api/notify/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [k]: e.checked }) }); });
   const t = $('#ntest'); if (t) t.onclick = async (ev) => { ev.preventDefault(); await fetch('/api/notify/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); setTimeout(afterNotif, 400); };
 }
 
@@ -606,6 +606,8 @@ async function pageSettings() {
     + f(X('Prefix entități ESP32 BLE', 'ESP32 BLE entity prefix'), 'ha_prefix', ha.prefix, { ph: 'tesla_ble' }) + sw('ha_ble', ha.ble, X('Comenzi locale prin BLE când e disponibil', 'Local BLE commands when available'))
     + f(X('Senzor import rețea (W) — opțional', 'Grid import sensor (W) — optional'), 'ha_grid', ha.grid, { ph: 'sensor.inverter_grid_import_power', attrs: 'list="ha_sens"', hint: `${X('Puterea (în W) trasă din rețea; pozitivă când imporți. Se completează automat după ce legi Home Assistant.', 'Power (W) drawn from the grid; positive when importing. Filled automatically once Home Assistant is linked.')}<span id="sg-ha_grid"></span>` }) + f(X('Senzor putere fotovoltaică (W) — opțional', 'PV power sensor (W) — optional'), 'ha_pv', ha.pv, { ph: 'sensor.inverter_pv_power', attrs: 'list="ha_sens"', hint: `${X('Puterea totală produsă de panouri (W).', 'Total power produced by the panels (W).')}<span id="sg-ha_pv"></span>` }) + '<datalist id="ha_sens"></datalist>', 'ha', `<a href="#" data-test="ha">${X('Testează conexiunea', 'Test connection')}</a>`)}
   ${sec2(X('Notificări', 'Notifications'), f('Webhook (POST JSON: title, message, kind)', 'notify_webhook', '', { secret: true, set: c.notify.webhook_set, ph: 'http://homeassistant:8123/api/webhook/…' }), 'notify', `<a href="#" data-test="notify">${X('Trimite test', 'Send test')}</a>`)}
+  ${sec2(X('Import din Tessie', 'Import from Tessie'), f(X('Token API Tessie', 'Tessie API token'), 'tessie_token', '', { secret: true, set: c.tessie.token_set, hint: X('Tokenul de acces din contul tău Tessie (vezi developer.tessie.com). Se folosește doar pentru a citi istoricul tău.', 'The access token from your Tessie account (see developer.tessie.com). Used only to read your history.') })
+    + `<div id="timp" class="note" style="margin:12px 2px 0"></div>`, 'tessie', `<a href="#" data-imp="check">${X('Verifică', 'Check')}</a><a href="#" data-imp="dry">${X('Test (fără scriere)', 'Test (no writes)')}</a><a href="#" data-imp="run">${X('Importă', 'Import')}</a><a href="#" data-imp="undo">${X('Anulează importul', 'Undo import')}</a>`)}
   ${sec2(X('Acces din internet și roluri', 'Internet access & roles'), f(X('Parolă pentru acces din internet (min. 12 caractere)', 'Password for internet access (min. 12 characters)'), 'app_password', '', { secret: true, set: ac.password_set })
     + f('Cloudflare Access — team domain', 'acc_team', ac.team, { ph: 'echipa.cloudflareaccess.com' }) + f('Cloudflare Access — AUD tag', 'acc_aud', ac.aud) + f(X('E-mail administrator', 'Administrator e-mail'), 'acc_email', ac.email)
     + f(X('Roluri (email:rol, separate prin virgulă; roluri: admin, family, viewer)', 'Roles (email:role, comma-separated; roles: admin, family, viewer)'), 'roles', ac.roles, { ph: 'sotia@example.com:family' }), 'access')}
@@ -624,7 +626,7 @@ function afterSettings() {
     });
   }).catch(() => {});
   const FIELDS = { pin: ['pin'], fleet: ['fleet_id', 'fleet_secret', 'fleet_domain', 'fleet_base'], ha: ['ha_url', 'ha_token', 'ha_prefix', 'ha_grid', 'ha_pv'], notify: ['notify_webhook'],
-    access: ['app_password', 'acc_team', 'acc_aud', 'acc_email', 'roles'], display: ['currency', 'price_grid', 'link_tm', 'link_gf'] };
+    access: ['app_password', 'acc_team', 'acc_aud', 'acc_email', 'roles'], tessie: ['tessie_token'], display: ['currency', 'price_grid', 'link_tm', 'link_gf'] };
   const say = (k, t, cls) => { const m = document.getElementById('cm-' + k); if (m) { m.style.display = ''; m.textContent = t; m.className = 'toast ' + (cls || ''); } };
   const call = async (path, body, k) => {
     const pinSet = (window.__pinSet !== false);
@@ -643,6 +645,33 @@ function afterSettings() {
     const [ok, j] = await call('/api/config', body, k);
     if (ok && j.ok) { if (k === 'pin' && body.pin) localStorage.setItem('pin', body.pin); say(k, '✓ ' + X('Salvat', 'Saved'), 'ok'); setTimeout(render, 900); }
     else say(k, '✗ ' + (j.reason || j.error || X('Eroare', 'Error')), 'bad');
+  });
+  const impBox = () => document.getElementById('timp');
+  const impSay = (h) => { const b = impBox(); if (b) b.innerHTML = h; };
+  const imp = async (action, extra = {}) => (await call('/api/import/tessie', Object.assign({ action, car }, extra)))[1];
+  let impT = null;
+  const impPoll = () => { clearInterval(impT); impT = setInterval(async () => {
+    if (!impBox()) { clearInterval(impT); return; }
+    const st = await api('/api/import/tessie/status');
+    if (st.running) { const pc = st.total ? Math.round(st.done / st.total * 100) : 0; impSay(`⏳ ${esc(st.phase)} · ${pc}%<div class="bar" style="margin:8px 0 0"><div class="fill" style="width:${pc}%"></div></div>`); return; }
+    clearInterval(impT);
+    if (st.error) impSay(`<span style="color:#ffb3b3">✗ ${esc(st.error)}</span>`);
+    else if (st.result) { const r = st.result; impSay(`<b style="color:var(--mint)">✓ ${r.dry_run ? X('Test reușit (nu s-a scris nimic)', 'Test passed (nothing written)') : X('Import terminat', 'Import finished')}</b> — ${r.drives} ${X('curse', 'drives')}, ${r.charges} ${X('încărcări', 'charges')}, ${r.positions} ${X('puncte GPS', 'GPS points')}.${r.dry_run ? '' : ' ' + X('Poți anula oricând cu „Anulează importul”.', 'You can undo it anytime with “Undo import”.')}`); }
+  }, 1200); };
+  view.querySelectorAll('[data-imp]').forEach((b) => b.onclick = async (e) => {
+    e.preventDefault(); const k = b.dataset.imp; impSay('…');
+    if (k === 'check') {
+      const v = await imp('vehicles'); if (!v.ok) { impSay(`<span style="color:#ffb3b3">✗ ${esc(v.reason || 'eroare')}</span>`); return; }
+      const j = await imp('preview'); if (!j.ok) { impSay(`<span style="color:#ffb3b3">✗ ${esc(j.reason || 'eroare')}</span>`); return; }
+      const dd = (ts) => ts ? new Date(ts * 1000).toLocaleDateString(LOC(), { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+      impSay(`${X('Tessie are', 'Tessie has')} <b>${j.tessie_drives}</b> ${X('curse și', 'drives and')} <b>${j.tessie_charges}</b> ${X('încărcări. De importat (mai vechi decât prima înregistrare din TeslaMate, ' + dd(j.cutoff) + ', fără suprapuneri):', 'charges. To import (older than the first TeslaMate record, ' + dd(j.cutoff) + ', no overlaps):')} <b>${j.to_import_drives}</b> ${X('curse', 'drives')} (${nf(j.km)} km), <b>${j.to_import_charges}</b> ${X('încărcări', 'charges')} (${nf(j.kwh, 1)} kWh)${j.first ? ' · ' + dd(j.first) + ' – ' + dd(j.last) : ''}.${j.already ? '<br><b>' + X('Există deja un import neanulat.', 'An earlier import is still active.') + '</b>' : ''}`);
+    } else if (k === 'dry' || k === 'run') {
+      if (k === 'run' && !confirm(X('Importul ADAUGĂ curse, încărcări și puncte GPS în baza TeslaMate (nu șterge și nu modifică nimic existent) și poate fi anulat. Ai făcut o copie de siguranță a bazei de date?', 'The import ADDS drives, charges and GPS points to the TeslaMate database (it never deletes or changes existing data) and can be undone. Have you backed up the database?'))) { impSay(''); return; }
+      const j = await imp(k, { confirm: true }); if (!j.ok) { impSay(`<span style="color:#ffb3b3">✗ ${esc(j.reason || 'eroare')}</span>`); return; } impPoll();
+    } else if (k === 'undo') {
+      if (!confirm(X('Șterg exact datele adăugate de import (după jurnalul lui). Continui?', 'Delete exactly the data added by the import (per its ledger). Continue?'))) { impSay(''); return; }
+      const j = await imp('undo'); impSay(j.ok ? `<b style="color:var(--mint)">✓ ${X('Anulat', 'Undone')}</b> — ${j.undone.drives} ${X('curse', 'drives')}, ${j.undone.charges} ${X('încărcări', 'charges')}, ${j.undone.positions} ${X('puncte', 'points')}.` : `<span style="color:#ffb3b3">✗ ${esc(j.reason || 'eroare')}</span>`);
+    }
   });
   view.querySelectorAll('[data-test]').forEach((b) => b.onclick = async (e) => {
     e.preventDefault(); const k = b.dataset.test; say(k, X('Se testează…', 'Testing…'), 'busy');
@@ -768,6 +797,20 @@ async function pageProfiler() {
   <div class="row" style="margin-top:14px;gap:8px"><input id="pfq" class="pf-q" placeholder="${X('Caută semnal…', 'Search signal…')}" value="${esc(PFFILTER)}"><a class="pf-dl" href="/api/profiler/export.csv">⬇ CSV</a></div>
   <div id="pflist"></div>`;
 }
+async function pfDiag() {
+  const box = $('#pfdiag'); if (!box || !PFS || !PFS.status.session) return; const st = PFS.status, se = st.session, now = Date.now() / 1000;
+  const age = st.last_rx ? Math.round(now - st.last_rx) : null, cn = st.conn;
+  let line = [];
+  if (se.sim) { box.innerHTML = ''; return; }
+  if (se.waking) line.push('⏳ ' + X('Trezesc mașina…', 'Waking the car…'));
+  if (cn) line.push((cn.status === 'CONNECTED' ? '🟢 ' : '⚪ ') + X('Mașina ' + (cn.status === 'CONNECTED' ? 'e conectată la serverul de telemetrie' : 'nu e conectată acum') + (cn.net ? ' (' + cn.net + ')' : '') + ', acum ' + Math.round(now - cn.at) + ' s', 'Car ' + (cn.status === 'CONNECTED' ? 'is connected to the telemetry server' : 'is not connected now') + (cn.net ? ' (' + cn.net + ')' : '') + ', ' + Math.round(now - cn.at) + ' s ago'));
+  line.push(age == null ? X('Nu am primit încă nicio dată.', 'No data received yet.') : X('Ultimul pachet: acum ' + age + ' s', 'Last packet: ' + age + ' s ago'));
+  try { const dg = await api('/api/profiler/diag'); if (dg.ok && !dg.sim) line.push((dg.synced ? '✓ ' : '… ') + X('Configurația ' + (dg.synced ? 'e aplicată pe mașină' : 'așteaptă să fie preluată de mașină (trebuie să fie trează și online)'), 'Configuration ' + (dg.synced ? 'is applied on the car' : 'is waiting for the car to fetch it (it must be awake and online)'))); } catch (e) { /* ignore */ }
+  if ((age == null || age > 20) && Date.now() / 1000 - se.started > 25) line.push('<a href="#" id="pfwake" style="color:var(--gold)">' + X('Trezește mașina', 'Wake the car') + '</a>');
+  box.innerHTML = line.join('<br>');
+  const w = $('#pfwake'); if (w) w.onclick = async (e) => { e.preventDefault(); w.textContent = '…'; const pin = getPin(); if (!pin) return; await fetch('/api/cmd/wake', { method: 'POST', headers: { 'X-Pin': pin, 'Content-Type': 'application/json' }, body: JSON.stringify({ car }) }); };
+}
+let pfDiagT = 0;
 function pfRenderCtl() {
   const box = $('#pfctl'); if (!box || !PFS) return; const st = PFS.status, se = st.session;
   const left = se ? Math.max(0, Math.round((se.until * 1000 - Date.now()) / 1000)) : 0;
@@ -777,6 +820,7 @@ function pfRenderCtl() {
   box.dataset.k = key;
   const cards = Object.entries(st.profiles).map(([k, p]) => `<button class="pf-card ${PFSEL === k ? 'on' : ''}" data-pf="${k}" ${se ? 'disabled' : ''}><b>${LANG === 'en' ? p.en : p.ro}</b><small>${p.count} ${X('semnale', 'signals')}</small><span>${pfDescAll()[k] || ''}</span></button>`).join('');
   setHtml(box, se ? `<div class="card"><div class="row"><div><b>${LANG === 'en' ? st.profiles[se.profile].en : st.profiles[se.profile].ro}</b><small class="mut" style="display:block">${se.fields} ${X('semnale · se oprește automat', 'signals · stops automatically')}</small></div><div class="sp"></div><button class="pf-btn stop" id="pfstop">${X('Oprește', 'Stop')}</button></div>
+      <div class="note" id="pfdiag" style="margin:8px 0 0"></div>
       ${(se.dropped || []).length ? `<p class="note" style="margin:8px 0 0">${X('Omise (lipsește permisiunea de locație vehicle_location sau nu sunt acceptate): ', 'Skipped (missing vehicle_location scope or not accepted): ')}${esc(se.dropped.slice(0, 8).join(', '))}${se.dropped.length > 8 ? '…' : ''}</p>` : ''}</div>`
     : `<div class="pf-cards">${cards}</div><div class="card" style="margin-top:10px"><div class="row"><label class="cf" style="margin:0;flex:1">${X('Durată', 'Duration')}<select id="pfmin" style="width:100%">${[5, 10, 15, 30].map((m) => `<option value="${m}" ${m === PFMIN ? 'selected' : ''}>${m} min</option>`).join('')}</select></label><button class="pf-btn" id="pfgo" style="margin-top:14px">${X('Pornește sesiunea', 'Start session')}</button></div>
       <p class="note" style="margin:8px 0 0">${X('Mașina trebuie să fie trează și conectată; cât durează sesiunea NU adoarme. Alerta Sentry rămâne activă. La final revine automat la configurația normală. Tesla poate taxa semnalele de telemetrie.', 'The car must be awake and connected; it will NOT sleep during the session. Sentry alerts stay active. At the end it automatically reverts to the normal configuration. Tesla may bill telemetry signals.')}</p></div>
@@ -822,5 +866,5 @@ function afterProfiler() {
     Object.entries(m.d || {}).forEach(([k, v]) => { PFS.values[k] = [v, m.t]; if (typeof v === 'number') { const h = (PFS.hist[k] = PFS.hist[k] || []); h.push(v); if (h.length > 120) h.shift(); } });
     const now = performance.now(); if (now - PFTICK > 700) { PFTICK = now; pfRenderData(); }
   };
-  clearInterval(window.__pfT); window.__pfT = setInterval(() => { if (location.hash.startsWith('#/profiler')) pfRenderCtl(); else { clearInterval(window.__pfT); pfClose(); } }, 1000);
+  clearInterval(window.__pfT); window.__pfT = setInterval(async () => { if (location.hash.startsWith('#/profiler')) { pfRenderCtl(); if (Date.now() - pfDiagT > 4000) { pfDiagT = Date.now(); try { PFS.status = Object.assign(PFS.status, await api('/api/profiler').then((d) => ({ last_rx: d.last_rx, conn: d.conn, session: d.session, active: d.active }))); } catch (e) { /* ignore */ } pfDiag(); } } else { clearInterval(window.__pfT); pfClose(); } }, 1000);
 }

@@ -43,6 +43,32 @@ mode: queued
 
 3. `docker compose up -d`, then press *Send test* in the app.
 
+## iPhone Live Activities (Home Assistant Companion app)
+
+With the Home Assistant Companion app for iOS (iOS 17.2+, Core 2026.7+, Live Activities enabled in the app) the app can show a **Live Activity** on the Lock Screen / Dynamic Island: *charging* (progress bar towards your charge limit, power and countdown to full), *door/trunk open*, *plugged in but not charging*, *charging complete*, and optionally *driving*. One activity (tag `tesla_status`) is updated in place and closed automatically.
+
+It uses the same webhook: payloads with a `data` object carry `live_update`, `tag`, `progress`, `chronometer`…; `{"clear": true, "tag": "tesla_status"}` closes it. Extend the Home Assistant automation like this:
+
+```yaml
+actions:
+  - choose:
+      - conditions: "{{ trigger.json.clear | default(false) }}"
+        sequence:
+          - action: notify.mobile_app_YOUR_PHONE
+            data:
+              message: clear_notification
+              data:
+                tag: "{{ trigger.json.tag | default('tesla_status') }}"
+    default:
+      - action: notify.mobile_app_YOUR_PHONE
+        data:
+          title: "{{ trigger.json.title | default('Tesla') }}"
+          message: "{{ trigger.json.message | default('') }}"
+          data: "{{ trigger.json.data | default({}) }}"
+```
+
+Toggle it in the app (Notifications → *iPhone Live Activity*, and *while driving*). Apple limits activities to 8 hours and throttles frequent updates.
+
 ## Other targets
 
 Any endpoint that accepts a JSON POST works (n8n, Node-RED, a small relay to Telegram/ntfy/Pushover…). The payload has `title`, `message`, `kind`.
