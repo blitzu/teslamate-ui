@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """TeslaMate UI (stil Tessie): backend. MQTT (live) + Postgres TeslaMate (istoric) -> JSON/SSE. Fara date demo cat timp TeslaMate nu are masini => mod DEMO."""
-import json, math, os, queue, random, secrets, ssl, threading, time, datetime as dt
+import json, math, os, re, queue, random, secrets, ssl, threading, time, datetime as dt
 import urllib.request, urllib.error, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -1061,6 +1061,32 @@ def cfg_update(b):
     return True, ''
 
 
+def ha_entities():
+    """Senzori de putere (W) din HA + sugestii automate pentru importul din retea si productia fotovoltaica."""
+    c, r = ha_req('GET', '/api/states', timeout=15)
+    if c != 200 or not isinstance(r, list):
+        return dict(ok=False, msg='HA a răspuns %s' % c, entities=[])
+    ents = []
+    for x in r:
+        eid = x.get('entity_id', '')
+        at = x.get('attributes') or {}
+        if eid.startswith('sensor.') and at.get('unit_of_measurement') == 'W':
+            ents.append(dict(id=eid, name=at.get('friendly_name') or eid, state=x.get('state')))
+    def best(pats, bad=()):
+        sc = []
+        for e in ents:
+            t = (e['id'] + ' ' + e['name']).lower()
+            if any(b in t for b in bad):
+                continue
+            pts = sum(1 for pat in pats if re.search(pat, t))
+            if pts:
+                sc.append((pts, -len(e['id']), e['id']))
+        return max(sc)[2] if sc else ''
+    return dict(ok=True, entities=sorted(ents, key=lambda e: e['id'])[:600],
+                grid=best([r'grid', r'import', r'retea|rețea|reteaua', r'power'], bad=('export', 'l1_', 'l2_', 'l3_', 'ct1', 'frequency', 'voltage')),
+                pv=best([r'pv', r'solar|fotovolt', r'power'], bad=('pv1', 'pv2', 'pv3', 'pv4', 'today', 'total', 'voltage', 'current', 'battery', 'grid')))
+
+
 def cfg_test(what):
     if what == 'ha':
         if not ha_ok():
@@ -1571,6 +1597,10 @@ class H(BaseHTTPRequestHandler):
             if self.role != 'admin':
                 return dict(error='forbidden')
             return dict(demo=True) if demo else dict(cfg_public(), role=self.role)
+        if p == '/api/config/ha_entities':
+            if self.role != 'admin' or not ha_ok():
+                return dict(ok=False, entities=[])
+            return ha_entities()
         if p == '/api/rules':
             fg = []
             try:

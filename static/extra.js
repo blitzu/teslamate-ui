@@ -594,7 +594,7 @@ async function pageSettings() {
   const f = (label, id, val, o = {}) => `<label class="cf">${label}<input id="${id}" type="${o.secret ? 'password' : (o.type || 'text')}" value="${o.secret ? '' : esc(val ?? '')}" placeholder="${o.secret ? (o.set ? X('••••••  (setat — lasă gol ca să-l păstrezi)', '••••••  (set — leave empty to keep)') : (o.ph || '')) : (o.ph || '')}" autocomplete="off" ${o.attrs || ''}></label>${o.hint ? `<small class="ch">${o.hint}</small>` : ''}`;
   const sec2 = (title, body, save, extra = '') => `<h2>${title}</h2><div class="card cfg">${body}<div class="links"><a href="#" data-save="${save}">${X('Salvează', 'Save')}</a>${extra}</div><div class="toast" id="cm-${save}" style="display:none"></div></div>`;
   const fl = c.fleet, ha = c.ha, ac = c.access, dp = c.display;
-  window.__pinSet = fl.pin_set;
+  window.__pinSet = fl.pin_set; window.__haSet = ha.token_set && !!ha.url;
   return `<div class="top"><h1>${X('Setări', 'Settings')}</h1><small>${X('Totul se salvează pe server și se aplică imediat. Câmpurile secrete nu se mai afișează după salvare.', 'Everything is saved on the server and applies immediately. Secret fields are never shown again after saving.')}</small></div>
   ${lang}
   ${sec2(X('PIN comenzi', 'Command PIN'), f(fl.pin_set ? X('PIN nou (lasă gol ca să-l păstrezi)', 'New PIN (leave empty to keep)') : X('Setează un PIN (min. 4 caractere)', 'Set a PIN (min. 4 characters)'), 'pin', '', { secret: true, set: false, attrs: 'inputmode="numeric"' }) + `<small class="ch">${fl.pin_set ? X('PIN-ul e setat. Orice schimbare cere PIN-ul actual.', 'A PIN is set. Any change asks for the current PIN.') : X('Fără PIN nu se pot trimite comenzi. Prima setare se face doar din rețeaua locală.', 'No commands without a PIN. The first setup must be done on the local network.')}</small>`, 'pin')}
@@ -603,7 +603,7 @@ async function pageSettings() {
     + `<small class="ch">${X('După salvare, pașii (înregistrare domeniu, conectare cont, cheie virtuală) apar în cardul „Comenzi” din pagina Mașină.', 'After saving, the steps (register domain, connect account, virtual key) appear in the “Controls” card on the Car page.')} <a href="https://github.com/blitzu/teslamate-ui/blob/main/docs/fleet-api.md" target="_blank" rel="noopener" style="color:var(--gold)">${X('Ghid complet', 'Full guide')}</a></small>`, 'fleet')}
   ${sec2('Home Assistant (BLE + energie)', f('URL Home Assistant', 'ha_url', ha.url, { ph: 'http://homeassistant.local:8123' }) + f(X('Token de acces (long-lived)', 'Long-lived access token'), 'ha_token', '', { secret: true, set: ha.token_set })
     + f(X('Prefix entități ESP32 BLE', 'ESP32 BLE entity prefix'), 'ha_prefix', ha.prefix, { ph: 'tesla_ble' }) + sw('ha_ble', ha.ble, X('Comenzi locale prin BLE când e disponibil', 'Local BLE commands when available'))
-    + f(X('Senzor import rețea (W) — opțional', 'Grid import sensor (W) — optional'), 'ha_grid', ha.grid, { ph: 'sensor.invertor_grid_import_power' }) + f(X('Senzor putere fotovoltaică (W) — opțional', 'PV power sensor (W) — optional'), 'ha_pv', ha.pv, { ph: 'sensor.invertor_pv_power' }), 'ha', `<a href="#" data-test="ha">${X('Testează conexiunea', 'Test connection')}</a>`)}
+    + f(X('Senzor import rețea (W) — opțional', 'Grid import sensor (W) — optional'), 'ha_grid', ha.grid, { ph: 'sensor.inverter_grid_import_power', attrs: 'list="ha_sens"', hint: `${X('Puterea (în W) trasă din rețea; pozitivă când imporți. Se completează automat după ce legi Home Assistant.', 'Power (W) drawn from the grid; positive when importing. Filled automatically once Home Assistant is linked.')}<span id="sg-ha_grid"></span>` }) + f(X('Senzor putere fotovoltaică (W) — opțional', 'PV power sensor (W) — optional'), 'ha_pv', ha.pv, { ph: 'sensor.inverter_pv_power', attrs: 'list="ha_sens"', hint: `${X('Puterea totală produsă de panouri (W).', 'Total power produced by the panels (W).')}<span id="sg-ha_pv"></span>` }) + '<datalist id="ha_sens"></datalist>', 'ha', `<a href="#" data-test="ha">${X('Testează conexiunea', 'Test connection')}</a>`)}
   ${sec2(X('Notificări', 'Notifications'), f('Webhook (POST JSON: title, message, kind)', 'notify_webhook', '', { secret: true, set: c.notify.webhook_set, ph: 'http://homeassistant:8123/api/webhook/…' }), 'notify', `<a href="#" data-test="notify">${X('Trimite test', 'Send test')}</a>`)}
   ${sec2(X('Acces din internet și roluri', 'Internet access & roles'), f(X('Parolă pentru acces din internet (min. 12 caractere)', 'Password for internet access (min. 12 characters)'), 'app_password', '', { secret: true, set: ac.password_set })
     + f('Cloudflare Access — team domain', 'acc_team', ac.team, { ph: 'echipa.cloudflareaccess.com' }) + f('Cloudflare Access — AUD tag', 'acc_aud', ac.aud) + f(X('E-mail administrator', 'Administrator e-mail'), 'acc_email', ac.email)
@@ -612,6 +612,16 @@ async function pageSettings() {
 }
 function afterSettings() {
   view.querySelectorAll('[data-lang]').forEach((b) => b.onclick = () => { LANG = b.dataset.lang; try { localStorage.setItem('lang', LANG); } catch (x) { /* ignore */ } document.documentElement.lang = LANG; render(); });
+  if (window.__haSet) api('/api/config/ha_entities').then((d) => {
+    if (!d.ok || !d.entities) return;
+    const dl = document.getElementById('ha_sens'); if (dl) dl.innerHTML = d.entities.map((e) => `<option value="${esc(e.id)}">${esc(e.name)} (${esc(String(e.state))} W)</option>`).join('');
+    [['ha_grid', d.grid], ['ha_pv', d.pv]].forEach(([id, sug]) => {
+      const el = document.getElementById(id), box = document.getElementById('sg-' + id); if (!el || !box || !sug) return;
+      if (!el.value) { el.value = sug; box.innerHTML = ` <b style="color:var(--mint)">${X('Detectat automat — apasă Salvează', 'Auto-detected — press Save')}</b>`; }
+      else if (el.value !== sug) box.innerHTML = ` ${X('Sugestie: ', 'Suggestion: ')}<a href="#" data-sug="${id}|${esc(sug)}" style="color:var(--gold)">${esc(sug)}</a>`;
+      box.querySelectorAll('[data-sug]').forEach((a) => a.onclick = (ev) => { ev.preventDefault(); el.value = sug; });
+    });
+  }).catch(() => {});
   const FIELDS = { pin: ['pin'], fleet: ['fleet_id', 'fleet_secret', 'fleet_domain', 'fleet_base'], ha: ['ha_url', 'ha_token', 'ha_prefix', 'ha_grid', 'ha_pv'], notify: ['notify_webhook'],
     access: ['app_password', 'acc_team', 'acc_aud', 'acc_email', 'roles'], display: ['currency', 'link_tm', 'link_gf'] };
   const say = (k, t, cls) => { const m = document.getElementById('cm-' + k); if (m) { m.style.display = ''; m.textContent = t; m.className = 'toast ' + (cls || ''); } };
