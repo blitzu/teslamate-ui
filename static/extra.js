@@ -874,3 +874,51 @@ function afterProfiler() {
   };
   clearInterval(window.__pfT); window.__pfT = setInterval(async () => { if (location.hash.startsWith('#/profiler')) { pfRenderCtl(); if (Date.now() - pfDiagT > 4000) { pfDiagT = Date.now(); try { PFS.status = Object.assign(PFS.status, await api('/api/profiler').then((d) => ({ last_rx: d.last_rx, conn: d.conn, session: d.session, active: d.active }))); } catch (e) { /* ignore */ } pfDiag(); } } else { clearInterval(window.__pfT); pfClose(); } }, 1000);
 }
+
+
+/* ---------- Deschideri animate pe poza masinii (usi, frunk, portbagaj, geamuri) ---------- */
+function openState(L, o) {
+  o = o || {};
+  const d = { fl: !!o.df, rl: !!o.dr, fr: !!o.pf, rr: !!o.pr };                       // df/dr = sofer (stanga) fata/spate, pf/pr = pasager (dreapta)
+  const known = Object.keys(o).length > 0 && ['df', 'dr', 'pf', 'pr'].some((k) => o[k] !== undefined && o[k] !== null);
+  return { doors: d, doorsKnown: known, anyDoor: known ? Object.values(d).some(Boolean) : !!L.doors_open, frunk: !!(L.frunk_open || o.ft), trunk: !!(L.trunk_open || o.rt),
+    windows: !!(L.windows_open || o.fd_window || o.fp_window || o.rd_window || o.rp_window) };
+}
+function openOverlay(L, o) {
+  const st = openState(L, o);
+  if (!(st.anyDoor || st.frunk || st.trunk || st.windows)) return '<svg class="ovl" viewBox="0 0 640 1400"></svg>';
+  const door = (x, y, hinge, cls, flip) => `<rect class="od ${cls}" x="${x}" y="${y}" width="78" height="285" rx="22" style="transform-origin:${hinge}px ${y}px"/>`;
+  let g = '';
+  if (st.doorsKnown) {
+    if (st.doors.fl) g += door(40, 520, 58, 'l');
+    if (st.doors.rl) g += door(40, 815, 58, 'l');
+    if (st.doors.fr) g += door(522, 520, 582, 'r');
+    if (st.doors.rr) g += door(522, 815, 582, 'r');
+  } else if (st.anyDoor) g += '<rect class="og" x="36" y="520" width="84" height="580" rx="30"/><rect class="og" x="520" y="520" width="84" height="580" rx="30"/>';
+  if (st.frunk) g += '<path class="og" d="M130 60C250 22 390 22 510 60L535 330H105Z"/>';
+  if (st.trunk) g += '<path class="og" d="M120 1130H520L500 1320C400 1350 240 1350 140 1320Z"/>';
+  if (st.windows) g += '<path class="ow" d="M62 540V1090M578 540V1090"/>';
+  return `<svg class="ovl" viewBox="0 0 640 1400" aria-hidden="true">${g}</svg>`;
+}
+function openChips(L, o) {
+  const st = openState(L, o), t = [];
+  const nm = { fl: X('Ușă stânga față', 'Front left door'), rl: X('Ușă stânga spate', 'Rear left door'), fr: X('Ușă dreapta față', 'Front right door'), rr: X('Ușă dreapta spate', 'Rear right door') };
+  if (st.doorsKnown) Object.entries(st.doors).forEach(([k, v]) => { if (v) t.push(nm[k]); }); else if (st.anyDoor) t.push(X('Ușă deschisă', 'Door open'));
+  if (st.frunk) t.push('Frunk'); if (st.trunk) t.push(X('Portbagaj', 'Trunk')); if (st.windows) t.push(X('Geam deschis', 'Window open'));
+  return t.map((x) => `<span class="chip alert"><i></i>${x}</span>`).join('');
+}
+let openBusy = false;
+async function refreshOpenings(c) {
+  const L = c.live || {};
+  if (!(L.doors_open || L.trunk_open || L.frunk_open || L.windows_open) || openBusy || S.demo) return;
+  openBusy = true;
+  try {
+    const d = await api('/api/vdata?car=' + c.id); S.opens = S.opens || {};
+    const n = JSON.stringify(d.openings || {});
+    if (d.openings && n !== JSON.stringify(S.opens[c.id] || {})) {
+      S.opens[c.id] = d.openings;
+      const ov = document.querySelector('#stage .ovl'); if (ov) ov.outerHTML = openOverlay(L, d.openings);
+      const ch = document.getElementById('openchips'); if (ch) ch.innerHTML = openChips(L, d.openings);
+    }
+  } catch (e) { /* ignore */ } finally { openBusy = false; }
+}

@@ -163,7 +163,7 @@ function pageCar() {
     L.sentry_mode != null ? chip(L.sentry_mode ? 'Sentry activ' : 'Sentry oprit', L.sentry_mode) : '',
     L.is_climate_on != null ? chip(L.is_climate_on ? 'Climatizare pornită' : 'Climatizare oprită', L.is_climate_on) : '',
     L.plugged_in != null ? chip(L.plugged_in ? 'Conectată la priză' : 'Neconectată', L.plugged_in) : '',
-    (L.doors_open || L.windows_open || L.trunk_open || L.frunk_open) ? chip('Ceva e deschis', false, true) : '',
+    (L.doors_open || L.windows_open || L.trunk_open || L.frunk_open) ? `<span id="openchips">${openChips(L, (S.opens || {})[c.id]) || chip('Ceva e deschis', false, true)}</span>` : '',
     L.update_available ? chip(tr('Update disponibil') + (L.update_version ? ' ' + esc(L.update_version) : ''), false) : '',
     L.healthy === false ? chip('Conexiune TeslaMate instabilă', false, true) : '',
   ].join('');
@@ -180,7 +180,7 @@ function pageCar() {
   return `
 <div class="top row"><div><h1>${esc(c.name || L.display_name || 'Tesla')}</h1><small>${esc(c.marketing_name || ('Model ' + (c.model || '')))}${c.trim && !/^\d+$/.test(c.trim) ? ' · ' + esc(c.trim) : ''}${age ? ' · ' + age : ''}</small></div><div class="sp"></div>${S.demo ? '<span class="pill demo">DEMO</span>' : ''}<span class="pill ${pc}">${st}</span></div>
 <div class="card" style="margin-top:12px">
-  <div class="stage photo ${c.image === '/car.png' ? 'top' : ''} ${charging ? 'chg' : ''}" id="stage">${c.image ? `<img src="${esc(c.image)}" alt="">` : carSvg(L)}${c.image === '/car.png' ? ['fl', 'fr', 'rl', 'rr'].map((k) => { const v = L['tpms_pressure_' + k]; return `<span class="tw ${k} ${v != null && v < 2.5 ? 'low' : ''}">${v == null ? '—' : nf(v, 1)}<small>bar</small></span>`; }).join('') : ''}</div>
+  <div class="stage photo ${c.image === '/car.png' ? 'top' : ''} ${charging ? 'chg' : ''}" id="stage">${c.image ? `<div class="cw"><img src="${esc(c.image)}" alt="">${c.image === '/car.png' ? openOverlay(L, (S.opens || {})[c.id]) : ''}</div>` : carSvg(L)}${c.image === '/car.png' ? ['fl', 'fr', 'rl', 'rr'].map((k) => { const v = L['tpms_pressure_' + k]; return `<span class="tw ${k} ${v != null && v < 2.5 ? 'low' : ''}">${v == null ? '—' : nf(v, 1)}<small>bar</small></span>`; }).join('') : ''}</div>
   <div class="tpr ${c.image === '/car.png' ? 'hide' : ''}">${['fl', 'fr', 'rl', 'rr'].map((k, i) => { const v = L['tpms_pressure_' + k]; return `<span class="${v != null && v < 2.5 ? 'low' : ''}"><i>${['Față stânga', 'Față dreapta', 'Spate stânga', 'Spate dreapta'][i]}</i><b>${v == null ? '—' : nf(v, 1)}</b> bar</span>`; }).join('')}</div>
   <div class="row" style="align-items:flex-end;margin-top:4px"><div class="pct">${nf(soc)}<small>%</small></div><div class="rng"><b>${nf(range)}</b> km autonomie</div></div>
   <div class="bar"><div class="fill ${socCls(soc)} ${charging ? 'chg' : ''}" style="width:${Math.max(0, Math.min(100, soc || 0))}%"></div>${lim ? `<div class="lim" style="left:calc(${Math.min(100, lim)}% - 1px)"></div>` : ''}</div>
@@ -222,6 +222,7 @@ async function afterCar() {
   const c = cur(); if (!c) return;
   drawMap($('#map'), c.live || {});
   renderCmds();
+  refreshOpenings(c);
   const im = $('#stage img');
   if (im) im.onerror = () => { $('#stage').classList.remove('photo'); $('#stage').innerHTML = carSvg(c.live || {}); };
   try {

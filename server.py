@@ -1110,6 +1110,8 @@ def _vehicle_data(car, force=False):
         if hl is not None:
             caps['homelink'] = hl > 0
         caps_save(car, caps)
+    vs = resp.get('vehicle_state') or {}
+    out['openings'] = {k: vs.get(k) for k in ('df', 'dr', 'pf', 'pr', 'ft', 'rt', 'fd_window', 'fp_window', 'rd_window', 'rp_window')}
     out['charge_schedules'] = (resp.get('charge_schedule_data') or {}).get('charge_schedules') or []
     out['precondition_schedules'] = (resp.get('preconditioning_schedule_data') or {}).get('precondition_schedules') or []
     VD[car] = (time.time(), out)

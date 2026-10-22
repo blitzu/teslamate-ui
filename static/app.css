@@ -256,3 +256,17 @@ body.nav-open #nav{transform:none;box-shadow:0 0 40px #000a}
 .pf-c.old .pf-cv{color:#6b7580}
 .pf-sp{display:block;width:100%;height:42px;margin-top:4px}.pf-sp text{fill:#6f7984;font-size:7.5px;font-weight:600}
 .pf-c .pf-s{opacity:0;transition:opacity .15s}.pf-c:hover .pf-s,.pf-c .pf-s.on{opacity:1}
+
+/* deschideri animate */
+.cw{position:relative;display:inline-block;line-height:0;margin:6px auto}
+.stage.photo.top .cw img{margin:0 auto}
+.ovl{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+.od{fill:#ffb15c59;stroke:#ffb15c;stroke-width:3;animation:doorl .9s cubic-bezier(.2,.8,.3,1) forwards,glow 2s ease-in-out .9s infinite}
+.od.r{animation-name:doorr,glow}
+@keyframes doorl{from{transform:rotate(0)}to{transform:rotate(34deg)}}
+@keyframes doorr{from{transform:rotate(0)}to{transform:rotate(-34deg)}}
+.og{fill:#ffb15c40;stroke:#ffb15c;stroke-width:3;animation:glow 1.6s ease-in-out infinite}
+.ow{fill:none;stroke:#8fd3ff;stroke-width:6;stroke-linecap:round;stroke-dasharray:4 16;animation:dash 1.2s linear infinite}
+@keyframes glow{0%,100%{opacity:.55}50%{opacity:1}}
+@keyframes dash{to{stroke-dashoffset:-20}}
+#openchips{display:contents}
