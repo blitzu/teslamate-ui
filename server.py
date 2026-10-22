@@ -1863,7 +1863,7 @@ def la_sync(car=1):
         if changed:
             LA['since'] = now
         LA.update(kind=kind, sent=now, soc=soc)
-        notify('live', title, msg, data, log=False)
+        notify('live', title, '%s · act. %s' % (msg, time.strftime('%H:%M')), data, log=False)       # ora ultimei actualizari (ora locala a serverului)
 
 
 def la_poke(car):
