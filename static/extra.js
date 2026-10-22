@@ -578,10 +578,12 @@ async function afterChargeSolar(id) {
   const box = $('#chsolar'); if (!box) return;
   let d; try { d = await api('/api/charge_solar/' + id); } catch (e) { return; }
   if (!d.available) { box.remove(); return; }
-  const sh = d.solar_share;
+  const sh = d.solar_share, cur = S.currency ?? '€';
   setHtml(box, `<h2>${X('Sursa energiei (estimat)', 'Energy source (estimate)')}</h2><div class="card"><div class="row"><div class="pct" style="font-size:40px">${sh != null ? sh : '—'}<small>%</small></div><div class="rng">${X('din soare / baterie casă', 'from solar / home battery')}</div></div>
     <div class="bar"><div class="fill" style="width:${sh || 0}%"></div></div>
-    <div class="grid" style="margin-top:12px">${stat(X('Din rețea (import)', 'From grid (import)'), nf(d.grid_kwh, 1), 'kWh')}${stat(X('Consumat de mașină', 'Used by the car'), nf(d.car_kwh, 1), 'kWh')}</div>
+    <div class="grid" style="margin-top:12px">${stat(X('Din rețea (import)', 'From grid (import)'), nf(d.grid_kwh, 1), 'kWh')}${stat(X('Consumat de mașină', 'Used by the car'), nf(d.car_kwh, 1), 'kWh')}
+      ${stat(X('Cost TeslaMate (tarif fix)', 'TeslaMate cost (flat tariff)'), d.cost_tm != null ? nf(d.cost_tm, 2) : '—', cur)}${stat(X('Cost real estimat', 'Estimated real cost'), d.cost_real != null ? nf(d.cost_real, 2) : '—', cur)}</div>
+    <p class="note" style="margin:8px 0 0">${X('TeslaMate calculează costul ca energie × tariful fix al locației' + (d.price ? ' (' + nf(d.price, 2) + ' ' + cur + '/kWh)' : '') + ', fără să știe de unde a venit energia. „Cost real” = doar energia importată din rețea × tarif; energia din soare/baterie casă e considerată gratuită. Tariful îl poți seta în Setări → Afișare.', 'TeslaMate computes cost as energy × the location’s flat tariff' + (d.price ? ' (' + nf(d.price, 2) + ' ' + cur + '/kWh)' : '') + ', without knowing where the energy came from. “Real cost” = only the energy imported from the grid × tariff; solar/home-battery energy counts as free. Set the tariff in Settings → Display.')}</p>
     <p class="note" style="margin:8px 0 0">${X('Estimare: importul din rețea al invertorului în timpul încărcării, comparat cu energia consumată de mașină. Consumul casei din rețea în acel interval poate umfla partea „din rețea”.', 'Estimate: the inverter’s grid import during the charge versus the energy the car used. House load drawn from the grid in that window can inflate the “from grid” part.')}</p></div>`);
 }
 
@@ -608,7 +610,7 @@ async function pageSettings() {
   ${sec2(X('Acces din internet și roluri', 'Internet access & roles'), f(X('Parolă pentru acces din internet (min. 12 caractere)', 'Password for internet access (min. 12 characters)'), 'app_password', '', { secret: true, set: ac.password_set })
     + f('Cloudflare Access — team domain', 'acc_team', ac.team, { ph: 'echipa.cloudflareaccess.com' }) + f('Cloudflare Access — AUD tag', 'acc_aud', ac.aud) + f(X('E-mail administrator', 'Administrator e-mail'), 'acc_email', ac.email)
     + f(X('Roluri (email:rol, separate prin virgulă; roluri: admin, family, viewer)', 'Roles (email:role, comma-separated; roles: admin, family, viewer)'), 'roles', ac.roles, { ph: 'sotia@example.com:family' }), 'access')}
-  ${sec2(X('Afișare', 'Display'), f(X('Monedă (lângă costul încărcărilor)', 'Currency (next to charging cost)'), 'currency', dp.currency) + f('URL TeslaMate', 'link_tm', dp.teslamate, { ph: 'http://…:4000' }) + f('URL Grafana', 'link_gf', dp.grafana, { ph: 'http://…:3000' }), 'display')}`;
+  ${sec2(X('Afișare', 'Display'), f(X('Monedă (lângă costul încărcărilor)', 'Currency (next to charging cost)'), 'currency', dp.currency) + f(X('Preț energie din rețea / kWh (opțional)', 'Grid energy price / kWh (optional)'), 'price_grid', dp.price_grid, { ph: '1.10', hint: X('Folosit pentru „Cost real estimat”. Gol = tariful locației din TeslaMate.', 'Used for “Estimated real cost”. Empty = the location tariff from TeslaMate.') }) + f('URL TeslaMate', 'link_tm', dp.teslamate, { ph: 'http://…:4000' }) + f('URL Grafana', 'link_gf', dp.grafana, { ph: 'http://…:3000' }), 'display')}`;
 }
 function afterSettings() {
   view.querySelectorAll('[data-lang]').forEach((b) => b.onclick = () => { LANG = b.dataset.lang; try { localStorage.setItem('lang', LANG); } catch (x) { /* ignore */ } document.documentElement.lang = LANG; render(); });
@@ -623,7 +625,7 @@ function afterSettings() {
     });
   }).catch(() => {});
   const FIELDS = { pin: ['pin'], fleet: ['fleet_id', 'fleet_secret', 'fleet_domain', 'fleet_base'], ha: ['ha_url', 'ha_token', 'ha_prefix', 'ha_grid', 'ha_pv'], notify: ['notify_webhook'],
-    access: ['app_password', 'acc_team', 'acc_aud', 'acc_email', 'roles'], display: ['currency', 'link_tm', 'link_gf'] };
+    access: ['app_password', 'acc_team', 'acc_aud', 'acc_email', 'roles'], display: ['currency', 'price_grid', 'link_tm', 'link_gf'] };
   const say = (k, t, cls) => { const m = document.getElementById('cm-' + k); if (m) { m.style.display = ''; m.textContent = t; m.className = 'toast ' + (cls || ''); } };
   const call = async (path, body, k) => {
     const pinSet = (window.__pinSet !== false);

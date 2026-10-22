@@ -661,7 +661,7 @@ def charge_solar(cid):
     """Estimare: cat din energia unei incarcari a venit din retea (import invertor) vs. restul (solar/baterie casa)."""
     if not (ha_ok() and HA['grid']):
         return dict(available=False)
-    cp = q(f"""select cp.start_date, cp.end_date, cp.charge_energy_used, cp.charge_energy_added, {NAME_A} as name,
+    cp = q(f"""select cp.start_date, cp.end_date, cp.charge_energy_used, cp.charge_energy_added, cp.cost, g.cost_per_unit as tariff, {NAME_A} as name,
         coalesce((select bool_or(fast_charger_present) from charges ch where ch.charging_process_id=cp.id), false) as dc,
         coalesce((select max(charger_power) from charges ch where ch.charging_process_id=cp.id), 0) as pmax
         from charging_processes cp left join geofences g on g.id=cp.geofence_id left join addresses a on a.id=cp.address_id where cp.id=%s""", (cid,))
@@ -675,7 +675,11 @@ def charge_solar(cid):
     grid = _integral(ha_history(HA['grid'], t0 - dt.timedelta(minutes=1), t1), t0.replace(tzinfo=dt.timezone.utc).timestamp(), t1.replace(tzinfo=dt.timezone.utc).timestamp())
     pv = _integral(ha_history(HA['pv'], t0 - dt.timedelta(minutes=1), t1), t0.replace(tzinfo=dt.timezone.utc).timestamp(), t1.replace(tzinfo=dt.timezone.utc).timestamp()) if HA['pv'] else None
     share = max(0.0, min(1.0, 1 - grid / car_kwh)) if car_kwh else None
-    return dict(available=True, car_kwh=round(car_kwh, 2), grid_kwh=round(grid, 2), pv_kwh=round(pv, 2) if pv is not None else None, solar_share=round(share * 100) if share is not None else None)
+    try:
+        price = float(cget('price_grid', 'PRICE_GRID', '') or 0) or float(cp.get('tariff') or 0)
+    except (TypeError, ValueError):
+        price = float(cp.get('tariff') or 0)
+    return dict(available=True, cost_tm=cp.get('cost'), price=price or None, cost_real=round(grid * price, 2) if price else None, car_kwh=round(car_kwh, 2), grid_kwh=round(grid, 2), pv_kwh=round(pv, 2) if pv is not None else None, solar_share=round(share * 100) if share is not None else None)
 
 
 # ---------------------------------------------------------------- Tesla Fleet API (comenzi)
@@ -964,7 +968,7 @@ def vehicle_data(car, force=False):
 CFGFILE = '/data/config.json'
 CFG = {}
 CFG_SECRETS = ('fleet_secret', 'pin', 'ha_token', 'notify_webhook', 'app_password')
-CFG_KEYS = CFG_SECRETS + ('fleet_id', 'fleet_domain', 'fleet_base', 'ha_url', 'ha_prefix', 'ha_ble', 'ha_grid', 'ha_pv', 'currency', 'link_tm', 'link_gf', 'acc_team', 'acc_aud', 'acc_email', 'roles')
+CFG_KEYS = CFG_SECRETS + ('price_grid', 'fleet_id', 'fleet_domain', 'fleet_base', 'ha_url', 'ha_prefix', 'ha_ble', 'ha_grid', 'ha_pv', 'currency', 'link_tm', 'link_gf', 'acc_team', 'acc_aud', 'acc_email', 'roles')
 EU_BASE = 'https://fleet-api.prd.eu.vn.cloud.tesla.com'
 
 
@@ -1023,7 +1027,7 @@ def cfg_public():
         fleet=dict(id=g('fleet_id', 'FLEET_CLIENT_ID'), domain=g('fleet_domain', 'FLEET_DOMAIN'), base=g('fleet_base', 'FLEET_BASE', EU_BASE), secret_set=bool(FL['secret']), pin_set=bool(FL['pin'])),
         ha=dict(url=HA['url'], token_set=bool(HA['token']), prefix=HA['prefix'], ble=HA['ble'], grid=HA['grid'], pv=HA['pv']),
         notify=dict(webhook_set=bool(NHOOK)),
-        display=dict(currency=CURRENCY, teslamate=LINKS['teslamate'], grafana=LINKS['grafana']),
+        display=dict(price_grid=cget('price_grid', 'PRICE_GRID', ''), currency=CURRENCY, teslamate=LINKS['teslamate'], grafana=LINKS['grafana']),
         access=dict(team=ACCESS['team'], aud=ACCESS['aud'], email=ACCESS['email'], roles=str(cget('roles', 'ROLES')), password_set=bool(AUTH['pw'])))
 
 
@@ -1046,6 +1050,12 @@ def cfg_update(b):
             errs.append('webhook invalid')
         if k == 'fleet_domain' and ('/' in v or ' ' in v):
             errs.append('domeniul se scrie fără https:// și fără /')
+        if k == 'price_grid' and v:
+            try:
+                float(v.replace(',', '.'))
+                v = v.replace(',', '.')
+            except ValueError:
+                errs.append('preț invalid')
         if k == 'pin' and len(v) < 4:
             errs.append('PIN-ul trebuie să aibă minim 4 caractere')
         if k == 'app_password' and len(v) < 12:
