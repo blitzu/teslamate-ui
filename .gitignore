@@ -1,0 +1,8 @@
+.env
+.env.*
+!.env.example
+fleet/
+data/
+static/car.png
+__pycache__/
+*.pem
