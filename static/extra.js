@@ -64,7 +64,7 @@ async function afterClimate() {
   </div>
   <h2>${tr('Scaune încălzite')}</h2>
   <div class="card seats"><div class="seatimg"><img src="/car.png" alt="">${SEATS_SHOWN.map(seatBtn).join('')}</div></div>${caps.rear_seats === undefined ? `<p class="note" style="margin:6px 4px">${X('Dotările (ex. bancheta încălzită) se detectează automat când mașina e online; până atunci arăt toate scaunele.', 'Equipment (e.g. heated rear seat) is detected automatically when the car is online; until then all seats are shown.')}</p>` : ''}
-  <div class="card" style="margin-top:10px">${sw('wheel', CL.wheel, tr('Volan încălzit'))}${sw('defrost', CL.defrost, tr('Dezgheață (max)'))}</div>
+  <div class="card" style="margin-top:10px">${caps.wheel_heater === false ? '' : sw('wheel', CL.wheel, tr('Volan încălzit'))}${sw('defrost', CL.defrost, tr('Dezgheață (max)'))}</div>
   <h2>${tr('Protecție supraîncălzire habitaclu')}</h2>
   <div class="card">${segB('cop', [['Off', X('Oprit', 'Off')], ['FanOnly', X('Doar ventilator', 'Fan only')], ['On', X('Pornit', 'On')]], CL.cop)}
     <div class="lim-title" style="margin:12px 4px 0"><span>${X('Se activează peste', 'Activates above')}</span></div>
@@ -81,7 +81,7 @@ async function afterClimate() {
     const j = await fire('seat_heater', X('Scaun ', 'Seat ') + lv, { seat: i, level: lv }, M);
     if (j?.ok) { CL.seats[i] = lv; save(); b.className = 'seat ' + SEATS.find((s) => s[0] === i)[2] + ' l' + lv; b.querySelectorAll('i').forEach((e, n) => e.classList.toggle('on', n < lv)); }
   });
-  $('#wheel').onchange = async (e) => { const j = await fire('steering_heater', tr('Volan încălzit'), { on: e.target.checked }, M); if (j?.ok) { CL.wheel = e.target.checked; save(); } else e.target.checked = !e.target.checked; };
+  if ($('#wheel')) $('#wheel').onchange = async (e) => { const j = await fire('steering_heater', tr('Volan încălzit'), { on: e.target.checked }, M); if (j?.ok) { CL.wheel = e.target.checked; save(); } else e.target.checked = !e.target.checked; };
   $('#defrost').onchange = async (e) => { const j = await fire('defrost', tr('Dezgheață (max)'), { on: e.target.checked }, M); if (j?.ok) { CL.defrost = e.target.checked; save(); } else e.target.checked = !e.target.checked; };
   view.querySelectorAll('[data-seg] button').forEach((b) => b.onclick = async () => {
     const key = b.parentNode.dataset.seg, v = b.dataset.v;

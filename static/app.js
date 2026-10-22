@@ -390,6 +390,7 @@ const rg = $('#fl-reg');
   };
     return;
   }
+  let caps = {}; try { caps = await api('/api/caps?car=' + car); } catch (e) { /* ignore */ }
   const charging = L.state === 'charging' || L.charging_state === 'Charging';
   const tile = (o) => `<button class="act ${o.on ? 'on' : ''} ${o.alert ? 'alert' : ''}" ${S.public_demo ? 'disabled' : ''} data-cmd="${o.cmd}" data-label="${o.label}" data-arg="${o.arg || ''}" data-ask="${o.ask || ''}">
     <small class="sts">${o.status}</small>${ico(o.icon)}<b>${o.label}</b></button>`;
@@ -408,7 +409,7 @@ const rg = $('#fl-reg');
     tile({ cmd: 'trunk', icon: 'car', label: 'Portbagaj', status: L.trunk_open ? 'Deschis' : 'Închis', alert: !!L.trunk_open, ask: 'Deschizi portbagajul?' }),
     L.windows_open ? tile({ cmd: 'close_windows', icon: 'window', label: 'Închide geamuri', status: 'Deschise', alert: true })
                    : tile({ cmd: 'vent', icon: 'window', label: 'Aerisește', status: 'Închise', ask: 'Aerisești geamurile?' }),
-    tile({ cmd: 'homelink', icon: 'gate', label: 'Poartă', status: 'HomeLink', ask: 'Deschizi poarta (HomeLink)?' }),
+    caps.homelink === false ? '' : tile({ cmd: 'homelink', icon: 'gate', label: 'Poartă', status: 'HomeLink', ask: 'Deschizi poarta (HomeLink)?' }),
     tile({ cmd: 'flash', icon: 'light', label: 'Faruri', status: '—' }),
     tile({ cmd: 'honk', icon: 'horn', label: 'Claxon', status: '—', ask: 'Claxonezi?' }),
   ].join('');

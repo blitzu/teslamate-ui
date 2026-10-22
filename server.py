@@ -994,28 +994,38 @@ def caps_save(car, d):
             allc = json.load(open(CAPFILE))
         except Exception:
             pass
-        allc[str(car)] = d
+        allc[str(car)] = dict(allc.get(str(car)) or {}, **d)
         os.makedirs(os.path.dirname(CAPFILE), exist_ok=True)
         json.dump(allc, open(CAPFILE, 'w'))
     except Exception as e:  # noqa
         print('caps:', e, flush=True)
 
 
+def caps_infer(car):
+    """Dotari: din ce a raportat masina cand a fost online (persistat) sau, cat doarme, din entitatile ESP32 BLE din HA (necunoscut = lipseste)."""
+    caps = caps_load(car)
+    if caps.get('source') == 'car' or not ha_ok() or ('rear_seats' in caps and 'wheel_heater' in caps):
+        return caps
+    try:
+        bad = ('unknown', 'unavailable', None)
+        st = lambda e: (ha_state(e % HA['prefix']) or {}).get('state')
+        if st('select.%s_front_left_seat_climate') not in bad:                 # ESP32 vede masina: ce lipseste din entitati = nu exista pe masina
+            upd = dict(source='ha')
+            if 'rear_seats' not in caps and st('select.%s_rear_left_seat_heat') in bad and st('select.%s_rear_right_seat_heat') in bad:
+                upd['rear_seats'] = False
+            if 'wheel_heater' not in caps and st('switch.%s_heated_steering') in bad and st('sensor.%s_steering_heat_mode') in bad:
+                upd['wheel_heater'] = False
+            if len(upd) > 1:
+                caps_save(car, upd)
+                caps = caps_load(car)
+    except Exception:
+        pass
+    return caps
+
+
 def vehicle_data(car, force=False):
     d = _vehicle_data(car, force)
-    caps = caps_load(car)               # dotari invatate cand masina a fost online (persistate; raman valabile cand doarme)
-    if 'rear_seats' not in caps and ha_ok():
-        # fara date de la masina: daca ESP32 raporteaza scaunul din fata dar NU pe cele din spate, masina nu are bancheta incalzita
-        try:
-            bad = ('unknown', 'unavailable', None)
-            fl = (ha_state('select.%s_front_left_seat_climate' % HA['prefix']) or {}).get('state')
-            rl = (ha_state('select.%s_rear_left_seat_heat' % HA['prefix']) or {}).get('state')
-            rr = (ha_state('select.%s_rear_right_seat_heat' % HA['prefix']) or {}).get('state')
-            if fl not in bad and rl in bad and rr in bad:
-                caps = dict(rear_seats=False, source='ha')
-                caps_save(car, caps)
-        except Exception:
-            pass
+    caps = caps_infer(car)
     d['caps'] = caps
     return d
 
@@ -1043,7 +1053,7 @@ def _vehicle_data(car, force=False):
     vin = vin_for(car)
     if not vin:
         raise RuntimeError('Nu există VIN în TeslaMate.')
-    ep = urllib.parse.quote('charge_state;climate_state;charge_schedule_data;preconditioning_schedule_data;vehicle_config', safe='')
+    ep = urllib.parse.quote('charge_state;climate_state;charge_schedule_data;preconditioning_schedule_data;vehicle_config;vehicle_state', safe='')
     code, r = vehicle_call(vin, 'vehicle_data?endpoints=' + ep, method='GET')
     resp = r.get('response') or {}
     if code != 200 or not resp:
@@ -1052,7 +1062,11 @@ def _vehicle_data(car, force=False):
     vc = resp.get('vehicle_config') or {}
     if vc:
         out['config'] = {k: vc.get(k) for k in ('rear_seat_heaters', 'has_seat_cooling', 'seat_type', 'steering_wheel_type', 'plg', 'sun_roof_installed', 'third_row_seats', 'car_type', 'trim_badging', 'wheel_type', 'can_actuate_trunks', 'motorized_charge_port')}
-        caps_save(car, dict(rear_seats=bool(vc.get('rear_seat_heaters')), seat_cooling=bool(vc.get('has_seat_cooling')), updated=time.time()))
+        caps = dict(rear_seats=bool(vc.get('rear_seat_heaters')), seat_cooling=bool(vc.get('has_seat_cooling')), source='car', updated=time.time())
+        hl = (resp.get('vehicle_state') or {}).get('homelink_device_count')
+        if hl is not None:
+            caps['homelink'] = hl > 0
+        caps_save(car, caps)
     out['charge_schedules'] = (resp.get('charge_schedule_data') or {}).get('charge_schedules') or []
     out['precondition_schedules'] = (resp.get('preconditioning_schedule_data') or {}).get('precondition_schedules') or []
     VD[car] = (time.time(), out)
@@ -1701,6 +1715,8 @@ class H(BaseHTTPRequestHandler):
             return demo_health() if demo else battery_health(car)
         if p.startswith('/api/charge_solar/'):
             return dict(available=False) if demo else charge_solar(int(p.rsplit('/', 1)[1]))
+        if p == '/api/caps':
+            return dict(rear_seats=True) if demo else caps_infer(car)
         if p == '/api/vdata':
             return DEMO_VD if demo else vehicle_data(car, a.get('force') == '1')
         if p == '/api/config':
