@@ -241,7 +241,7 @@ function driveItem(d) {
 }
 function chargeItem(c) {
   return `<a class="item" href="#/charge/${c.id}"><div class="t"><span>${esc(c.name)}</span><span class="badge ${c.dc ? 'dc' : 'ac'}">${c.dc ? 'DC' : 'AC'}</span></div>
-  <div class="m"><span><b>+${nf(c.charge_energy_added, 1)}</b> kWh</span><span><b>${hm(c.duration_min)}</b></span><span>max <b>${nf(c.power_max)}</b> kW</span>${c.cost ? `<span><b>${nf(c.cost, 2)}</b> ${esc(S.currency ?? '€')}</span>` : ''}<span>${tm(c.start_date)}–${tm(c.end_date)}</span><span class="soc">${nf(c.start_soc)}% → ${nf(c.end_soc)}%</span></div></a>`;
+  <div class="m"><span><b>+${nf(c.charge_energy_added, 1)}</b> kWh</span><span><b>${hm(c.duration_min)}</b></span><span>max <b>${nf(c.power_max)}</b> kW</span>${c.cost_real != null ? `<span title="${X('Cost real estimat (doar energia din rețea) · TeslaMate: ', 'Estimated real cost (grid energy only) · TeslaMate: ')}${nf(c.cost, 2)}"><b>${nf(c.cost_real, 2)}</b> ${esc(S.currency ?? '€')} <small style="color:var(--mut)">(TM ${nf(c.cost, 2)})</small></span>` : (c.cost ? `<span><b>${nf(c.cost, 2)}</b> ${esc(S.currency ?? '€')}</span>` : '')}<span>${tm(c.start_date)}–${tm(c.end_date)}</span><span class="soc">${nf(c.start_soc)}% → ${nf(c.end_soc)}%</span></div></a>`;
 }
 
 async function pageList(kind) {

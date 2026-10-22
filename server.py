@@ -138,8 +138,44 @@ def drive_points(did):
     return [[r['date'], r['latitude'], r['longitude'], r['speed'], r['power'], r['battery_level'], r['elevation']] for r in rows[::step]]
 
 
+RC_CACHE = {}        # (id, senzor, pret) -> cost real; incarcarile terminate nu se mai schimba
+
+
+def real_cost(row, allow_fetch=True):
+    """Cost real estimat al unei incarcari AC de acasa: energia importata din retea (istoric HA) x tarif. None daca nu se aplica / nu e in cache si nu se mai poate interoga."""
+    try:
+        price = float(cget('price_grid', 'PRICE_GRID', '') or 0) or float(row.get('tariff') or 0)
+    except (TypeError, ValueError):
+        price = float(row.get('tariff') or 0)
+    if not price or row.get('dc') or (row.get('power_max') or 0) > 25 or not row.get('end_date') or not re.search(r'acas|home', row.get('name') or '', re.I):
+        return None, False
+    k = (row['id'], HA['grid'], price)
+    if k in RC_CACHE:
+        return RC_CACHE[k], False
+    if not allow_fetch:
+        return None, False
+    t0, t1 = _dtp(row['start_date']), _dtp(row['end_date'])
+    a, b = t0.replace(tzinfo=dt.timezone.utc).timestamp(), t1.replace(tzinfo=dt.timezone.utc).timestamp()
+    RC_CACHE[k] = round(_integral(ha_history(HA['grid'], t0 - dt.timedelta(minutes=1), t1), a, b) * price, 2)
+    return RC_CACHE[k], True
+
+
 def charges(car, limit, offset):
-    return q(f"""select cp.id, cp.start_date, cp.end_date, cp.charge_energy_added, cp.charge_energy_used, cp.duration_min, cp.cost,
+    rows = _charges_rows(car, limit, offset)
+    if ha_ok() and HA['grid']:
+        budget = 20                                   # max. interogari HA noi per cerere; restul se completeaza la urmatoarea deschidere a paginii
+        for r in rows:
+            try:
+                val, fetched = real_cost(r, budget > 0)
+                budget -= 1 if fetched else 0
+                r['cost_real'] = val
+            except Exception as e:  # noqa
+                print('real cost:', e, flush=True)
+    return rows
+
+
+def _charges_rows(car, limit, offset):
+    return q(f"""select cp.id, cp.start_date, cp.end_date, cp.charge_energy_added, cp.charge_energy_used, cp.duration_min, cp.cost, g.cost_per_unit as tariff,
         cp.start_battery_level as start_soc, cp.end_battery_level as end_soc, cp.outside_temp_avg,
         (select max(charger_power) from charges ch where ch.charging_process_id=cp.id) as power_max,
         coalesce((select bool_or(fast_charger_present) from charges ch where ch.charging_process_id=cp.id), false) as dc,
