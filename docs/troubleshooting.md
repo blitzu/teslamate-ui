@@ -22,7 +22,7 @@ The car is asleep with poor connectivity (weak Wi-Fi/cellular). The app wakes it
 The PIN you typed differs from `APP_PIN`. The browser remembers the last PIN; the app clears it on a wrong PIN and asks again.
 
 **The route replay map is blank or very slow.**
-It needs WebGL and internet access to `cdnjs.cloudflare.com` (MapLibre) and `tile.openstreetmap.org`. Disable aggressive content blockers for the site.
+It needs WebGL and internet access to `tile.openstreetmap.org` (MapLibre itself is bundled). If you changed the `CSP` environment variable, make sure it still allows the tile host and `worker-src blob:`. Disable aggressive content blockers for the site.
 
 **I changed files in `static/` and nothing happens.**
 The image copies `static/` at build time: `docker compose up -d --build ui`, then hard-refresh the browser (Ctrl+F5) or reopen the installed PWA.

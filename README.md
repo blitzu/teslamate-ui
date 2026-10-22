@@ -1,6 +1,6 @@
 # TeslaMate UI
 
-A mobile-first, [Tessie](https://tessie.com)-style web app (installable PWA) on top of your own [TeslaMate](https://github.com/teslamate-org/teslamate): live car state, drive and charge history, statistics, and — optionally — remote commands through Tesla's official Fleet API. Everything runs on your hardware; your data never leaves your network.
+A mobile-first, [Tessie](https://tessie.com)-style web app (installable PWA) on top of your own [TeslaMate](https://github.com/teslamate-org/teslamate): live car state, drive and charge history, statistics, and — optionally — remote commands through Tesla's official Fleet API. Everything runs on your hardware; your car data is not sent to any third party. The few optional outside services the app talks to are listed [below](#external-services-what-is-sent-and-when).
 
 > **Not affiliated with Tesla, Inc., Tessie or TeslaMate.** "Tesla" and "Model 3/Y/S/X" are trademarks of Tesla, Inc. This project reimplements ideas visible in public documentation and its own UI; it contains no Tessie code or assets. Controlling a vehicle remotely is your responsibility — read [docs/security.md](docs/security.md) first. Provided as is, without warranty.
 
@@ -99,9 +99,26 @@ Set `NOTIFY_WEBHOOK` — see **[docs/notifications.md](docs/notifications.md)** 
 * **Currency:** `CURRENCY` in `.env` (cost comes from the prices you set in TeslaMate).
 * **Public demo with fictional data:** `docker compose --profile demo up -d demo` (port 4102, no database, no keys, commands disabled).
 
-## Third-party services used by the browser
+## External services: what is sent and when
 
-Map tiles from OpenStreetMap, MapLibre GL JS and Leaflet from cdnjs, weather from Open-Meteo (route replay sends coordinates rounded to 0.1° from the browser). Respect the [OSM tile usage policy](https://operations.osmfoundation.org/policies/tiles/) — fine for personal use; use your own tile provider for heavy traffic.
+| Service | Used for | What is sent | By |
+|---|---|---|---|
+| Tesla Fleet API (`fleet-api.prd.*.vn.cloud.tesla.com`, `auth.tesla.com`) | remote commands, live read of climate/charge settings, profiler | your OAuth token, the vehicle VIN, command parameters | server |
+| OpenStreetMap tiles (`tile.openstreetmap.org`) | map background | tile coordinates (and your IP address, as with any web map) | browser |
+| Open-Meteo (`api.open-meteo.com`, `archive-api.open-meteo.com`) | weather in the route replay | latitude/longitude rounded to 0.1° and the date | browser |
+| fuel-prices.eu | daily national fuel price for the ICE-car comparison | only the country name | server |
+| frankfurter.dev (ECB rates) | EUR → your currency | only the currency code | server |
+| Tessie API (`api.tessie.com`) | one-off history import (only if you run it) | your Tessie token | server |
+| Cloudflare / your Home Assistant | only if you configure them | see the docs | server |
+
+Leaflet and MapLibre GL JS are **bundled** (`static/vendor/`), not loaded from a CDN. Respect the [OSM tile usage policy](https://operations.osmfoundation.org/policies/tiles/) — fine for personal use; use your own tile provider for heavy traffic. Licenses and attributions: [THIRD_PARTY.md](THIRD_PARTY.md). The browser is restricted by a Content-Security-Policy that allows exactly these hosts (override with the `CSP` environment variable).
+
+## Backup, update, restore
+
+* **What to back up:** the `data/` folder (tokens, settings incl. PIN/password, charge costs and providers, daily fuel prices, automations, profiler state; each file also keeps a `*.bak` of its previous version) and `fleet/private-key.pem` (offline). TeslaMate's own database is backed up as you already do — manual charge costs refer to its `charging_processes.id`, so restore both from the same moment.
+* **Update:** `git pull && docker compose up -d --build`. Settings in `data/` are kept.
+* **Restore:** copy `data/` back and start the stack; the app hands `data/` to its own unprivileged user (uid 10001) on start.
+* **Least-privilege database access:** `./scripts/create-db-user.sh <db-container>` creates a read-only role for the app (add `--allow-import` if you use the Tessie import).
 
 ## More
 

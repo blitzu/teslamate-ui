@@ -7,7 +7,7 @@ import json, math, os, time, zlib, datetime as dt
 import urllib.request, urllib.error, urllib.parse
 
 API = 'https://api.tessie.com'
-LEDGER = '/data/import_tessie.json'
+LEDGER = os.path.join(os.environ.get('DATA_DIR', '/data'), 'import_tessie.json')
 KM = 1.609344
 
 

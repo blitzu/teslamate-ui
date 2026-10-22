@@ -1,10 +1,10 @@
 FROM golang:alpine AS build
 RUN apk add --no-cache git
-# go install nu merge (go.mod are directive replace) -> clonam si compilam, versiune fixata
-RUN git clone --depth 1 --branch v0.4.1 https://github.com/teslamotors/vehicle-command /src
+# go install does not work (go.mod has a replace directive) -> clone and build, pinned to the exact commit of tag v0.4.1
+RUN git clone https://github.com/teslamotors/vehicle-command /src && cd /src && git checkout 49977a18fd68567501d59e16a6c9e4a8b9348544
 WORKDIR /src
 RUN go build -o /out/tesla-http-proxy ./cmd/tesla-http-proxy
 
-FROM alpine:3.20
+FROM alpine:3.22
 COPY --from=build /out/tesla-http-proxy /usr/local/bin/tesla-http-proxy
 ENTRYPOINT ["tesla-http-proxy"]

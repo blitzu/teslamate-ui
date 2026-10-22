@@ -266,7 +266,7 @@ async function pageList(kind) {
   return `<div class="top"><h1>${kind === 'drives' ? 'Curse' : 'Încărcări'}</h1></div>${ctl}` + html;
 }
 
-function sec(title, inner) { return `<h2>${title}</h2><div class="card chart">${inner}</div>`; }
+function sec(title, inner) { return `<h2>${title}</h2><div class="card chart">${String(inner).replace('<svg ', `<svg role="img" aria-label="${esc(String(title).replace(/<[^>]*>/g, ''))}" `)}</div>`; }
 
 async function pageDrive(id) {
   const d = await api('/api/drive_row/' + id + '?car=' + car);
@@ -279,7 +279,7 @@ async function pageDrive(id) {
   <div class="map big" id="dmap"></div>
   <h2>Rezumat</h2><div class="grid g3">${stat('Distanță', nf(d?.distance, 1), 'km')}${stat('Durată', hm(d?.duration_min))}${stat('Consum', nf(d?.kwh, 1), 'kWh')}${stat('Eficiență', nf(wh), 'Wh/km')}${stat('Viteză max', nf(d?.speed_max), 'km/h')}${stat('Putere max', nf(d?.power_max), 'kW')}${stat('Baterie', nf(d?.start_soc) + '→' + nf(d?.end_soc), '%')}${stat('Temp. ext.', nf(d?.outside_temp_avg, 1), '°C')}${stat('Urcare', nf(d?.ascent), 'm')}</div>
   ${driveEvents(dd.events)}
-  <div class="toast" id="dtip">${X('Atinge un grafic ca să vezi punctul pe hartă.', 'Touch a chart to see the point on the map.')}</div>
+  <div class="toast" aria-live="polite" id="dtip">${X('Atinge un grafic ca să vezi punctul pe hartă.', 'Touch a chart to see the point on the map.')}</div>
   ${sec('Viteză (km/h)', line(pts.map((p) => [t(p), p[3]]), { color: '#7aa8ff', fx: (x) => new Date(x).toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' }) }))}
   ${sec('Putere (kW)', line(pts.map((p) => [t(p), p[4]]), { color: '#d9ba80', fx: (x) => new Date(x).toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' }) }))}
   ${sec('Baterie (%)', line(pts.map((p) => [t(p), p[5]]), { color: '#6fd6b8', fx: (x) => new Date(x).toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' }) }))}
@@ -421,7 +421,7 @@ const rg = $('#fl-reg');
   setHtml(box, `<div class="acts">${tiles}</div>
     <div class="lim-title"><span>Limită încărcare</span><b>${L.charge_limit_soc != null ? nf(L.charge_limit_soc) + '%' : '—'}</b></div>
     <div class="seg" style="margin-top:6px">${[70, 80, 90, 100].map((n) => `<button ${S.public_demo ? 'disabled' : ''} data-cmd="charge_limit" data-label="${tr('Limită')} ${n}%" data-arg="${n}" class="${L.charge_limit_soc === n ? 'on' : ''}">${n}%</button>`).join('')}</div>
-    <div class="toast" id="cmdmsg">Comenzile pot trezi mașina (durează câteva secunde).</div>`);
+    <div class="toast" aria-live="polite" id="cmdmsg">Comenzile pot trezi mașina (durează câteva secunde).</div>`);
   { const cm = window.__cm; if (cm && Date.now() - cm[2] < 10000) { const m = $('#cmdmsg'); if (m) { m.textContent = cm[0]; m.className = 'toast ' + (cm[1] || ''); } } }
   box.querySelectorAll('[data-cmd]').forEach((el) => el.onclick = () => {
     if (el.dataset.ask && !confirm(tr(el.dataset.ask))) return;
@@ -449,6 +449,7 @@ async function render() {
   if (p !== 'profiler' && typeof pfClose === 'function') pfClose();
   renderNav(['drive', 'trip'].includes(p) ? 'drives' : p === 'charge' ? 'charges' : p === 'sleep' ? 'parked' : p === 'stats' ? 'activity' : p === 'climate' ? 'car' : p);
   const seq = ++renderSeq;
+  document.body.classList.add('busy');                       // pagina veche ramane vizibila, usor estompata, cat se incarca cea noua
   let html = '';
   try {
     if (p === 'car') html = pageCar();
@@ -467,11 +468,13 @@ async function render() {
     else if (p === 'climate') html = pageClimate();
     else if (p === 'trip') html = '';
     else { location.replace('#/car'); return; }
-  } catch (e) { html = `<div class="empty">${tr('Eroare la încărcare: ')}${esc(e.message)}</div>`; }
+  } catch (e) { html = `<div class="empty">${tr('Eroare la încărcare: ')}${esc(e.message)}<br><a href="#" id="retry" style="color:var(--gold)">${X('Reîncearcă', 'Retry')}</a></div>`; }
   if (seq !== renderSeq) return;
   if (map && p !== 'car' && p !== 'drive') { map.remove(); map = null; }
   const y = scrollY;
   setHtml(view, html);
+  document.body.classList.remove('busy');
+  const rt = $('#retry'); if (rt) rt.onclick = (ev) => { ev.preventDefault(); render(); };
   document.documentElement.lang = LANG;
   if (p === 'car') afterCar();
   if (p === 'climate') afterClimate();
@@ -529,4 +532,8 @@ async function boot() {
 }
 document.getElementById('burger')?.addEventListener('click', () => document.body.classList.toggle('nav-open'));
 document.getElementById('backdrop')?.addEventListener('click', () => document.body.classList.remove('nav-open'));
+const mqNav = matchMedia('(max-width: 899.98px)');
+function syncNav() { const open = document.body.classList.contains('nav-open'); nav.inert = mqNav.matches && !open; document.getElementById('burger')?.setAttribute('aria-expanded', String(open)); }
+new MutationObserver(syncNav).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+mqNav.addEventListener('change', syncNav); syncNav();
 boot();

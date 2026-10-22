@@ -30,7 +30,14 @@ Without `DEMO_ONLY`, but with no reachable TeslaMate database, the app also fall
 | `GET /api/state` | cars + live state + sleep info |
 | `GET /api/stream` | Server-Sent Events with live MQTT changes |
 | `GET /api/drives`, `/api/drive/<id>`, `/api/trip/<id>` | drive list, GPS points, trip (consecutive drives with gaps < 2 h) with stops |
-| `GET /api/charges`, `/api/charge/<id>` | charge history and curve |
+| `GET /api/charges`, `/api/charge/<id>`, `/api/charge_row/<id>`, `/api/drive_row/<id>` | charge history and curve; one exact row by id (with provider and manual/real/effective cost) |
+| `POST /api/charge/meta` | set/clear the manual total cost and the provider of a charge (admin + PIN) |
+| `GET /api/fuel`, `POST /api/fuel/refresh` | daily fuel price history / fetch now (admin + PIN) |
+| `GET /api/activity`, `/api/caps` | unified timeline; detected equipment |
+| `GET/POST /api/config`, `POST /api/config/test`, `GET /api/config/ha_entities` | settings from the app (admin; changes need the PIN) |
+| `POST /api/import/tessie`, `GET /api/import/tessie/status` | Tessie import (dry-run, import, undo) |
+| `GET /api/profiler`, `/api/profiler/stream`, `/api/profiler/diag`, `/api/profiler/export.csv`, `POST /api/profiler/start`, `/stop`, `/ingest` | live telemetry profiler |
+| `GET /api/health` | `{ok, db, mqtt, threads}`; 503 when the database does not answer (used by the Docker `HEALTHCHECK`) |
 | `GET /api/overview`, `/api/battery` | statistics |
 | `GET /api/vdata?car=` | climate/charge settings and schedules read from the car (only when TeslaMate says it is online; never wakes it) |
 | `GET /api/notify`, `POST /api/notify/settings`, `POST /api/notify/test` | notification history/settings |

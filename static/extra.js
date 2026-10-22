@@ -69,7 +69,7 @@ async function afterClimate() {
   <div class="card">${segB('cop', [['Off', X('Oprit', 'Off')], ['FanOnly', X('Doar ventilator', 'Fan only')], ['On', X('Pornit', 'On')]], CL.cop)}
     <div class="lim-title" style="margin:12px 4px 0"><span>${X('Se activează peste', 'Activates above')}</span></div>
     ${segB('copT', [['Low', '30°'], ['Medium', '35°'], ['High', '40°']], CL.copT)}</div>
-  <div class="toast" id="climsg">${tr('Comenzile pot trezi mașina (durează câteva secunde).')}</div>`);
+  <div class="toast" aria-live="polite" id="climsg">${tr('Comenzile pot trezi mașina (durează câteva secunde).')}</div>`);
   const save = () => lsSet('cl_' + c.id, { temp: CL.temp, seats: CL.seats, wheel: CL.wheel, defrost: CL.defrost, cop: CL.cop, copT: CL.copT });
   const M = 'climsg';
   $('#clpow').onclick = async () => { const j = await fire(L.is_climate_on ? 'climate_off' : 'climate_on', L.is_climate_on ? tr('Oprește clima') : tr('Pornește clima'), undefined, M); if (j?.ok) { L.is_climate_on = !L.is_climate_on; afterClimate(); } };
@@ -121,7 +121,7 @@ async function afterCharges() {
   <div class="card">${(vd.precondition_schedules || []).map((s) => schedRow(s, 'p')).join('') || `<div class="mut" style="font-size:13px">${X('Niciun program.', 'No schedules.')}</div>`}
     <div class="addf"><label>${X('Plecare la', 'Depart at')}<input type="time" id="ps0" value="07:30"></label><label>${X('Zile', 'Days')}<select id="psd">${dayOpts}</select></label></div>
     <div class="links"><a href="#" id="psadd">${X('Adaugă plecare', 'Add departure')}</a></div></div>`}
-  <div class="toast" id="chmsg">${tr('Comenzile pot trezi mașina (durează câteva secunde).')}</div>`);
+  <div class="toast" aria-live="polite" id="chmsg">${tr('Comenzile pot trezi mașina (durează câteva secunde).')}</div>`);
   const M = 'chmsg', reload = () => setTimeout(afterCharges, 1500);
   const on = (id, fn) => { const e = $('#' + id); if (e) e.onclick = (ev) => { ev.preventDefault(); fn(); }; };
   const amps = $('#amps'); if (amps) amps.oninput = () => { $('#ampv').textContent = amps.value + ' A'; };
@@ -159,8 +159,8 @@ const dur = (s) => { s = Math.round(s); return s >= 3600 ? Math.floor(s / 3600) 
 function loadMapLibre() {
   if (window.maplibregl) return Promise.resolve();
   return new Promise((res, rej) => {
-    const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.css'; document.head.appendChild(l);
-    const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.js'; s.onload = res; s.onerror = () => rej(new Error('MapLibre')); document.head.appendChild(s);
+    const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'vendor/maplibre-gl.min.css'; document.head.appendChild(l);
+    const s = document.createElement('script'); s.src = 'vendor/maplibre-gl.min.js'; s.onload = res; s.onerror = () => rej(new Error('MapLibre')); document.head.appendChild(s);
   });
 }
 
@@ -548,7 +548,7 @@ async function pageAuto() {
   <div class="card"><div class="addf"><label>${X('Tip', 'Type')}<select id="rtype"><option value="arrive_gate">${X('Deschide poarta la sosire', 'Open gate on arrival')}</option><option value="plug_limit">${X('Limită la conectarea cablului', 'Charge limit when plugging in')}</option><option value="depart_climate">${X('Clima înainte de plecare', 'Pre-departure climate')}</option></select></label></div>
     <div class="addf" id="rfields"></div>
     <div class="links"><a href="#" id="radd">${X('Adaugă automatizarea', 'Add automation')}</a></div></div>
-  <div class="toast" id="rmsg">${X('Poarta și deschiderile cer prudență: GPS-ul poate „sări”. Fiecare regulă are pauză de 10 minute între declanșări.', 'Gates and openings need care: GPS can jitter. Each rule has a 10-minute cooldown between triggers.')}</div>
+  <div class="toast" aria-live="polite" id="rmsg">${X('Poarta și deschiderile cer prudență: GPS-ul poate „sări”. Fiecare regulă are pauză de 10 minute între declanșări.', 'Gates and openings need care: GPS can jitter. Each rule has a 10-minute cooldown between triggers.')}</div>
   <h2>${X('Ultimele execuții', 'Recent runs')}</h2><div class="card">${log}</div>
   <script type="application/json" id="rgf">${JSON.stringify(d.geofences).replace(/</g, '\\u003c')}</script>`;
 }
@@ -596,7 +596,7 @@ async function pageSettings() {
   let c; try { c = await api('/api/config'); } catch (e) { return `<div class="top"><h1>${X('Setări', 'Settings')}</h1></div>${lang}<div class="empty">${X('Setările pot fi schimbate doar de administrator.', 'Only the administrator can change settings.')}</div>`; }
   if (c.error) return `<div class="top"><h1>${X('Setări', 'Settings')}</h1></div>${lang}<div class="empty">${X('Setările pot fi schimbate doar de administrator.', 'Only the administrator can change settings.')}</div>`;
   const f = (label, id, val, o = {}) => `<label class="cf">${label}<input id="${id}" type="${o.secret ? 'password' : (o.type || 'text')}" value="${o.secret ? '' : esc(val ?? '')}" placeholder="${o.secret ? (o.set ? X('••••••  (setat — lasă gol ca să-l păstrezi)', '••••••  (set — leave empty to keep)') : (o.ph || '')) : (o.ph || '')}" autocomplete="off" ${o.attrs || ''}></label>${o.hint ? `<small class="ch">${o.hint}</small>` : ''}`;
-  const sec2 = (title, body, save, extra = '') => `<h2>${title}</h2><div class="card cfg">${body}<div class="links"><a href="#" data-save="${save}">${X('Salvează', 'Save')}</a>${extra}</div><div class="toast" id="cm-${save}" style="display:none"></div></div>`;
+  const sec2 = (title, body, save, extra = '') => `<h2>${title}</h2><div class="card cfg">${body}<div class="links"><a href="#" data-save="${save}">${X('Salvează', 'Save')}</a>${extra}</div><div class="toast" aria-live="polite" id="cm-${save}" style="display:none"></div></div>`;
   const fl = c.fleet, ha = c.ha, ac = c.access, dp = c.display;
   window.__pinSet = fl.pin_set; window.__haSet = ha.token_set && !!ha.url;
   return `<div class="top"><h1>${X('Setări', 'Settings')}</h1><small>${X('Totul se salvează pe server și se aplică imediat. Câmpurile secrete nu se mai afișează după salvare.', 'Everything is saved on the server and applies immediately. Secret fields are never shown again after saving.')}</small></div>
@@ -834,7 +834,7 @@ function pfRenderCtl() {
       ${(se.dropped || []).length ? `<p class="note" style="margin:8px 0 0">${X('Omise (lipsește permisiunea de locație vehicle_location sau nu sunt acceptate): ', 'Skipped (missing vehicle_location scope or not accepted): ')}${esc(se.dropped.slice(0, 8).join(', '))}${se.dropped.length > 8 ? '…' : ''}</p>` : ''}</div>`
     : `<div class="pf-cards">${cards}</div><div class="card" style="margin-top:10px"><div class="row"><label class="cf" style="margin:0;flex:1">${X('Durată', 'Duration')}<select id="pfmin" style="width:100%">${[5, 10, 15, 30].map((m) => `<option value="${m}" ${m === PFMIN ? 'selected' : ''}>${m} min</option>`).join('')}</select></label><button class="pf-btn" id="pfgo" style="margin-top:14px">${X('Pornește sesiunea', 'Start session')}</button></div>
       <p class="note" style="margin:8px 0 0">${X('Mașina trebuie să fie trează și conectată; cât durează sesiunea NU adoarme. Alerta Sentry rămâne activă. La final revine automat la configurația normală. Tesla poate taxa semnalele de telemetrie.', 'The car must be awake and connected; it will NOT sleep during the session. Sentry alerts stay active. At the end it automatically reverts to the normal configuration. Tesla may bill telemetry signals.')}</p></div>
-      <div class="note" id="pfdiag" style="margin:10px 2px 0"></div><div class="toast" id="pfmsg" style="display:none"></div>`);
+      <div class="note" id="pfdiag" style="margin:10px 2px 0"></div><div class="toast" aria-live="polite" id="pfmsg" style="display:none"></div>`);
   pfDiag();
   box.querySelectorAll('[data-pf]').forEach((b) => b.onclick = () => { PFSEL = b.dataset.pf; pfRenderCtl(); });
   const m = $('#pfmin'); if (m) m.onchange = () => { PFMIN = +m.value; };
@@ -1065,7 +1065,7 @@ async function afterChargeEdit() {
     <div class="addf"><label>${X('Cost total', 'Total cost')} (${cu})<input id="ce_cost" type="number" inputmode="decimal" step="0.01" min="0" value="${c.cost_manual ?? ''}" placeholder="${eff != null ? nf(eff, 2) : ''}"></label>
       <label>${X('Furnizor', 'Provider')}<input id="ce_prov" list="ce_provs" maxlength="40" value="${esc(c.provider_set ? c.provider : '')}" placeholder="${esc(c.provider || 'ex. Ionity')}"><datalist id="ce_provs">${provs.map((p) => `<option value="${esc(p)}">`).join('')}</datalist></label></div>
     <div class="links"><a href="#" id="ce_save">${X('Salvează', 'Save')}</a>${c.cost_manual != null || c.provider_set ? `<a href="#" id="ce_clear">${X('Șterge modificările', 'Clear changes')}</a>` : ''}</div>
-    <div class="toast" id="ce_msg">${X('Costul introdus înlocuiește costul TeslaMate și estimarea, în listă și în statistici. Se salvează doar în această aplicație, nu în TeslaMate. Lasă gol ca să revii la cost automat.', 'The cost you enter replaces the TeslaMate cost and the estimate in the list and in the statistics. It is stored only in this app, not in TeslaMate. Leave empty to go back to the automatic cost.')}</div></div>`);
+    <div class="toast" aria-live="polite" id="ce_msg">${X('Costul introdus înlocuiește costul TeslaMate și estimarea, în listă și în statistici. Se salvează doar în această aplicație, nu în TeslaMate. Lasă gol ca să revii la cost automat.', 'The cost you enter replaces the TeslaMate cost and the estimate in the list and in the statistics. It is stored only in this app, not in TeslaMate. Leave empty to go back to the automatic cost.')}</div></div>`);
   const say = (t, cls) => { const m = $('#ce_msg'); if (m) { m.textContent = t; m.className = 'toast ' + (cls || ''); } };
   const send = async (body) => {
     say(X('Se salvează…', 'Saving…'), 'busy');
@@ -1105,7 +1105,7 @@ function iceBlock(o) {
   body += `<div class="addf"><label>${X('Consum termică (l/100 km)', 'ICE consumption (l/100 km)')}<input id="ic_l100" type="number" inputmode="decimal" step="0.1" min="0" max="60" value="${on ? ic.l100 : ''}" placeholder="ex. 7.5"></label>
     <label>${X('Combustibil', 'Fuel')}<select id="ic_type"><option value="euro95" ${sel === 'euro95' ? 'selected' : ''}>${X('Benzină (Euro 95)', 'Petrol (Euro 95)')}</option><option value="diesel" ${sel === 'diesel' ? 'selected' : ''}>${X('Motorină', 'Diesel')}</option><option value="manual" ${sel === 'manual' ? 'selected' : ''}>${X('Preț manual', 'Manual price')}</option></select></label>
     <label>${X('Preț manual', 'Manual price')} (${cu}/l)<input id="ic_price" type="number" inputmode="decimal" step="0.01" min="0" value="${dp.manual ?? ''}" placeholder="${X('opțional', 'optional')}"></label></div>
-    <div class="links"><a href="#" data-ice="save">${X('Salvează', 'Save')}</a><a href="#" data-ice="refresh">${X('Actualizează prețul acum', 'Refresh price now')}</a></div><div class="toast" id="ic_msg" style="display:none"></div>`;
+    <div class="links"><a href="#" data-ice="save">${X('Salvează', 'Save')}</a><a href="#" data-ice="refresh">${X('Actualizează prețul acum', 'Refresh price now')}</a></div><div class="toast" aria-live="polite" id="ic_msg" style="display:none"></div>`;
   api('/api/fuel').then((f) => { window.__fuelCfg = { manual: f.manual }; const pi = $('#ic_price'); if (pi && f.manual != null && !pi.value) pi.value = f.manual; }).catch(() => {});
   return `<h2>${X('Comparație cu o mașină termică', 'Compared with a petrol/diesel car')}</h2><div class="card">${body}</div>`;
 }

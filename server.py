@@ -1,15 +1,48 @@
 #!/usr/bin/env python3
 """TeslaMate UI (stil Tessie): backend. MQTT (live) + Postgres TeslaMate (istoric) -> JSON/SSE. Fara date demo cat timp TeslaMate nu are masini => mod DEMO."""
-import collections, json, math, os, re, queue, random, secrets, shutil, ssl, threading, time, datetime as dt
+import builtins, collections, json, math, os, re, queue, random, secrets, shutil, ssl, threading, time, datetime as dt
 import urllib.request, urllib.error, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
+
+def log(*a, **k):
+    builtins.print(time.strftime('%Y-%m-%d %H:%M:%S'), *a, flush=True)
+
+
+DATA_DIR = os.environ.get('DATA_DIR', '/data')
+
+
+def drop_privileges():
+    """Pornit ca root (implicit in Docker): da /data utilizatorului aplicatiei si renunta la root INAINTE de orice altceva (fisierele create dupa aceea sunt ale lui)."""
+    if os.name != 'posix' or os.getuid() != 0:
+        return
+    uid = int(os.environ.get('APP_UID', '10001'))
+    gid = int(os.environ.get('APP_GID', str(uid)))
+    if uid == 0:
+        return
+    try:
+        if os.path.isdir(DATA_DIR):
+            os.lchown(DATA_DIR, uid, gid)
+            for root, dirs, files in os.walk(DATA_DIR):
+                for n in dirs + files:
+                    os.lchown(os.path.join(root, n), uid, gid)
+    except OSError as e:
+        log('chown %s: %s' % (DATA_DIR, e))
+    os.setgroups([])
+    os.setgid(gid)
+    os.setuid(uid)
+    os.environ.setdefault('HOME', '/tmp')
+    log('rulez ca uid %d (nu root)' % uid)
+
+
+drop_privileges()
 
 PORT = int(os.environ.get('PORT', '4100'))
 DEMO_ONLY = os.environ.get('DEMO_ONLY') == '1'   # instanta publica: doar date fictive, fara DB/MQTT/comenzi
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 DB = dict(host=os.environ.get('DATABASE_HOST', 'database'), user=os.environ.get('DATABASE_USER', 'teslamate'),
           password=os.environ.get('DATABASE_PASS', ''), dbname=os.environ.get('DATABASE_NAME', 'teslamate'), connect_timeout=5)
+MQ_STATE = dict(up=False)
 MQ = dict(host=os.environ.get('MQTT_HOST', ''), port=int(os.environ.get('MQTT_PORT', '1883')),
           user=os.environ.get('MQTT_USERNAME', ''), pw=os.environ.get('MQTT_PASSWORD', ''), ns=os.environ.get('MQTT_NAMESPACE', ''))
 LINKS = dict(teslamate=os.environ.get('TESLAMATE_URL', ''), grafana=os.environ.get('GRAFANA_URL', ''))
@@ -55,7 +88,11 @@ def mqtt_thread():
     prefix = (MQ['ns'] + '/' if MQ['ns'] else '') + 'teslamate/cars/'
 
     def on_connect(c, *a):
+        MQ_STATE['up'] = True
         c.subscribe(prefix + '#')
+
+    def on_disconnect(c, *a):
+        MQ_STATE['up'] = False
 
     def on_message(c, u, m):
         parts = m.topic[len(prefix):].split('/')
@@ -77,7 +114,7 @@ def mqtt_thread():
                 notify_check(car, key, prev, val)
                 rules_check(car, key, prev, val, known)
             except Exception as e:  # noqa
-                print('notify:', e, flush=True)
+                log('notify:', e, flush=True)
 
     try:
         c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
@@ -85,28 +122,36 @@ def mqtt_thread():
         c = mqtt.Client()
     if MQ['user']:
         c.username_pw_set(MQ['user'], MQ['pw'])
-    c.on_connect, c.on_message = on_connect, on_message
+    c.on_connect, c.on_message, c.on_disconnect = on_connect, on_message, on_disconnect
     c.reconnect_delay_set(2, 30)
     while True:
         try:
             c.connect(MQ['host'], MQ['port'], 60)
             c.loop_forever(retry_first_connection=True)
         except Exception as e:
-            print('mqtt:', e, flush=True)
+            log('mqtt:', e, flush=True)
             time.sleep(5)
 
 
 # ---------------------------------------------------------------- DB
+DB_SEM = threading.BoundedSemaphore(int(os.environ.get('DB_MAX_CONN', '8')))     # cel mult atatea conexiuni simultane catre Postgres-ul TeslaMate
+
+
 def q(sql, args=()):
     import psycopg2, psycopg2.extras
-    cn = psycopg2.connect(**DB)
+    if not DB_SEM.acquire(timeout=20):
+        raise RuntimeError('baza de date e ocupată')
     try:
-        with cn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(sql, args)
-            rows = cur.fetchall()
-        return [{k: (v.isoformat() if isinstance(v, (dt.datetime, dt.date)) else (float(v) if hasattr(v, 'quantize') else v)) for k, v in r.items()} for r in rows]
+        cn = psycopg2.connect(options='-c statement_timeout=20000', **DB)
+        try:
+            with cn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql, args)
+                rows = cur.fetchall()
+            return [{k: (v.isoformat() if isinstance(v, (dt.datetime, dt.date)) else (float(v) if hasattr(v, 'quantize') else v)) for k, v in r.items()} for r in rows]
+        finally:
+            cn.close()
     finally:
-        cn.close()
+        DB_SEM.release()
 
 
 NAME_A = "coalesce(nullif(g.name,''), nullif(trim(both ', ' from concat_ws(', ', a.name, a.road, a.city)),''), a.display_name, '—')"
@@ -172,8 +217,8 @@ def real_cost(row, allow_fetch=True):
 
 
 # ---------------------------------------------------------------- cost / furnizor per incarcare (doar in aplicatie) + pret combustibil zilnic
-METAFILE = '/data/charge_meta.json'     # {id_incarcare: {cost: total, provider: nume}} - nu se scrie nimic in TeslaMate
-FUELFILE = '/data/fuel_prices.json'     # {days: {YYYY-MM-DD: {euro95: EUR/l, diesel: EUR/l, rate: EUR->moneda, cur: cod, upd: data sursei, ts: cand am citit}}}
+METAFILE = DATA_DIR + '/charge_meta.json'     # {id_incarcare: {cost: total, provider: nume}} - nu se scrie nimic in TeslaMate
+FUELFILE = DATA_DIR + '/fuel_prices.json'     # {days: {YYYY-MM-DD: {euro95: EUR/l, diesel: EUR/l, rate: EUR->moneda, cur: cod, upd: data sursei, ts: cand am citit}}}
 MLOCK = threading.Lock()
 PROV_AUTO = [(r'supercharger', 'Tesla Supercharger'), (r'acas|home', 'Acasă'), (r'ionity', 'Ionity'), (r'renovatio', 'Renovatio'), (r'enel', 'Enel X'), (r'eldrive', 'Eldrive'),
              (r'electrica', 'Electrica'), (r'\bmol\b', 'MOL'), (r'omv', 'OMV'), (r'petrom', 'Petrom'), (r'kaufland', 'Kaufland'), (r'lidl', 'Lidl'), (r'mega image', 'Mega Image'),
@@ -205,7 +250,7 @@ def jload(path, default):
         except FileNotFoundError:
             continue
         except Exception as e:  # noqa
-            print('json corupt %s: %s' % (p, e), flush=True)
+            log('json corupt %s: %s' % (p, e), flush=True)
             if p == path:
                 try:
                     shutil.copy2(p, p + '.bad')
@@ -333,16 +378,25 @@ def _get_text(url, timeout=20):
         return r.read(400_000).decode('utf-8', 'replace')
 
 
+def parse_llms(txt):
+    """(Euro 95 EUR/l, Diesel EUR/l, data sursei) din pagina llms.txt a fuel-prices.eu."""
+    e95 = re.search(r'^Euro 95\s+€\s*([0-9]+\.[0-9]+)', txt, re.M)
+    dsl = re.search(r'^Diesel\s+€\s*([0-9]+\.[0-9]+)', txt, re.M)
+    upd = re.search(r'^Last updated:\s*(\d{4}-\d{2}-\d{2})', txt, re.M)
+    if not (e95 and dsl):
+        raise ValueError('format necunoscut')
+    return float(e95.group(1)), float(dsl.group(1)), (upd.group(1) if upd else '')
+
+
 def fuel_fetch():
     """Citeste pretul national mediu (Euro 95 / Diesel, EUR/l) de pe fuel-prices.eu - pentru Romania vine din Monitorul Preturilor Carburantilor - si il stocheaza pe ziua de azi."""
     fc = fuel_conf()
     slug = re.sub(r'[^A-Za-z-]', '', fc['country'].strip().replace(' ', '-')) or 'Romania'
     try:
         txt = _get_text('https://www.fuel-prices.eu/%s/llms.txt' % slug)
-        e95 = re.search(r'^Euro 95\s+€\s*([0-9]+\.[0-9]+)', txt, re.M)
-        dsl = re.search(r'^Diesel\s+€\s*([0-9]+\.[0-9]+)', txt, re.M)
-        upd = re.search(r'^Last updated:\s*(\d{4}-\d{2}-\d{2})', txt, re.M)
-        if not (e95 and dsl):
+        try:
+            e95v, dslv, updv = parse_llms(txt)
+        except ValueError:
             raise ValueError('format necunoscut la fuel-prices.eu/%s' % slug)
         code = CUR_CODES.get(str(CURRENCY).strip().lower(), '')
         rate = None
@@ -353,13 +407,13 @@ def fuel_fetch():
         day = dt.date.today().isoformat()
         with MLOCK:
             data = _json_file(FUELFILE, {})
-            data.setdefault('days', {})[day] = dict(euro95=float(e95.group(1)), diesel=float(dsl.group(1)), rate=rate, cur=code, upd=upd.group(1) if upd else '', ts=int(time.time()), country=slug)
+            data.setdefault('days', {})[day] = dict(euro95=e95v, diesel=dslv, rate=rate, cur=code, upd=updv, ts=int(time.time()), country=slug)
             _json_save(FUELFILE, data)
         FUEL_STATE.update(last=time.time(), err='')
-        return dict(ok=True, day=day, euro95=float(e95.group(1)), diesel=float(dsl.group(1)), rate=rate, cur=code)
+        return dict(ok=True, day=day, euro95=e95v, diesel=dslv, rate=rate, cur=code)
     except Exception as e:  # noqa
         FUEL_STATE['err'] = str(e)[:200]
-        print('fuel:', e, flush=True)
+        log('fuel:', e, flush=True)
         return dict(ok=False, reason=str(e)[:200])
 
 
@@ -422,7 +476,7 @@ def charges(car, limit, offset, cid=None):
                 r['cost_real'] = val
             except Exception as e:  # noqa
                 budget = 0                            # HA nu raspunde: nu mai incerca pentru restul randurilor (altfel cererea dureaza minute)
-                print('real cost:', e, flush=True)
+                log('real cost:', e, flush=True)
     return decorate(rows)
 
 
@@ -599,7 +653,7 @@ def activity(car, days, limit):
             if i['hours'] >= 1:
                 ev.append(dict(type='parked', t=i['start'], end=i['end'], title=i['place'] or '—', hours=i['hours'], drop=i['drop'], sleep_pct=i['pct_sleep'], kwh=i['kwh']))
     except Exception as e:  # noqa
-        print('activity parked:', e, flush=True)
+        log('activity parked:', e, flush=True)
     for u in q("select start_date, version from updates where car_id=%s and start_date > %s", (car, since)):
         ev.append(dict(type='update', t=u['start_date'], title=u['version']))
     with NLOCK:
@@ -714,7 +768,7 @@ def overview(car, days):
                     budget -= 1 if fetched else 0
                 except Exception as ex:  # noqa
                     budget = 0
-                    print('overview real cost:', ex, flush=True)
+                    log('overview real cost:', ex, flush=True)
             tot += val if val is not None else (r['cost'] or 0)
             if val is not None or r['cost'] is not None:
                 kwh_c += r['charge_energy_added'] or 0
@@ -724,7 +778,7 @@ def overview(car, days):
         if ha_ok() and HA['grid']:
             ch['cost_real'] = ch['cost_eff']
     except Exception as e:  # noqa
-        print('overview cost:', e, flush=True)
+        log('overview cost:', e, flush=True)
     odo = q("select max(odometer) odo from positions where car_id=%s", (car,))
     ice = ice_calc(byday, d['kwh'], ch.get('cost_eff', ch['cost']), ch.get('kwh_c', ch['kwh']))
     return dict(days=days, drives=d, charges=ch, by_day=byday, charge_by_day=chday, odometer=(odo[0]['odo'] if odo else None), ice=ice)
@@ -982,20 +1036,20 @@ def ble_run(name, arg):
     st = ha_state('binary_sensor.%s_status' % HA['prefix'])
     if not st or st.get('state') != 'on':
         if _once('ble-off', 600):
-            print('ble: ESP32 indisponibil sau Home Assistant nu raspunde -> comenzile merg pe Fleet API (pot trezi masina)', flush=True)
+            log('ble: ESP32 indisponibil sau Home Assistant nu raspunde -> comenzile merg pe Fleet API (pot trezi masina)', flush=True)
         return None
     last = lambda: (ha_state('sensor.%s_last_command' % HA['prefix']) or {}).get('state')
     before = last()
     try:
         c, r = ha_req('POST', '/api/services/%s/%s' % plan[:2], plan[2])
     except Exception as e:  # noqa
-        print('ble: apelul catre HA a esuat (%s): %s' % (name, e), flush=True)
+        log('ble: apelul catre HA a esuat (%s): %s' % (name, e), flush=True)
         if name in TOGGLES:
             return dict(ok=False, via='ble', code=0, reason='Home Assistant nu a răspuns la timp — comanda poate fi totuși executată. Verifică starea înainte s-o repeți.')
         return None
     if c >= 300:
         if _once('ble-http', 300):
-            print('ble: HA a raspuns %s la %s -> Fleet API' % (c, name), flush=True)
+            log('ble: HA a raspuns %s la %s -> Fleet API' % (c, name), flush=True)
         return None
     for _ in range(9):
         time.sleep(.7)
@@ -1067,7 +1121,7 @@ FL = dict(cid=os.environ.get('FLEET_CLIENT_ID', ''), secret=os.environ.get('FLEE
           domain=os.environ.get('FLEET_DOMAIN', ''), pin=os.environ.get('APP_PIN', ''),
           base=os.environ.get('FLEET_BASE', 'https://fleet-api.prd.eu.vn.cloud.tesla.com'),
           proxy=os.environ.get('FLEET_PROXY', 'https://proxy:4443'), cert=os.environ.get('FLEET_PROXY_CERT', '/fleet/tls-cert.pem'))
-TOKENS = '/data/tokens.json'
+TOKENS = DATA_DIR + '/tokens.json'
 KEYPUB = '/fleet/public-key.pem'
 SCOPES = 'openid offline_access vehicle_device_data vehicle_cmds vehicle_charging_cmds'
 STATES = {}      # state -> expiry (OAuth CSRF)
@@ -1343,7 +1397,7 @@ def _run_command(car, name, arg=None):
     return dict(ok=ok, code=c, reason=resp.get('reason') or r.get('error') or r.get('raw') or '')
 
 
-CAPFILE = '/data/caps.json'
+CAPFILE = DATA_DIR + '/caps.json'
 
 
 def caps_load(car):
@@ -1357,7 +1411,7 @@ def caps_save(car, d):
             allc[str(car)] = dict(allc.get(str(car)) or {}, **d)
             jsave(CAPFILE, allc)
     except Exception as e:  # noqa
-        print('caps:', e, flush=True)
+        log('caps:', e, flush=True)
 
 
 def caps_infer(car):
@@ -1435,7 +1489,7 @@ def _vehicle_data(car, force=False):
 
 
 # ---------------------------------------------------------------- configurare din aplicatie (/data/config.json; suprascrie valorile din .env)
-CFGFILE = '/data/config.json'
+CFGFILE = DATA_DIR + '/config.json'
 CFG = {}
 CFG_SECRETS = ('fleet_secret', 'pin', 'ha_token', 'notify_webhook', 'app_password', 'tessie_token')
 CFG_KEYS = CFG_SECRETS + ('app_url', 'price_grid', 'fleet_id', 'fleet_domain', 'fleet_base', 'ha_url', 'ha_prefix', 'ha_ble', 'ha_grid', 'ha_pv', 'currency', 'ice_l100', 'fuel_type', 'fuel_price', 'fuel_country', 'link_tm', 'link_gf', 'acc_team', 'acc_aud', 'acc_email', 'roles')
@@ -1477,7 +1531,8 @@ def apply_config():
         try:
             sf = os.path.join(os.path.dirname(CFGFILE), 'session_secret')
             try:
-                sec = open(sf).read().strip()
+                with open(sf) as fh:
+                    sec = fh.read().strip()
             except OSError:
                 sec = ''
             if len(sec) < 32:                                  # lipsa sau trunchiat (oprire in timpul scrierii): regeneram, atomic
@@ -1658,7 +1713,7 @@ def pf_unit(name):
 
 PF_META = {n: dict(cat=pf_cat(n), unit=pf_unit(n), miles=n in MILES) for n in PF_ALL if not PF_EXCLUDE.search(n)}
 PF = dict(values={}, hist={}, log=collections.deque(maxlen=300000), session=None, clients=set(), lock=threading.Lock(), last_rx=0.0, sim=False, conn=None, diag=(0, None))
-PFILE = '/data/profiler.json'
+PFILE = DATA_DIR + '/profiler.json'
 
 
 def pf_fields(profile):
@@ -1732,7 +1787,7 @@ def pf_session_save():
     try:
         jsave(PFILE, dict(session=PF['session']))
     except Exception as e:  # noqa
-        print('profiler save:', e, flush=True)
+        log('profiler save:', e, flush=True)
 
 
 def pf_cfg_get(vin):
@@ -1757,7 +1812,7 @@ def pf_post_safe(vin, cfg, base):
         try:
             pf_cfg_post(vin, base)
         except Exception as e2:  # noqa
-            print('profiler: revenirea dupa eroare a esuat:', e2, flush=True)
+            log('profiler: revenirea dupa eroare a esuat:', e2, flush=True)
         raise RuntimeError('Tesla nu a răspuns la timp (%s); am încercat să revin la configurația de bază.' % e)
 
 
@@ -1787,14 +1842,14 @@ def pf_start(car, profile, minutes):
     if not base:
         raise RuntimeError('Nu pot citi configurația de telemetrie a mașinii (%s). Telemetria trebuie configurată întâi (hostname/ca).' % code)
     prof_like = sum(1 for f in ((base or {}).get('fields') or {}).values() if isinstance(f, dict) and f.get('interval_seconds') == 1) >= 40
-    have_base = os.path.exists('/data/profiler_base.json')
+    have_base = os.path.exists(DATA_DIR + '/profiler_base.json')
     if prof_like and not have_base:
         raise RuntimeError('Mașina pare să fie încă pe configurația profilerului, iar configurația de bază (Sentry) nu mai există. Nu pornesc o sesiune nouă: restabilește telemetria din serverul de telemetrie.')
     if not (prof_like and have_base):                  # daca masina e inca pe config. de profiler dintr-o sesiune nerestaurata, pastram baza veche
         try:
-            jsave('/data/profiler_base.json', base)    # configuratia de dinainte (Sentry), la care se revine la oprire
+            jsave(DATA_DIR + '/profiler_base.json', base)    # configuratia de dinainte (Sentry), la care se revine la oprire
         except Exception as e:  # noqa
-            print('profiler base save:', e, flush=True)
+            log('profiler base save:', e, flush=True)
     fields = {n: {'interval_seconds': 1} for n in names}
     fields['SentryMode'] = {'interval_seconds': 1}                      # alerta Sentry ramane activa
     dropped = []
@@ -1829,7 +1884,7 @@ def pf_start(car, profile, minutes):
             try:
                 run_command(car, 'wake')
             except Exception as e:  # noqa
-                print('profiler wake:', e, flush=True)
+                log('profiler wake:', e, flush=True)
             if PF['session']:
                 PF['session']['waking'] = False
         threading.Thread(target=wake, daemon=True).start()
@@ -1852,7 +1907,7 @@ def pf_stop(car=1, reason='', force=False):
     if not se.get('sim'):
         try:
             vin = vin_for(car)
-            base = jload('/data/profiler_base.json', None)
+            base = jload(DATA_DIR + '/profiler_base.json', None)
             if not base:
                 raise RuntimeError('lipseste configuratia de baza a telemetriei (profiler_base.json)')
             ok, info = pf_cfg_post(vin, base)
@@ -1878,7 +1933,7 @@ def pf_watch():
             if not se:
                 fails, nxt = 0, 0.0
             elif time.time() > se['until'] and time.time() >= nxt:
-                print('profiler: auto-stop', flush=True)
+                log('profiler: auto-stop', flush=True)
                 r = pf_stop(1, 'timp expirat')
                 if r.get('ok'):
                     fails, nxt = 0, 0.0
@@ -1887,9 +1942,9 @@ def pf_watch():
                     nxt = time.time() + min(1800, 30 * 2 ** fails)
                     if PF['session']:
                         PF['session']['stop_fails'] = fails
-                    print('profiler: auto-stop esuat (%d): %s' % (fails, r.get('reason')), flush=True)
+                    log('profiler: auto-stop esuat (%d): %s' % (fails, r.get('reason')), flush=True)
         except Exception as e:  # noqa
-            print('profiler watch:', e, flush=True)
+            log('profiler watch:', e, flush=True)
 
 
 def pf_simulate(profile):
@@ -1979,7 +2034,7 @@ def imp_action(car, body):
                 if cn:
                     cn.rollback()
                 IMP['error'] = str(e)[:400]
-                print('import tessie:', e, flush=True)
+                log('import tessie:', e, flush=True)
             finally:
                 if cn:
                     cn.close()
@@ -1990,7 +2045,7 @@ def imp_action(car, body):
 
 
 # ---------------------------------------------------------------- notificari (cablu, incarcare gata, usi) -> telefon prin webhook Home Assistant + istoric in aplicatie
-NFILE = '/data/notify.json'
+NFILE = DATA_DIR + '/notify.json'
 NHOOK = os.environ.get('NOTIFY_WEBHOOK', '')
 APPURL = os.environ.get('APP_URL', '').rstrip('/')
 KIND_ROUTE = dict(plugged='#/charges', charge_done='#/charges', door='#/car', update='#/car', low_batt='#/car', rule='#/auto', live='#/car', test='#/notifications')
@@ -2022,7 +2077,7 @@ def nset_save(d):
     try:
         jsave(NFILE, d)
     except Exception as e:  # noqa
-        print('notify save:', e, flush=True)
+        log('notify save:', e, flush=True)
 
 
 def notify(kind, title, msg, data=None, log=True):
@@ -2091,7 +2146,7 @@ def notify_check(car, key, old, new):
 
 
 # ---------------------------------------------------------------- automatizari (reguli salvate in /data/rules.json)
-RFILE = '/data/rules.json'
+RFILE = DATA_DIR + '/rules.json'
 RULE_TYPES = ('arrive_gate', 'depart_climate', 'plug_limit')
 RLOG = []            # ultimele executii
 RLOCK = threading.Lock()
@@ -2165,7 +2220,7 @@ def rules_clock():
                         for c in list(LIVE):
                             rule_exec(c, r, 'climate_on')
         except Exception as e:  # noqa
-            print('rules clock:', e, flush=True)
+            log('rules clock:', e, flush=True)
 
 
 def rule_clean(b):
@@ -2280,7 +2335,7 @@ def la_poke(car):
         try:
             la_sync(car)
         except Exception as e:  # noqa
-            print('live activity:', e, flush=True)
+            log('live activity:', e, flush=True)
     LA['timer'] = threading.Timer(4.0, go)
     LA['timer'].daemon = True
     LA['timer'].start()
@@ -2293,7 +2348,7 @@ def la_loop():
             for c in list(LIVE):
                 la_sync(c)
         except Exception as e:  # noqa
-            print('live loop:', e, flush=True)
+            log('live loop:', e, flush=True)
 
 
 # ---------------------------------------------------------------- acces din internet (parola + cookie semnat)
@@ -2344,7 +2399,7 @@ def access_ok(token):
         em = str(claims.get('email') or '').lower()
         return (em or '__noemail__') if (ROLES or not ACCESS['email'] or em == ACCESS['email'].lower()) else False     # fara email in JWT (service token) = viewer, nu admin
     except Exception as e:  # noqa
-        print('access jwt:', e, flush=True)
+        log('access jwt:', e, flush=True)
         return False
 
 
@@ -2361,13 +2416,22 @@ def login_html(lang, msg=''):
 
 
 # ---------------------------------------------------------------- HTTP
+_HC = [0.0, None, False]      # momentul, rezultatul, valid
+
+
 def has_cars():
+    """True/False = exista/nu exista masini; None = baza de date inaccesibila. Rezultatul se retine 10 s (3 s cand e None) ca o baza cazuta sa nu incetineasca fiecare cerere."""
     if DEMO_ONLY:
         return False
+    now = time.time()
+    if _HC[2] and now - _HC[0] < (3 if _HC[1] is None else 10):
+        return _HC[1]
     try:
-        return bool(q('select 1 from cars limit 1'))
+        v = bool(q('select 1 from cars limit 1'))
     except Exception:
-        return None  # DB inaccesibil
+        v = None  # DB inaccesibil
+    _HC[:] = [now, v, True]
+    return v
 
 
 def car_image(c):
@@ -2412,6 +2476,15 @@ def api_state():
         return dict(demo=False, cars=out, links=LINKS, mqtt=bool(LIVE), lan_open=not AUTH['pw'] and not DEMO_ONLY, currency=CURRENCY)
     return dict(demo=True, public_demo=DEMO_ONLY, cars=[dict(DEMO_CAR, live=DEMO_LIVE, live_age=0, image=car_image(DEMO_CAR), sleep=DEMO_SLEEP)],
                 links=({} if DEMO_ONLY else LINKS), mqtt=False, db_error=(cl is None and not DEMO_ONLY), lan_open=not AUTH['pw'] and not DEMO_ONLY, currency=CURRENCY)
+
+
+CSP = os.environ.get('CSP') or (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob: https://tile.openstreetmap.org https://static-assets.tesla.com; "
+    "connect-src 'self' https://tile.openstreetmap.org https://api.open-meteo.com https://archive-api.open-meteo.com; "
+    "worker-src 'self' blob:; child-src blob:; font-src 'self' data:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'")
+SEC_HEADERS = [('Content-Security-Policy', CSP), ('X-Content-Type-Options', 'nosniff'), ('Referrer-Policy', 'strict-origin-when-cross-origin'),
+               ('Permissions-Policy', 'geolocation=(), camera=(), microphone=(), payment=()')]
 
 
 class DBDown(Exception):
@@ -2468,6 +2541,7 @@ class H(BaseHTTPRequestHandler):
         if FL['pin'] and got:
             with PIN_LOCK:
                 PINF.setdefault(ip, []).append(now)
+            log('audit: PIN gresit ip=%s' % ip)
         return False, 'PIN greșit.' if FL['pin'] else 'PIN greșit sau neconfigurat.', 403
 
     def authed(self):
@@ -2496,6 +2570,8 @@ class H(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Cache-Control', 'no-store')
+        for k, v in SEC_HEADERS:
+            self.send_header(k, v)
         self.send_header('Content-Length', str(len(b)))
         for k, v in (extra or []):
             self.send_header(k, v)
@@ -2529,6 +2605,7 @@ class H(BaseHTTPRequestHandler):
             self.send_header('Set-Cookie', ck)
             self.end_headers()
             return
+        log('audit: parola gresita ip=%s' % ip)
         return self.page(401, login_html(self.lang(), t['bad']))
 
     def send_json(self, obj, code=200):
@@ -2559,7 +2636,8 @@ class H(BaseHTTPRequestHandler):
             return self.page(401, login_html(self.lang()))
         try:
             if p == '/api/health':
-                return self.send_json(dict(ok=True, mqtt=bool(LIVE)))
+                db = True if DEMO_ONLY else (has_cars() is not None)
+                return self.send_json(dict(ok=db, db=db, mqtt=(MQ_STATE['up'] if MQ['host'] else None), threads={k: t.is_alive() for k, t in THREADS.items()}), 200 if db else 503)
             if p == '/api/state':
                 d = api_state()
                 d['role'] = self.role
@@ -2597,7 +2675,7 @@ class H(BaseHTTPRequestHandler):
         except NotFound:
             return self.send_json(dict(error='not found'), 404)
         except Exception as e:  # noqa
-            print('GET %s: %s' % (p, e), flush=True)
+            log('GET %s: %s' % (p, e), flush=True)
             return self.send_json(dict(error='eroare internă'), 500)
         return self.static(p)
 
@@ -2692,11 +2770,13 @@ class H(BaseHTTPRequestHandler):
             if u.path == '/api/fleet/register':
                 return self.send_json(partner_register())
             if u.path.startswith('/api/cmd/'):
-                return self.send_json(run_command(int(body.get('car', 1)), u.path.rsplit('/', 1)[1], body.get('arg')))
+                res = run_command(int(body.get('car', 1)), u.path.rsplit('/', 1)[1], body.get('arg'))
+                log('audit: cmd=%s rol=%s ip=%s ok=%s via=%s' % (u.path.rsplit('/', 1)[1], self.role, self.client_ip(), (res or {}).get('ok'), (res or {}).get('via', 'fleet')))
+                return self.send_json(res)
         except ValueError as e:
             return self.send_json(dict(ok=False, reason='Cerere invalidă: %s' % e), 400)
         except Exception as e:  # noqa
-            print('POST %s: %s' % (u.path, e), flush=True)
+            log('POST %s: %s' % (u.path, e), flush=True)
             return self.send_json(dict(ok=False, reason=str(e)[:300]), 500)
         return self.send_json(dict(error='not found'), 404)
 
@@ -2796,6 +2876,11 @@ class H(BaseHTTPRequestHandler):
         group = CLIENTS if group is None else group
         qu = queue.Queue(maxsize=500)
         with CLOCK:
+            if len(CLIENTS) + len(PF['clients']) >= int(os.environ.get('MAX_SSE', '60')):
+                self.send_response(503)
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return
             group.add(qu)
         self.send_response(200)
         self.send_header('Content-Type', 'text/event-stream')
@@ -2837,6 +2922,8 @@ class H(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', ct)
         self.send_header('Cache-Control', 'no-cache')
+        for k, v in SEC_HEADERS:
+            self.send_header(k, v)
         self.send_header('Content-Length', str(len(b)))
         self.end_headers()
         self.wfile.write(b)
@@ -2856,6 +2943,8 @@ class PublicH(BaseHTTPRequestHandler):
         self.send_header('Content-Type', ct)
         self.send_header('Content-Length', str(len(b)))
         self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'")
         self.end_headers()
         self.wfile.write(b)
 
@@ -2889,12 +2978,30 @@ apply_config()
 pf_session_load()
 
 
+THREADS = {}
+
+
+def supervise(fn):
+    """Porneste fn intr-un thread si o relanseaza (cu pauza 2..60 s) daca iese cu exceptie; iesirea normala (ex. fara MQTT configurat) nu se relanseaza."""
+    def run():
+        delay = 2
+        while True:
+            try:
+                fn()
+                return
+            except Exception as e:  # noqa
+                log('thread %s a cazut: %s' % (fn.__name__, e))
+                time.sleep(delay)
+                delay = min(delay * 2, 60)
+    t = threading.Thread(target=run, daemon=True, name=fn.__name__)
+    t.start()
+    THREADS[fn.__name__] = t
+    return t
+
+
 if __name__ == '__main__':
+    log('pornit: demo=%s mqtt=%s ha=%s pin=%s parola=%s access=%s' % (DEMO_ONLY, bool(MQ['host']), bool(HA['url']), bool(FL['pin']), bool(AUTH['pw']), bool(ACCESS['team'])))
     if not DEMO_ONLY:
-        threading.Thread(target=mqtt_thread, daemon=True).start()
-        threading.Thread(target=rules_clock, daemon=True).start()
-        threading.Thread(target=pf_watch, daemon=True).start()
-        threading.Thread(target=la_loop, daemon=True).start()
-        threading.Thread(target=fuel_loop, daemon=True).start()
-        threading.Thread(target=serve_public, daemon=True).start()
+        for fn in (mqtt_thread, rules_clock, pf_watch, la_loop, fuel_loop, serve_public):
+            supervise(fn)
     ThreadingHTTPServer(('0.0.0.0', PORT), H).serve_forever()

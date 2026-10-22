@@ -1,27 +1,52 @@
 name: CI
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
+        with: { python-version: "3.12", cache: pip, cache-dependency-path: requirements.txt }
       - uses: actions/setup-node@v4
-        with: { node-version: "20" }
+        with: { node-version: "22" }
+      - name: Install dependencies (the same pins as the Dockerfile)
+        run: pip install -r requirements.txt
       - name: Python syntax
-        run: python -m py_compile server.py
+        run: python -m py_compile server.py importer.py tools/telemetry_forwarder.py
       - name: JavaScript syntax
         run: for f in static/app.js static/extra.js; do node --check "$f"; done
+      - name: Shell scripts and compose file
+        run: |
+          for f in setup.sh scripts/*.sh; do bash -n "$f"; done
+          cp .env.example .env
+          docker compose config -q
+      - name: Unit and HTTP tests
+        run: python -m unittest discover -s tests -v
       - name: Demo server smoke test
         run: |
-          pip install paho-mqtt psycopg2-binary "pyjwt[crypto]"
-          DEMO_ONLY=1 PORT=4110 python server.py &
-          sleep 3
+          DEMO_ONLY=1 PORT=4110 PUBLIC_PORT=4111 python server.py &
+          pid=$!
+          for i in $(seq 1 30); do curl -fs localhost:4110/api/health >/dev/null && break; sleep 1; done
           curl -fs localhost:4110/api/health
           curl -fs localhost:4110/api/state | python -c "import sys,json; d=json.load(sys.stdin); assert d['cars']"
           curl -fs localhost:4110/api/sleep?days=3 >/dev/null
           curl -fs localhost:4110/api/trip/3 >/dev/null
-          curl -fsI localhost:4110/car.png | head -1
+          curl -fs -o /dev/null localhost:4110/car.png
+          curl -fs -o /dev/null localhost:4110/vendor/maplibre-gl.min.js
+          curl -fsI localhost:4110/ | grep -qi "content-security-policy"
+          kill $pid
+      - name: No secrets or key material in the repository
+        run: |
+          if git grep -nE 'BEGIN ((EC|RSA|OPENSSH) )?PRIVATE KEY|eyJ[A-Za-z0-9_-]{20,}\.eyJ|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30,}' -- . ':!tests'; then
+            echo "possible secret committed"; exit 1
+          fi
       - name: Docker build
         run: docker build -t teslamate-ui . && docker build -f Dockerfile.proxy -t teslamate-ui-proxy .

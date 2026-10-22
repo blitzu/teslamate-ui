@@ -67,6 +67,16 @@ Sessions made with the app password are bound to that password: **changing the p
 * Viewers cannot change notification settings or force a live read from the car.
 * If the BLE path times out for a toggle command (frunk/trunk), the app reports *"may have been executed"* instead of silently retrying on the Fleet API.
 
+## Container and browser hardening (built in)
+
+* The app container starts as root **only** to hand `data/` to an unprivileged user (uid 10001) and then drops root before doing anything else; the root filesystem is read-only, all Linux capabilities are dropped (a few are kept just for that one step), memory and process limits are set, logs rotate.
+* The private Tesla keys are mounted only in the signing proxy, never in the app container.
+* The browser gets a strict `Content-Security-Policy` (scripts only from the app itself — Leaflet and MapLibre are bundled, no CDN), `X-Content-Type-Options`, `Referrer-Policy` and `Permissions-Policy`. If you embed the app in a page or use another tile/weather host, adjust it with the `CSP` environment variable.
+* The app uses at most `DB_MAX_CONN` (8) simultaneous Postgres connections with a 20 s statement timeout, and `MAX_SSE` (60) live-stream connections, so a burst of requests cannot exhaust TeslaMate's database.
+* `/api/health` reports the database state; Docker's `HEALTHCHECK` uses it. Background threads (MQTT, automations, profiler watch, fuel price, public listener) are restarted automatically if they crash.
+* Commands, wrong PINs and wrong passwords leave an `audit:` line (with role and address) in `docker compose logs ui`.
+* For least privilege on the database use `./scripts/create-db-user.sh` (read-only role).
+
 ## Hardening checklist
 
 * Back up `fleet/private-key.pem` offline; if it leaks, remove the virtual key from the car (Controls → Locks → Keys) and regenerate.
