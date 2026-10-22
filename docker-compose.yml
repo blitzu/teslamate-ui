@@ -17,6 +17,8 @@ services:
         required: false
       - path: .env.ha         # optional: Home Assistant (BLE commands, solar share; see docs/home-assistant.md)
         required: false
+      - path: .env.profiler   # optional: Profiler ingest token (see docs/profiler.md)
+        required: false
     environment:
       TZ: ${TZ:-UTC}          # used by time-based automations
     volumes:

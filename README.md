@@ -22,7 +22,8 @@ A mobile-first, [Tessie](https://tessie.com)-style web app (installable PWA) on 
 | **Climate page** | Target temperature, 5 heated seats on the car picture, heated steering wheel, defrost, cabin overheat protection and its threshold |
 | **Charging control** | Charging current (A), scheduled charging and scheduled departure/preconditioning (current Tesla schedule model — add/remove), **energy source of each charge** (grid vs solar, estimated, via Home Assistant) |
 | **Drives** | Day-grouped list; detail with speed-coloured map, charts linked to the map (touch a chart → the point on the map), **driving style** (hard braking/acceleration, regen, score); **animated 3D route replay**: tilted map following the car, clock, weather (Open-Meteo), speed-adaptive zoom, stops and charging stops, battery/net/regen/charged, click any route point to inspect it, zoom/free explore, and **export to video (MP4/WebM)** |
-| **Sleep & idle drain** | 48-hour sleep/awake timeline, sleep % per day, idle battery drain between drives/charges (%/h and kWh/day), detection of periodic short wakes (something polling the car) |
+| **Profiler** | Live streaming of 200+ vehicle signals (Fleet Telemetry) in short sessions: profiles, grouped cells with mini charts, tiles, CSV export - [docs/profiler.md](docs/profiler.md) |
+| **Sleep & idle drain** (Parked) | 48-hour sleep/awake timeline, sleep % per day, idle battery drain between drives/charges (%/h and kWh/day), detection of periodic short wakes (something polling the car) |
 | **Charges** | History with curves (power, SoC, energy), cost |
 | **Stats** | Distance/day, consumption, cost, range degradation, **battery health** (usable capacity from charges, charging-curve comparison, consumption vs temperature and speed), state history, software updates |
 | **Notifications** | Cable connected, charging complete, door/trunk opened (while locked, or left open > 5 min), software update, battery < 20 % while parked — to a webhook (e.g. Home Assistant → phone) plus an in-app history |
@@ -106,6 +107,7 @@ Map tiles from OpenStreetMap, MapLibre GL JS and Leaflet from cdnjs, weather fro
 * [docs/fleet-api.md](docs/fleet-api.md) — Tesla developer app, domain, key, authorisation
 * [docs/security.md](docs/security.md) — internet exposure, PIN, passwords, Cloudflare Access
 * [docs/home-assistant.md](docs/home-assistant.md) — BLE commands, energy source, automations
+* [docs/profiler.md](docs/profiler.md) - live telemetry profiler
 * [docs/notifications.md](docs/notifications.md) — webhook and Home Assistant example
 * [docs/troubleshooting.md](docs/troubleshooting.md) — common errors
 * [docs/development.md](docs/development.md) — structure, local demo, API, contributing

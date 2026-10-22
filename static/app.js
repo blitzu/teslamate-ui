@@ -192,7 +192,7 @@ function pageCar() {
 <h2>Locație</h2><div id="map"></div>
 <h2>Detalii</h2><div class="grid">${stats}</div>
 <h2>Ultima cursă · ultima încărcare</h2><div id="last"></div>
-${notifShell()}
+<div class="links"><a href="#/climate">🌡 ${X('Clima', 'Climate')} ›</a></div>
 ${S.links && S.links.teslamate ? `<div class="links"><a href="${esc(S.links.teslamate)}" target="_blank" rel="noopener">TeslaMate</a><a href="${esc(S.links.grafana)}" target="_blank" rel="noopener">Grafana</a></div>` : ''}
 ${S.public_demo ? '<p class="note">' + (LANG === 'en' ? 'Demo with sample data - no real vehicle is connected.' : 'Demonstrație cu date fictive - nicio mașină reală nu este conectată.') + '</p>' : S.demo ? '<p class="note">' + (LANG === 'en' ? 'Demo data. Connect your Tesla account in TeslaMate (' + esc(S.links.teslamate) + ') and every page fills in with real data.' : 'Date demonstrative. Conectează contul Tesla în TeslaMate (' + esc(S.links.teslamate) + ') și toate paginile se umplu singure cu datele reale.') + '</p>' : ''}
 ${S.db_error ? '<p class="note">' + (LANG === 'en' ? 'The TeslaMate database is not responding right now.' : 'Baza de date TeslaMate nu răspunde momentan.') + '</p>' : ''}`;
@@ -206,7 +206,7 @@ function sleepBlock(c) {
   const l1 = asleep ? X('😴 Doarme de ', '😴 Asleep for ') + d(mins) + from : X('Trează de ', 'Awake for ') + d(mins) + from;
   const l2 = z.last ? (asleep ? X('Somnul anterior: ', 'Previous sleep: ') : X('Ultimul somn: ', 'Last sleep: ')) + d((T(z.last.end) - T(z.last.start)) / 60000) + ' (' + t(z.last.start) + '–' + t(z.last.end) + ')' : X('Niciun somn înregistrat încă', 'No sleep recorded yet');
   const pc = Math.round((z.sec24 || 0) / 864);
-  return `<a class="sleepc" href="#/sleep" style="display:block;text-decoration:none;color:inherit"><b>${l1}</b><span>${l2}</span><span>${X('Somn în ultimele 24 h: ', 'Sleep in the last 24 h: ')}${hm((z.sec24 || 0) / 60)} (${pc}%)</span><span style="color:var(--mint)">${X('Detalii somn și consum în repaus ›', 'Sleep & idle drain details ›')}</span></a>`;
+  return `<a class="sleepc" href="#/parked" style="display:block;text-decoration:none;color:inherit"><b>${l1}</b><span>${l2}</span><span>${X('Somn în ultimele 24 h: ', 'Sleep in the last 24 h: ')}${hm((z.sec24 || 0) / 60)} (${pc}%)</span><span style="color:var(--mint)">${X('Detalii somn și consum în repaus ›', 'Sleep & idle drain details ›')}</span></a>`;
 }
 
 function drawMap(el, L) {
@@ -222,7 +222,6 @@ async function afterCar() {
   const c = cur(); if (!c) return;
   drawMap($('#map'), c.live || {});
   renderCmds();
-  afterNotif();
   const im = $('#stage img');
   if (im) im.onerror = () => { $('#stage').classList.remove('photo'); $('#stage').innerHTML = carSvg(c.live || {}); };
   try {
@@ -307,7 +306,7 @@ async function pageCharge(id) {
 }
 
 let days = 30;
-async function pageStats() {
+async function statsBody(embed) {
   const [o, b] = await Promise.all([api('/api/overview?car=' + car + '&days=' + days), api('/api/battery?car=' + car)]);
   const d = o.drives, ch = o.charges;
   const wh = d.km > 0 ? d.kwh * 1000 / d.km : null;
@@ -316,17 +315,13 @@ async function pageStats() {
   const stateBar = b.states.length ? `<div style="display:flex;height:16px;border-radius:99px;overflow:hidden;margin-top:6px">${b.states.map((x) => `<div title="${x.s}" style="width:${x.hours / tot * 100}%;background:${(SM[x.s] || ['', '#555'])[1]}"></div>`).join('')}</div>
     <div class="legend">${b.states.map((x) => `<span><i style="background:${(SM[x.s] || ['', '#555'])[1]}"></i>${(SM[x.s] || [x.s])[0]} ${nf(x.hours / tot * 100)}%</span>`).join('')}</div>` : '<div class="mut" style="font-size:13px;padding:10px 0">Prea puține date</div>';
   const lab = (k) => new Date(k + 'T00:00:00').toLocaleDateString(LOC(), { day: 'numeric', month: 'short' });
-  return `<div class="top"><h1>Statistici</h1></div>
-  <div class="seg">${[7, 30, 90, 365].map((n) => `<button data-d="${n}" class="${n === days ? 'on' : ''}">${n === 365 ? tr('1 an') : n + tr(' zile')}</button>`).join('')}</div>
+  return `${embed ? '' : '<div class="top"><h1>Statistici</h1></div>'}
+  <div class="seg" style="margin-top:12px">${[7, 30, 90, 365].map((n) => `<button data-d="${n}" class="${n === days ? 'on' : ''}">${n === 365 ? tr('1 an') : n + tr(' zile')}</button>`).join('')}</div>
   <h2>Conducere</h2><div class="grid">${stat('Distanță', nf(d.km), 'km')}${stat('Curse', nf(d.n))}${stat('Timp la volan', hm(d.minutes))}${stat('Consum mediu', nf(wh), 'Wh/km')}${stat('Energie folosită', nf(d.kwh), 'kWh')}${stat('Viteză maximă', nf(d.vmax), 'km/h')}</div>
   ${sec('Kilometri pe zi', bars(o.by_day.map((x) => ({ l: lab(x.day), v: x.km })), { color: '#7aa8ff' }))}
   <h2>Încărcare</h2><div class="grid">${stat('Încărcări', nf(ch.n))}${stat('Energie adăugată', nf(ch.kwh), 'kWh')}${ch.cost_real != null ? stat(X('Cost TeslaMate', 'TeslaMate cost'), nf(ch.cost, 2), (S.currency ?? '€')) + stat(X('Cost real estimat', 'Estimated real cost'), nf(ch.cost_real, 2), (S.currency ?? '€')) + stat(X('Cost real / 100 km', 'Real cost / 100 km'), d.km > 0 ? nf(ch.cost_real / d.km * 100, 2) : '—', (S.currency ?? '€')) + stat(X('Economie (soare/baterie)', 'Saved (solar/battery)'), nf(Math.max(0, ch.cost - ch.cost_real), 2), (S.currency ?? '€')) : stat('Cost total', nf(ch.cost, 2), (S.currency ?? '€')) + stat('Cost / 100 km', d.km > 0 && ch.cost ? nf(ch.cost / d.km * 100, 2) : '—', (S.currency ?? '€'))}</div>
   ${sec('kWh încărcați pe zi', bars(o.charge_by_day.map((x) => ({ l: lab(x.day), v: x.kwh })), { color: '#d9ba80' }))}
-  <h2>Baterie</h2>${sec('Autonomie estimată la 100% (km)', line(b.range100.map((x) => [+new Date(x.week), x.range100]), { color: '#6fd6b8', dec: 0 }))}
-  <p class="note" style="margin-top:6px">Calculată din autonomia ideală raportată la nivelul bateriei; scăderea lentă în timp indică degradarea.</p>
-  ${healthShell()}
-  <h2>Stare mașină (ultimele 30 de zile)</h2><div class="card">${stateBar}</div>
-  ${b.updates.length ? `<h2>Actualizări software</h2><div class="card">${b.updates.map((u) => `<div class="row" style="padding:5px 0"><b>${esc(u.version)}</b><div class="sp"></div><span class="mut">${T(u.start_date).toLocaleDateString(LOC(), { day: 'numeric', month: 'long', year: 'numeric' })}</span></div>`).join('')}</div>` : ''}`;
+  <h2>Stare mașină (ultimele 30 de zile)</h2><div class="card">${stateBar}</div>`;
 }
 
 
@@ -433,16 +428,15 @@ const ICON = {
   stats: 'M5 9.2h3V19H5V9.2zM10.6 5h2.8v14h-2.8V5zm5.6 8H19v6h-2.8v-6z',
 };
 const TABS = [['car', 'Mașină'], ['climate', 'Clima'], ['drives', 'Curse'], ['charges', 'Încărcări'], ['stats', 'Statistici'], ['settings', 'Setări']];
-function renderNav(active) {
-  setHtml(nav, '<div class="in">' + TABS.map(([k, l]) => `<a href="#/${k}" class="${active === k ? 'on' : ''}"><svg viewBox="0 0 24 24"><path d="${ICON[k]}"/></svg>${l}</a>`).join('') + '</div>');
-}
+function renderNav(active) { drawNav(active); }
 let renderSeq = 0;
 async function render() {
   const h = location.hash.replace(/^#\/?/, '') || 'car';
   const [p, arg] = h.split('/');
   route = p;
   if (typeof RP !== 'undefined' && RP && p !== 'trip') stopReplay();
-  renderNav(['drive', 'trip'].includes(p) ? 'drives' : p === 'charge' ? 'charges' : p === 'sleep' || p === 'auto' ? 'car' : p);
+  if (p !== 'profiler' && typeof pfClose === 'function') pfClose();
+  renderNav(['drive', 'trip'].includes(p) ? 'drives' : p === 'charge' ? 'charges' : p === 'sleep' ? 'parked' : p === 'stats' ? 'activity' : p === 'climate' ? 'car' : p);
   const seq = ++renderSeq;
   let html = '';
   try {
@@ -451,8 +445,12 @@ async function render() {
     else if (p === 'charges') html = await pageList('charges');
     else if (p === 'drive') html = await pageDrive(arg);
     else if (p === 'charge') html = await pageCharge(arg);
-    else if (p === 'stats') html = await pageStats();
-    else if (p === 'sleep') html = await pageSleep();
+    else if (p === 'stats') { actMode = 'stats'; html = await pageActivity(); }
+    else if (p === 'activity') html = await pageActivity();
+    else if (p === 'parked' || p === 'sleep') html = await pageSleep();
+    else if (p === 'battery') html = await pageBattery();
+    else if (p === 'notifications') html = pageNotif();
+    else if (p === 'profiler') html = await pageProfiler();
     else if (p === 'auto') html = await pageAuto();
     else if (p === 'settings') html = await pageSettings();
     else if (p === 'climate') html = pageClimate();
@@ -468,12 +466,14 @@ async function render() {
   if (p === 'climate') afterClimate();
   if (p === 'charges') afterCharges();
   if (p === 'trip') startReplay(arg);
-  if (p === 'sleep') afterSleep();
+  if (p === 'sleep' || p === 'parked') afterSleep();
+  if (p === 'activity' || p === 'stats') afterActivity();
+  if (p === 'battery') afterHealth();
+  if (p === 'notifications') afterNotif();
+  if (p === 'profiler') afterProfiler();
   if (p === 'auto') afterAuto();
   if (p === 'settings') afterSettings();
   if (p === 'charge') afterChargeSolar(arg);
-  if (p === 'stats') afterHealth();
-  if (p === 'stats') view.querySelectorAll('.seg button').forEach((b) => b.onclick = () => { days = +b.dataset.d; render(); });
   if (p === 'car') scrollTo(0, y); else if (seq === renderSeq && !window.__keep) scrollTo(0, 0);
 }
 addEventListener('hashchange', render);
@@ -496,4 +496,6 @@ async function boot() {
   live();
   setInterval(async () => { try { const n = await api('/api/state'); if (!n.demo && !S.demo) return; S = n; if (route === 'car') render(); } catch (e) { /* ignore */ } }, 60000);
 }
+document.getElementById('burger')?.addEventListener('click', () => document.body.classList.toggle('nav-open'));
+document.getElementById('backdrop')?.addEventListener('click', () => document.body.classList.remove('nav-open'));
 boot();

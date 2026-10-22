@@ -294,11 +294,13 @@ def sleep_report(car, days):
     awake = [(P(r['end']) - P(r['start'])).total_seconds() / 60 for i, r in enumerate(runs) if r['s'] == 'awake' and r['end'] and 0 < i < len(runs) - 1]
     short = [m for m in awake if 8 <= m <= 16]
     eff = (q("select efficiency from cars where id=%s", (car,)) or [{'efficiency': 0.15}])[0]['efficiency'] or 0.15
-    acts = q("""select 'd' as k, d.start_date, d.end_date, sp.battery_level as s0, ep.battery_level as s1, sp.ideal_battery_range_km as r0, ep.ideal_battery_range_km as r1
+    acts = q(f"""select 'd' as k, d.start_date, d.end_date, sp.battery_level as s0, ep.battery_level as s1, sp.ideal_battery_range_km as r0, ep.ideal_battery_range_km as r1, {NAME_B} as place
         from drives d left join positions sp on sp.id=d.start_position_id left join positions ep on ep.id=d.end_position_id
+        left join geofences g2 on g2.id=d.end_geofence_id left join addresses a2 on a2.id=d.end_address_id
         where d.car_id=%s and d.end_date is not null and d.end_date > %s
-        union all select 'c', cp.start_date, cp.end_date, cp.start_battery_level, cp.end_battery_level, cp.start_ideal_range_km, cp.end_ideal_range_km
-        from charging_processes cp where cp.car_id=%s and cp.end_date is not null and cp.end_date > %s order by 2""", (car, since, car, since))
+        union all select 'c', cp.start_date, cp.end_date, cp.start_battery_level, cp.end_battery_level, cp.start_ideal_range_km, cp.end_ideal_range_km, {NAME_A} as place
+        from charging_processes cp left join geofences g on g.id=cp.geofence_id left join addresses a on a.id=cp.address_id
+        where cp.car_id=%s and cp.end_date is not null and cp.end_date > %s order by 2""", (car, since, car, since))
     idle = []
     for a, b in zip(acts, acts[1:]):
         t0, t1 = P(a['end_date']), P(b['start_date'])
@@ -308,7 +310,7 @@ def sleep_report(car, days):
         sl = sum(max(0, (min(P(r['end']), t1) - max(P(r['start']), t0)).total_seconds()) for r in runs if r['s'] == 'sleep') / 3600
         drop = a['s1'] - b['s0']
         kwh = ((a['r1'] or 0) - (b['r0'] or 0)) * eff if a['r1'] is not None and b['r0'] is not None else None
-        idle.append(dict(start=a['end_date'], end=b['start_date'], hours=round(hrs, 2), sleep_h=round(sl, 2), drop=drop, kwh=round(kwh, 2) if kwh is not None else None,
+        idle.append(dict(place=a.get('place'), start=a['end_date'], end=b['start_date'], hours=round(hrs, 2), sleep_h=round(sl, 2), drop=drop, kwh=round(kwh, 2) if kwh is not None else None,
                          per_h=round(drop / hrs, 3), pct_sleep=round(sl / hrs * 100)))
     tot_h = sum(i['hours'] for i in idle)
     tot_drop = sum(i['drop'] for i in idle)
@@ -327,6 +329,47 @@ def sleep_report(car, days):
                 wakes=len([r for r in runs if r['s'] == 'awake']), short_wakes=len(short), short_med=round(sorted(short)[len(short) // 2], 1) if short else None,
                 idle=idle[::-1][:30], idle_hours=round(tot_h, 1), idle_drop=tot_drop, idle_kwh=round(tot_kwh, 1), per_h=round(tot_drop / tot_h, 3) if tot_h else None,
                 kwh_day=round(tot_kwh / (tot_h / 24), 2) if tot_h else None, by_day=[dict(day=k, pct=round(v / 864, 1)) for k, v in sorted(by_day.items())])
+
+
+def activity(car, days, limit):
+    """Cronologie unificata: curse, incarcari, stationari (>= 1 h), update-uri software, evenimente/automatizari din aplicatie."""
+    since = dt.datetime.utcnow() - dt.timedelta(days=days)
+    ev = []
+    for d in drives(car, 300, 0):
+        if _dtp(d['start_date']) >= since:
+            ev.append(dict(type='drive', t=d['start_date'], end=d['end_date'], id=d['id'], title='%s → %s' % (d['start_name'], d['end_name']),
+                           km=d['distance'], kwh=d['kwh'], soc0=d['start_soc'], soc1=d['end_soc']))
+    for c in _charges_rows(car, 300, 0):
+        if _dtp(c['start_date']) >= since:
+            ev.append(dict(type='charge', t=c['start_date'], end=c['end_date'], id=c['id'], title=c['name'], kwh=c['charge_energy_added'], soc0=c['start_soc'], soc1=c['end_soc'], dc=c['dc'], cost=c['cost']))
+    try:
+        for i in sleep_report(car, min(days, 30))['idle']:
+            if i['hours'] >= 1:
+                ev.append(dict(type='parked', t=i['start'], end=i['end'], title=i['place'] or '—', hours=i['hours'], drop=i['drop'], sleep_pct=i['pct_sleep'], kwh=i['kwh']))
+    except Exception as e:  # noqa
+        print('activity parked:', e, flush=True)
+    for u in q("select start_date, version from updates where car_id=%s and start_date > %s", (car, since)):
+        ev.append(dict(type='update', t=u['start_date'], title=u['version']))
+    with NLOCK:
+        app_ev = list(EVENTS)
+    for e in app_ev:
+        if _dtp(e['t']) >= since:
+            ev.append(dict(type='app', t=e['t'], title=e['title'], msg=e['msg'], kind=e['kind']))
+    ev.sort(key=lambda x: x['t'], reverse=True)
+    return ev[:limit]
+
+
+def demo_activity():
+    now = dt.datetime.utcnow()
+    ev = []
+    for d in DEMO['drives'][:12]:
+        ev.append(dict(type='drive', t=d['start_date'], end=d['end_date'], id=d['id'], title='%s → %s' % (d['start_name'], d['end_name']), km=d['distance'], kwh=d['kwh'], soc0=d['start_soc'], soc1=d['end_soc']))
+    for c in DEMO['charges'][:5]:
+        ev.append(dict(type='charge', t=c['start_date'], end=c['end_date'], id=c['id'], title=c['name'], kwh=c['charge_energy_added'], soc0=c['start_soc'], soc1=c['end_soc'], dc=c['dc'], cost=c['cost']))
+    ev.append(dict(type='update', t=(now - dt.timedelta(days=12)).isoformat(), title='2026.14.3'))
+    ev.append(dict(type='parked', t=(now - dt.timedelta(hours=20)).isoformat(), end=(now - dt.timedelta(hours=8)).isoformat(), title='Acasă', hours=12, drop=1, sleep_pct=78, kwh=0.6))
+    ev.sort(key=lambda x: x['t'], reverse=True)
+    return ev
 
 
 def battery_health(car):
@@ -1229,6 +1272,260 @@ def cfg_test(what):
     return dict(ok=False, msg='necunoscut')
 
 
+# ---------------------------------------------------------------- Profiler (flux live Fleet Telemetry: 200+ semnale, pe sesiuni scurte)
+PF_ALL = ['Unknown', 'DriveRail', 'ChargeState', 'BmsFullchargecomplete', 'VehicleSpeed', 'Odometer', 'PackVoltage', 'PackCurrent', 'Soc', 'DCDCEnable', 'Gear', 'IsolationResistance', 'PedalPosition', 'BrakePedal', 'DiStateR', 'DiHeatsinkTR', 'DiAxleSpeedR', 'DiTorquemotor', 'DiStatorTempR', 'DiVBatR', 'DiMotorCurrentR', 'Location', 'GpsState', 'GpsHeading', 'NumBrickVoltageMax', 'BrickVoltageMax', 'NumBrickVoltageMin', 'BrickVoltageMin', 'NumModuleTempMax', 'ModuleTempMax', 'NumModuleTempMin', 'ModuleTempMin', 'RatedRange', 'Hvil', 'DCChargingEnergyIn', 'DCChargingPower', 'ACChargingEnergyIn', 'ACChargingPower', 'ChargeLimitSoc', 'FastChargerPresent', 'EstBatteryRange', 'IdealBatteryRange', 'BatteryLevel', 'TimeToFullCharge', 'ScheduledChargingStartTime', 'ScheduledChargingPending', 'ScheduledDepartureTime', 'PreconditioningEnabled', 'ScheduledChargingMode', 'ChargeAmps', 'ChargeEnableRequest', 'ChargerPhases', 'ChargePortColdWeatherMode', 'ChargeCurrentRequest', 'ChargeCurrentRequestMax', 'BatteryHeaterOn', 'NotEnoughPowerToHeat', 'SuperchargerSessionTripPlanner', 'DoorState', 'Locked', 'FdWindow', 'FpWindow', 'RdWindow', 'RpWindow', 'VehicleName', 'SentryMode', 'SpeedLimitMode', 'CurrentLimitMph', 'Version', 'TpmsPressureFl', 'TpmsPressureFr', 'TpmsPressureRl', 'TpmsPressureRr', 'SemitruckTpmsPressureRe1L0', 'SemitruckTpmsPressureRe1L1', 'SemitruckTpmsPressureRe1R0', 'SemitruckTpmsPressureRe1R1', 'SemitruckTpmsPressureRe2L0', 'SemitruckTpmsPressureRe2L1', 'SemitruckTpmsPressureRe2R0', 'SemitruckTpmsPressureRe2R1', 'TpmsLastSeenPressureTimeFl', 'TpmsLastSeenPressureTimeFr', 'TpmsLastSeenPressureTimeRl', 'TpmsLastSeenPressureTimeRr', 'InsideTemp', 'OutsideTemp', 'SeatHeaterLeft', 'SeatHeaterRight', 'SeatHeaterRearLeft', 'SeatHeaterRearRight', 'SeatHeaterRearCenter', 'AutoSeatClimateLeft', 'AutoSeatClimateRight', 'DriverSeatBelt', 'PassengerSeatBelt', 'DriverSeatOccupied', 'SemitruckPassengerSeatFoldPosition', 'LateralAcceleration', 'LongitudinalAcceleration', 'Deprecated_2', 'CruiseSetSpeed', 'LifetimeEnergyUsed', 'LifetimeEnergyUsedDrive', 'SemitruckTractorParkBrakeStatus', 'SemitruckTrailerParkBrakeStatus', 'BrakePedalPos', 'RouteLastUpdated', 'RouteLine', 'MilesToArrival', 'MinutesToArrival', 'OriginLocation', 'DestinationLocation', 'CarType', 'Trim', 'ExteriorColor', 'RoofColor', 'ChargePort', 'ChargePortLatch', 'Experimental_1', 'Experimental_2', 'Experimental_3', 'Experimental_4', 'GuestModeEnabled', 'PinToDriveEnabled', 'PairedPhoneKeyAndKeyFobQty', 'CruiseFollowDistance', 'AutomaticBlindSpotCamera', 'BlindSpotCollisionWarningChime', 'SpeedLimitWarning', 'ForwardCollisionWarning', 'LaneDepartureAvoidance', 'EmergencyLaneDepartureAvoidance', 'AutomaticEmergencyBrakingOff', 'LifetimeEnergyGainedRegen', 'DiStateF', 'DiStateREL', 'DiStateRER', 'DiHeatsinkTF', 'DiHeatsinkTREL', 'DiHeatsinkTRER', 'DiAxleSpeedF', 'DiAxleSpeedREL', 'DiAxleSpeedRER', 'DiSlaveTorqueCmd', 'DiTorqueActualR', 'DiTorqueActualF', 'DiTorqueActualREL', 'DiTorqueActualRER', 'DiStatorTempF', 'DiStatorTempREL', 'DiStatorTempRER', 'DiVBatF', 'DiVBatREL', 'DiVBatRER', 'DiMotorCurrentF', 'DiMotorCurrentREL', 'DiMotorCurrentRER', 'EnergyRemaining', 'ServiceMode', 'BMSState', 'GuestModeMobileAccessState', 'Deprecated_1', 'DestinationName', 'DiInverterTR', 'DiInverterTF', 'DiInverterTREL', 'DiInverterTRER', 'Experimental_5', 'Experimental_6', 'Experimental_7', 'Experimental_8', 'Experimental_9', 'Experimental_10', 'Experimental_11', 'Experimental_12', 'Experimental_13', 'Experimental_14', 'Experimental_15', 'DetailedChargeState', 'CabinOverheatProtectionMode', 'CabinOverheatProtectionTemperatureLimit', 'CenterDisplay', 'ChargePortDoorOpen', 'ChargerVoltage', 'ChargingCableType', 'ClimateKeeperMode', 'DefrostForPreconditioning', 'DefrostMode', 'EfficiencyPackage', 'EstimatedHoursToChargeTermination', 'EuropeVehicle', 'ExpectedEnergyPercentAtTripArrival', 'FastChargerType', 'HomelinkDeviceCount', 'HomelinkNearby', 'HvacACEnabled', 'HvacAutoMode', 'HvacFanSpeed', 'HvacFanStatus', 'HvacLeftTemperatureRequest', 'HvacPower', 'HvacRightTemperatureRequest', 'HvacSteeringWheelHeatAuto', 'HvacSteeringWheelHeatLevel', 'OffroadLightbarPresent', 'PowershareHoursLeft', 'PowershareInstantaneousPowerKW', 'PowershareStatus', 'PowershareStopReason', 'PowershareType', 'RearDisplayHvacEnabled', 'RearSeatHeaters', 'RemoteStartEnabled', 'RightHandDrive', 'RouteTrafficMinutesDelay', 'SoftwareUpdateDownloadPercentComplete', 'SoftwareUpdateExpectedDurationMinutes', 'SoftwareUpdateInstallationPercentComplete', 'SoftwareUpdateScheduledStartTime', 'SoftwareUpdateVersion', 'TonneauOpenPercent', 'TonneauPosition', 'TonneauTentMode', 'TpmsHardWarnings', 'TpmsSoftWarnings', 'ValetModeEnabled', 'WheelType', 'WiperHeatEnabled', 'LocatedAtHome', 'LocatedAtWork', 'LocatedAtFavorite', 'SettingDistanceUnit', 'SettingTemperatureUnit', 'Setting24HourTime', 'SettingTirePressureUnit', 'SettingChargeUnit', 'ClimateSeatCoolingFrontLeft', 'ClimateSeatCoolingFrontRight', 'LightsHazardsActive', 'LightsTurnSignal', 'LightsHighBeams', 'MediaPlaybackStatus', 'MediaPlaybackSource', 'MediaAudioVolume', 'MediaNowPlayingDuration', 'MediaNowPlayingElapsed', 'MediaNowPlayingArtist', 'MediaNowPlayingTitle', 'MediaNowPlayingAlbum', 'MediaNowPlayingStation', 'MediaAudioVolumeIncrement', 'MediaAudioVolumeMax', 'SunroofInstalled', 'SeatVentEnabled', 'RearDefrostEnabled', 'ChargeRateMilePerHour', 'Deprecated_3', 'MilesSinceReset', 'SelfDrivingMilesSinceReset', 'GpsAccuracyMeters', 'LifetimeEnergyChargedKwh', 'BrickSocMinPercent', 'NominalFullPackEnergyKwh', 'GradeEstimatePercent', 'MaxSpeedToReachDestinationMph', 'SoftwareUpdateAvailable', 'SoftwareUpdateInProgress', 'RemoteStartActive', 'SemiCruiseSpeedLimitMph', 'Cabin12vPortKeepOn', 'Cabin48vPortKeepOn']
+PF_EXCLUDE = re.compile(r'^(Unknown|Experimental_|Deprecated_|Semitruck|Tonneau|Powershare|OffroadLightbar|Cabin12v|Cabin48v|SemiCruise|SuperchargerSessionTripPlanner)')
+PF_CATS = [
+    ('perf', re.compile(r'^(VehicleSpeed|Odometer|PedalPosition|BrakePedal|BrakePedalPos|Gear|Di[A-Z]\w*|LateralAcceleration|LongitudinalAcceleration|CruiseSetSpeed|CruiseFollowDistance|LifetimeEnergyUsed\w*|LifetimeEnergyGainedRegen|DriveRail|IsolationResistance|DCDCEnable|GradeEstimatePercent|SelfDrivingMilesSinceReset|MilesSinceReset|Hvil|EnergyRemaining)$')),
+    ('charge', re.compile(r'(Charg|^Soc$|BatteryLevel|Brick|Module|BatteryHeater|NotEnough|Bms|^Pack|EstBattery|IdealBattery|RatedRange|NominalFull|TimeToFull|Scheduled|Preconditioning|FastCharger|EstimatedHoursToCharge|^DC|^AC)')),
+    ('climate', re.compile(r'(Hvac|SeatHeater|SeatClimate|ClimateKeeper|CabinOverheat|Defrost|InsideTemp|OutsideTemp|SeatVent|ClimateSeatCooling|RearSeatHeaters|WiperHeat|RearDisplayHvac)')),
+    ('body', re.compile(r'(Door|Locked|Window|ChargePort|Light|Sunroof|CenterDisplay|RemoteStart|Homelink|VehicleName|CarType|Trim|ExteriorColor|RoofColor|WheelType|EfficiencyPackage|RightHandDrive|EuropeVehicle|Version|Setting)')),
+    ('safety', re.compile(r'(SentryMode|SeatBelt|SeatOccupied|Tpms|Collision|LaneDeparture|BlindSpot|AutomaticEmergency|SpeedLimit|CurrentLimit|GuestMode|PinToDrive|PairedPhone|ServiceMode|SoftwareUpdate|ValetMode)')),
+    ('nav', re.compile(r'(Location|Gps|Route|Destination|ToArrival|Media|ExpectedEnergyPercent|MaxSpeedToReach|LocatedAt|Origin)')),
+]
+PF_PROFILES = {
+    'performance': dict(ro='Performanță și condus', en='Performance & driving', cats=['perf']),
+    'charging': dict(ro='Încărcare și baterie', en='Charging & battery', cats=['charge']),
+    'climate': dict(ro='Climă', en='Climate', cats=['climate']),
+    'body': dict(ro='Caroserie și lumini', en='Body & lighting', cats=['body']),
+    'safety': dict(ro='Siguranță și securitate', en='Safety & security', cats=['safety']),
+    'nav': dict(ro='Navigație și media', en='Navigation & media', cats=['nav']),
+    'turbo': dict(ro='Turbo (tot)', en='Turbo (everything)', cats=['perf', 'charge', 'climate', 'body', 'safety', 'nav', 'other']),
+}
+MILES = {'VehicleSpeed', 'Odometer', 'RatedRange', 'IdealBatteryRange', 'EstBatteryRange', 'MilesSinceReset', 'SelfDrivingMilesSinceReset', 'MilesToArrival', 'CruiseSetSpeed',
+         'CurrentLimitMph', 'ChargeRateMilePerHour', 'MaxSpeedToReachDestinationMph'}
+
+
+def pf_cat(name):
+    for c, rx in PF_CATS:
+        if rx.search(name):
+            return c
+    return 'other'
+
+
+def pf_unit(name):
+    if name in MILES:
+        return 'km/h' if name in ('VehicleSpeed', 'CruiseSetSpeed', 'CurrentLimitMph', 'MaxSpeedToReachDestinationMph', 'ChargeRateMilePerHour') else 'km'
+    for rx, u in ((r'Temp|Heatsink', '°C'), (r'Voltage|VBat', 'V'), (r'Current|Amps', 'A'), (r'Pressure', 'bar'), (r'Kwh|EnergyIn|EnergyUsed|EnergyGained|EnergyRemaining', 'kWh'),
+                  (r'Percent|^Soc$|BatteryLevel|ChargeLimitSoc|SocMin', '%'), (r'Power', 'kW'), (r'Acceleration', 'm/s²'), (r'Torque', 'Nm'), (r'Heading', '°'), (r'Resistance', 'kΩ'), (r'Minutes', 'min')):
+        if re.search(rx, name):
+            return u
+    return ''
+
+
+PF_META = {n: dict(cat=pf_cat(n), unit=pf_unit(n), miles=n in MILES) for n in PF_ALL if not PF_EXCLUDE.search(n)}
+PF = dict(values={}, hist={}, log=[], session=None, clients=set(), lock=threading.Lock(), last_rx=0.0, sim=False)
+PFILE = '/data/profiler.json'
+
+
+def pf_fields(profile):
+    cats = PF_PROFILES[profile]['cats']
+    return [n for n, m in PF_META.items() if m['cat'] in cats]
+
+
+def pf_norm(v):
+    """Valoare decodata din record -> (numar | text). Obiecte cu un singur camp se aplatizeaza (ex. SentryMode)."""
+    if isinstance(v, dict):
+        if len(v) == 1:
+            v = next(iter(v.values()))
+        else:
+            return {k: (round(x, 6) if isinstance(x, float) else x) for k, x in v.items()}
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return round(v, 4) if isinstance(v, float) else v
+    return str(v)
+
+
+def pf_ingest(records):
+    now = time.time()
+    batch = {}
+    with PF['lock']:
+        for rec in records[:200]:
+            d = rec.get('data') if isinstance(rec, dict) else None
+            if not isinstance(d, dict):
+                continue
+            for k, v in d.items():
+                if k in ('CreatedAt', 'IsResend', 'Vin') or k not in PF_META:
+                    continue
+                v = pf_norm(v)
+                if PF_META[k]['miles'] and isinstance(v, (int, float)):
+                    v = round(v * 1.609344, 2)
+                PF['values'][k] = (v, now)
+                batch[k] = v
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    h = PF['hist'].setdefault(k, [])
+                    h.append((now, v))
+                    del h[:-600]
+                if PF['session']:
+                    PF['log'].append((now, k, v))
+                    del PF['log'][:-300000]
+        PF['last_rx'] = now
+    if batch:
+        pf_broadcast(dict(t=now, d=batch))
+
+
+def pf_broadcast(msg):
+    for q_ in list(PF['clients']):
+        try:
+            q_.put_nowait(msg)
+        except queue.Full:
+            pass
+
+
+def pf_status():
+    se = PF['session']
+    return dict(active=bool(se), session=se, last_rx=PF['last_rx'], sim=PF['sim'], fields=len(PF_META),
+                profiles={k: dict(ro=v['ro'], en=v['en'], count=len(pf_fields(k))) for k, v in PF_PROFILES.items()})
+
+
+def pf_session_load():
+    try:
+        PF['session'] = json.load(open(PFILE)).get('session')
+    except Exception:
+        PF['session'] = None
+
+
+def pf_session_save():
+    try:
+        json.dump(dict(session=PF['session']), open(PFILE, 'w'))
+    except Exception as e:  # noqa
+        print('profiler save:', e, flush=True)
+
+
+def pf_cfg_get(vin):
+    c, r = vehicle_call(vin, 'fleet_telemetry_config', method='GET')
+    resp = r.get('response') or {}
+    return (resp.get('config') if c == 200 else None), resp, c
+
+
+def pf_cfg_post(vin, cfg):
+    cfg = {k: v for k, v in cfg.items() if k not in ('iss', 'aud')}
+    c, r = http(FL['proxy'] + '/api/1/vehicles/fleet_telemetry_config', {'config': cfg, 'vins': [vin]}, headers={'Authorization': 'Bearer ' + access_token()}, ctx=proxy_ctx(), timeout=40)
+    resp = r.get('response') or {}
+    ok = c == 200 and resp.get('updated_vehicles', 0) >= 1
+    return ok, (resp.get('skipped_vehicles') or r.get('error') or r.get('raw') or resp or r)
+
+
+def pf_start(car, profile, minutes):
+    if profile not in PF_PROFILES:
+        raise ValueError('profil necunoscut')
+    minutes = int(max(1, min(minutes, 30)))
+    if PF['session']:
+        raise RuntimeError('Există deja o sesiune activă — oprește-o mai întâi.')
+    if not (PF['sim'] or DEMO_ONLY) and not has_cars():
+        PF['sim'] = True
+    names = pf_fields(profile)
+    if PF['sim'] or DEMO_ONLY:
+        PF['session'] = dict(profile=profile, started=time.time(), until=time.time() + minutes * 60, fields=len(names), sim=True)
+        PF['values'].clear(); PF['hist'].clear(); PF['log'].clear()
+        threading.Thread(target=pf_simulate, args=(profile,), daemon=True).start()
+        pf_broadcast(dict(status=pf_status()))
+        return dict(ok=True, sim=True, fields=len(names))
+    vin = vin_for(car)
+    if not vin:
+        raise RuntimeError('Nu există VIN în TeslaMate.')
+    base, resp, code = pf_cfg_get(vin)
+    if not base:
+        raise RuntimeError('Nu pot citi configurația de telemetrie a mașinii (%s). Telemetria trebuie configurată întâi (hostname/ca).' % code)
+    try:
+        json.dump(base, open('/data/profiler_base.json', 'w'))        # configuratia de dinainte (Sentry), la care se revine la oprire
+    except Exception as e:  # noqa
+        print('profiler base save:', e, flush=True)
+    fields = {n: {'interval_seconds': 1} for n in names}
+    fields['SentryMode'] = {'interval_seconds': 1}                      # alerta Sentry ramane activa
+    dropped = []
+    for _ in range(80):                     # Tesla refuza campurile problematice pe rand: corectam automat (delta minim / scope lipsa / camp neacceptat)
+        ok, info = pf_cfg_post(vin, dict(base, fields=fields))
+        if ok:
+            break
+        msg = info if isinstance(info, str) else json.dumps(info)
+        m = re.match(r'^"?(\w+) requires minimum delta', msg)
+        if m and m.group(1) in fields:
+            fields[m.group(1)]['minimum_delta'] = 1
+            continue
+        if 'missing scopes vehicle_location' in msg:
+            loc = [n for n in fields if re.search(r'Location|Gps|Route|Destination|Origin|LocatedAt|GradeEstimate|MinutesToArrival|MilesToArrival', n)]
+            if loc:
+                for n in loc:
+                    fields.pop(n)
+                dropped += loc
+                continue
+        m = re.match(r'^"?(\w+) (is not|not supported|unsupported|invalid)', msg)
+        if m and m.group(1) in fields and m.group(1) != 'SentryMode':
+            fields.pop(m.group(1))
+            dropped.append(m.group(1))
+            continue
+        raise RuntimeError('Tesla a refuzat configurația: %s' % msg[:400])
+    else:
+        raise RuntimeError('Tesla a refuzat configurația (prea multe corecturi).')
+    PF['session'] = dict(profile=profile, started=time.time(), until=time.time() + minutes * 60, fields=len(fields), vin_tail=vin[-4:], dropped=dropped[:60])
+    PF['values'].clear(); PF['hist'].clear(); PF['log'].clear()
+    pf_session_save()
+    pf_broadcast(dict(status=pf_status()))
+    return dict(ok=True, fields=len(fields))
+
+
+def pf_stop(car=1, reason=''):
+    se = PF['session']
+    if not se:
+        return dict(ok=True, was_active=False)
+    err = ''
+    if not se.get('sim'):
+        try:
+            vin = vin_for(car)
+            base = json.load(open('/data/profiler_base.json'))
+            ok, info = pf_cfg_post(vin, base)
+            if not ok:
+                err = 'Revenirea la configurația Sentry a eșuat: %s' % json.dumps(info)[:300]
+        except Exception as e:  # noqa
+            err = 'Revenirea la configurația Sentry a eșuat: %s' % e
+    if not err:
+        PF['session'] = None
+        pf_session_save()
+    PF['sim'] = False if not DEMO_ONLY and has_cars() else PF['sim']
+    pf_broadcast(dict(status=pf_status()))
+    return dict(ok=not err, reason=err, was_active=True)
+
+
+def pf_watch():
+    """Opreste automat sesiunea la expirare (si readuce configuratia Sentry)."""
+    while True:
+        time.sleep(15)
+        try:
+            se = PF['session']
+            if se and time.time() > se['until']:
+                print('profiler: auto-stop', flush=True)
+                pf_stop(1, 'timp expirat')
+        except Exception as e:  # noqa
+            print('profiler watch:', e, flush=True)
+
+
+def pf_simulate(profile):
+    """Date fictive pentru demo / fara masina: mers aleator pe campurile profilului."""
+    r = random.Random(11)
+    names = pf_fields(profile)
+    state = {n: r.uniform(20, 80) for n in names}
+    while PF['session'] and PF['session'].get('sim'):
+        recs = {}
+        for n in names:
+            m = PF_META[n]
+            state[n] += r.uniform(-1.2, 1.2)
+            recs[n] = (round(state[n], 2) if m['unit'] else ('Armed' if r.random() > .5 else 'Off')) if not m['unit'] == '' or n.endswith('State') else r.choice(['On', 'Off', 'Idle'])
+        pf_ingest([dict(data=recs)])
+        time.sleep(1)
+
+
+def pf_csv():
+    import io, csv
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(['time_utc', 'field', 'value'])
+    for t, k, v in PF['log']:
+        w.writerow([dt.datetime.utcfromtimestamp(t).isoformat(timespec='milliseconds'), k, v])
+    return out.getvalue()
+
+
 # ---------------------------------------------------------------- notificari (cablu, incarcare gata, usi) -> telefon prin webhook Home Assistant + istoric in aplicatie
 NFILE = '/data/notify.json'
 NHOOK = os.environ.get('NOTIFY_WEBHOOK', '')
@@ -1615,6 +1912,17 @@ class H(BaseHTTPRequestHandler):
                 return self.send_json(d)
             if p == '/api/stream':
                 return self.stream()
+            if p == '/api/profiler/stream':
+                return self.stream(PF['clients'])
+            if p == '/api/profiler/export.csv':
+                b = pf_csv().encode()
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/csv; charset=utf-8')
+                self.send_header('Content-Disposition', 'attachment; filename="profiler.csv"')
+                self.send_header('Content-Length', str(len(b)))
+                self.end_headers()
+                self.wfile.write(b)
+                return
             if p.startswith('/api/fleet/') and DEMO_ONLY:
                 return self.send_json(dict(error='disabled in demo'), 404)
             if p == '/api/fleet/status':
@@ -1634,6 +1942,23 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         u = urlparse(self.path)
+        if u.path == '/api/profiler/ingest':
+            tok = os.environ.get('INGEST_TOKEN', '')
+            if not tok or not secrets.compare_digest(self.headers.get('X-Ingest-Token', ''), tok):
+                return self.send_json(dict(ok=False), 401)
+            try:
+                n = int(self.headers.get('Content-Length') or 0)
+                pf_ingest((json.loads(self.rfile.read(min(n, 2_000_000)) or b'{}')).get('records') or [])
+            except Exception as e:  # noqa
+                return self.send_json(dict(ok=False, error=str(e)), 400)
+            return self.send_json(dict(ok=True))
+        if DEMO_ONLY and u.path in ('/api/profiler/start', '/api/profiler/stop'):
+            try:
+                n = int(self.headers.get('Content-Length') or 0)
+                body = json.loads(self.rfile.read(n) or b'{}') if n else {}
+                return self.send_json(pf_start(1, body.get('profile'), body.get('minutes', 5)) if u.path.endswith('start') else pf_stop())
+            except Exception as e:  # noqa
+                return self.send_json(dict(ok=False, reason=str(e)), 400)
         if DEMO_ONLY:
             return self.send_json(dict(ok=False, reason='demo'), 403)
         if u.path == '/login':
@@ -1666,6 +1991,10 @@ class H(BaseHTTPRequestHandler):
             name = u.path.rsplit('/', 1)[1] if u.path.startswith('/api/cmd/') else ''
             if self.role == 'viewer' or (self.role == 'family' and (name not in FAMILY_OK)):
                 return self.send_json(dict(ok=False, reason='Nu ai permisiunea pentru această acțiune (rol: %s).' % self.role), 403)
+            if u.path == '/api/profiler/start':
+                return self.send_json(pf_start(int(body.get('car', 1)), body.get('profile'), body.get('minutes', 5)))
+            if u.path == '/api/profiler/stop':
+                return self.send_json(pf_stop(int(body.get('car', 1))))
             if u.path == '/api/rules':
                 rs = rules_load()
                 if body.get('delete'):
@@ -1711,6 +2040,8 @@ class H(BaseHTTPRequestHandler):
         if p == '/api/sleep':
             n = max(1, min(int(a.get('days', 7)), 60))
             return demo_sleep(n) if demo else sleep_report(car, n)
+        if p == '/api/activity':
+            return demo_activity() if demo else activity(car, min(int(a.get('days', 30)), 90), min(int(a.get('limit', 120)), 300))
         if p == '/api/health_battery':
             return demo_health() if demo else battery_health(car)
         if p.startswith('/api/charge_solar/'):
@@ -1719,6 +2050,8 @@ class H(BaseHTTPRequestHandler):
             return dict(rear_seats=True) if demo else caps_infer(car)
         if p == '/api/vdata':
             return DEMO_VD if demo else vehicle_data(car, a.get('force') == '1')
+        if p == '/api/profiler':
+            return dict(pf_status(), meta=PF_META, values={k: [v[0], v[1]] for k, v in PF['values'].items()}, hist={k: [x[1] for x in v[-120:]] for k, v in PF['hist'].items()})
         if p == '/api/config':
             if self.role != 'admin':
                 return dict(error='forbidden')
@@ -1742,10 +2075,11 @@ class H(BaseHTTPRequestHandler):
             return dict(events=ev, settings=nset_load(), hook=bool(NHOOK))
         return dict(error='not found')
 
-    def stream(self):
+    def stream(self, group=None):
+        group = CLIENTS if group is None else group
         qu = queue.Queue(maxsize=500)
         with CLOCK:
-            CLIENTS.add(qu)
+            group.add(qu)
         self.send_response(200)
         self.send_header('Content-Type', 'text/event-stream')
         self.send_header('Cache-Control', 'no-store')
@@ -1765,7 +2099,7 @@ class H(BaseHTTPRequestHandler):
             pass
         finally:
             with CLOCK:
-                CLIENTS.discard(qu)
+                group.discard(qu)
 
     def static(self, p):
         if p in ('/', ''):
@@ -1834,11 +2168,13 @@ def serve_public():
 
 cfg_load()
 apply_config()
+pf_session_load()
 
 
 if __name__ == '__main__':
     if not DEMO_ONLY:
         threading.Thread(target=mqtt_thread, daemon=True).start()
         threading.Thread(target=rules_clock, daemon=True).start()
+        threading.Thread(target=pf_watch, daemon=True).start()
         threading.Thread(target=serve_public, daemon=True).start()
     ThreadingHTTPServer(('0.0.0.0', PORT), H).serve_forever()

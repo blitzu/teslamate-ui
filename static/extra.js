@@ -142,7 +142,7 @@ async function afterNotif() {
   setHtml(box, `<div class="card">${sw('n_plugged', st.plugged, tr('Cablu conectat'))}${sw('n_charge_done', st.charge_done, tr('Încărcare terminată'))}${sw('n_door', st.door, tr('Ușă / portbagaj deschise'))}${sw('n_update', st.update, X('Update software disponibil', 'Software update available'))}${sw('n_low_batt', st.low_batt, X('Baterie sub 20% la parcare', 'Battery below 20% while parked'))}
     ${n.hook ? '' : `<p class="note" style="margin:8px 0 0">${X('Telefonul nu e legat încă (lipsește NOTIFY_WEBHOOK) — notificările apar doar aici.', 'Phone not linked yet (NOTIFY_WEBHOOK missing) — notifications only show here.')}</p>`}
     <div class="links"><a href="#" id="ntest">${tr('Trimite test')}</a></div>
-    <div id="nlist">${(n.events || []).slice(0, 8).map((e) => `<div class="row nrow"><div><b>${esc(e.title)}</b><small>${esc(e.msg)}</small></div><div class="sp"></div><span class="mut" style="font-size:11.5px">${ago(e.t)}</span></div>`).join('') || `<p class="note" style="margin:8px 0 0">${tr('Nicio notificare încă.')}</p>`}</div></div>`);
+    <div id="nlist">${(n.events || []).slice(0, 40).map((e) => `<div class="row nrow"><div><b>${esc(e.title)}</b><small>${esc(e.msg)}</small></div><div class="sp"></div><span class="mut" style="font-size:11.5px">${ago(e.t)}</span></div>`).join('') || `<p class="note" style="margin:8px 0 0">${tr('Nicio notificare încă.')}</p>`}</div></div>`);
   ['plugged', 'charge_done', 'door', 'update', 'low_batt'].forEach((k) => { const e = $('#n_' + k); if (e) e.onchange = () => fetch('/api/notify/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [k]: e.checked }) }); });
   const t = $('#ntest'); if (t) t.onclick = async (ev) => { ev.preventDefault(); await fetch('/api/notify/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); setTimeout(afterNotif, 400); };
 }
@@ -464,10 +464,9 @@ async function pageSleep() {
   const ticks = [0, 12, 24, 36, 48].map((h) => { const ms = t0 + h * 3600e3; return `<text x="${x(ms)}" y="${H - 2}" text-anchor="middle">${new Date(ms).toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' })}</text>`; }).join('');
   const tl = `<svg viewBox="0 0 ${W} ${H}">${rects}${ticks}</svg><div class="legend"><span><i style="background:#7aa8ff"></i>${X('Doarme', 'Asleep')}</span><span><i style="background:#d9ba80"></i>${X('Trează', 'Awake')}</span></div>`;
   const hint = z.short_wakes >= 4 ? `<div class="card hint"><b>${X('Tipar de treziri scurte', 'Short-wake pattern')}</b><p>${X(`${z.short_wakes} treziri de ~${z.short_med} min în ${z.days} zile (între 8 și 16 min). Treziri periodice regulate arată de obicei un client care „bătătorește" mașina (BLE, telemetrie, o aplicație sau un accesoriu) — nu mașina singură.`, `${z.short_wakes} wakes of ~${z.short_med} min in ${z.days} days (8–16 min). Regular periodic wakes usually mean a client polling the car (BLE, telemetry, an app or an accessory) rather than the car itself.`)}</p></div>` : '';
-  const idle = z.idle.map((i) => `<div class="item" style="cursor:default"><div class="t"><span>${new Date(T(i.start)).toLocaleDateString(LOC(), { day: 'numeric', month: 'short' })} ${tm(i.start)} → ${tm(i.end)}</span></div>
+  const idle = z.idle.map((i) => `<div class="item" style="cursor:default"><div class="t"><span>${esc(i.place || '—')}</span></div><div class="m"><span>${new Date(T(i.start)).toLocaleDateString(LOC(), { day: 'numeric', month: 'short' })} ${tm(i.start)} → ${tm(i.end)}</span></div>
     <div class="m"><span><b>${hm(i.hours * 60)}</b></span><span>${X('somn ', 'sleep ')}<b>${i.pct_sleep}%</b></span><span><b>${i.drop > 0 ? '−' : '+'}${nf(Math.abs(i.drop))}%</b></span><span>${i.kwh != null ? '<b>' + nf(i.kwh, 1) + '</b> kWh' : ''}</span><span>${nf(i.per_h * 100 / 100, 2)} %/h</span></div></div>`).join('') || `<div class="mut" style="font-size:13px;padding:8px 0">${X('Nicio perioadă în repaus în acest interval.', 'No idle periods in this range.')}</div>`;
-  return `<a class="back" href="#/car">‹ ${tr('Mașină')}</a>
-  <div class="top"><h1>${X('Somn și consum în repaus', 'Sleep & idle drain')}</h1><small>${X('offline din TeslaMate = adormită', 'TeslaMate offline = asleep')}</small></div>
+  return `<div class="top"><h1>${X('Staționări', 'Parked')}</h1><small>${X('offline din TeslaMate = adormită', 'TeslaMate offline = asleep')}</small></div>
   <div class="seg">${[3, 7, 14, 30].map((n) => `<button data-sd="${n}" class="${n === sleepDays ? 'on' : ''}">${n} ${X('zile', 'days')}</button>`).join('')}</div>
   <h2>${X('Rezumat', 'Summary')}</h2><div class="grid">${stat(X('Somn', 'Sleep'), nf(z.sleep_pct, 1), '%')}${stat(X('Ore dormite', 'Hours asleep'), nf(z.sleep_h, 1), 'h')}${stat(X('Treziri', 'Wakes'), nf(z.wakes))}${stat(X('Consum în repaus', 'Idle drain'), z.per_h != null ? nf(z.per_h, 2) : '—', '%/h')}${stat(X('Energie în repaus', 'Idle energy'), z.kwh_day != null ? nf(z.kwh_day, 2) : '—', 'kWh/' + X('zi', 'day'))}${stat(X('Pierdut total', 'Total lost'), nf(z.idle_drop), '%')}</div>
   ${hint}
@@ -540,8 +539,7 @@ async function pageAuto() {
     <label class="sw" style="padding:0"><input type="checkbox" data-rt="${r.id}" ${r.enabled ? 'checked' : ''}><i></i></label><button class="x" data-rd="${r.id}" style="margin-left:10px">✕</button></div>`).join('') || `<div class="mut" style="font-size:13px">${X('Nicio automatizare încă.', 'No automations yet.')}</div>`;
   const fg = d.geofences.map((g) => `<option>${esc(g)}</option>`).join('');
   const log = d.log.map((l) => `<div class="row nrow"><div><b style="color:${l.ok ? 'var(--mint)' : '#ffb3b3'}">${esc(l.msg)}</b></div><div class="sp"></div><span class="mut" style="font-size:11.5px">${ago(l.t)}</span></div>`).join('') || `<p class="note" style="margin:0">${X('Nicio execuție încă.', 'No runs yet.')}</p>`;
-  return `<a class="back" href="#/car">‹ ${tr('Mașină')}</a>
-  <div class="top"><h1>${X('Automatizări', 'Automations')}</h1><small>${X('Rulează pe server, fără PIN — activează doar ce vrei. Comenzile merg prin BLE când e disponibil, altfel prin Tesla.', 'Run on the server without a PIN — enable only what you want. Commands go via BLE when available, otherwise via Tesla.')}</small></div>
+  return `<div class="top"><h1>${X('Automatizare', 'Automation')}</h1><small>${X('Rulează pe server, fără PIN — activează doar ce vrei. Comenzile merg prin BLE când e disponibil, altfel prin Tesla.', 'Run on the server without a PIN — enable only what you want. Commands go via BLE when available, otherwise via Tesla.')}</small></div>
   <div class="card">${list}</div>
   <h2>${X('Adaugă', 'Add')}</h2>
   <div class="card"><div class="addf"><label>${X('Tip', 'Type')}<select id="rtype"><option value="arrive_gate">${X('Deschide poarta la sosire', 'Open gate on arrival')}</option><option value="plug_limit">${X('Limită la conectarea cablului', 'Charge limit when plugging in')}</option><option value="depart_climate">${X('Clima înainte de plecare', 'Pre-departure climate')}</option></select></label></div>
@@ -651,4 +649,178 @@ function afterSettings() {
     const [ok, j] = await call('/api/config/test', { what: k }, k);
     say(k, (j.ok ? '✓ ' : '✗ ') + (j.msg || j.reason || ''), j.ok ? 'ok' : 'bad');
   });
+}
+
+/* ---------- MENIU (ca in Tessie) + pagini noi: Activitate, Starea bateriei, Notificari, Profiler ---------- */
+const NAVI = {
+  car: 'M5 11l1.6-4.4A2 2 0 0 1 8.5 5.3h7a2 2 0 0 1 1.9 1.3L19 11M4 11h16v6H4zM7 17v2M17 17v2M7.5 14h.01M16.5 14h.01',
+  route: 'M6 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM18 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM8 18h7a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h7',
+  bolt: 'M13 3L5 14h6l-1 7 8-11h-6z',
+  parking: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM10 17V8h3a2.6 2.6 0 0 1 0 5.2h-3',
+  history: 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7.5V12l3 2',
+  heart: 'M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 5.6-7 10-7 10zM7 12.5h3l1.5-3 2 5 1.5-2H17',
+  wand: 'M15 4l1 2 2 1-2 1-1 2-1-2-2-1 2-1zM4 20L14 10M12.5 8.5l3 3M5 6l.7 1.3L7 8l-1.3.7L5 10l-.7-1.3L3 8l1.3-.7z',
+  bell: 'M6 17v-6a6 6 0 0 1 12 0v6l2 2H4zM10 21h4',
+  gauge: 'M4 18a9 9 0 1 1 16 0M12 14l4-5M12 18h.01',
+  info: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 11v5M12 8h.01',
+  gear: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z',
+};
+const MENU = [['car', 'Bord', 'Dashboard', 'car'], ['drives', 'Trasee', 'Drives', 'route'], ['charges', 'Încărcări', 'Charges', 'bolt'], ['parked', 'Staționări', 'Parked', 'parking'],
+  ['activity', 'Activitate', 'Activity', 'history'], ['battery', 'Starea bateriei', 'Battery health', 'heart'], ['auto', 'Automatizare', 'Automation', 'wand'],
+  ['notifications', 'Notificări', 'Notifications', 'bell'], ['profiler', 'Profiler', 'Profiler', 'gauge']];
+const nicon = (k) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${NAVI[k]}"/></svg>`;
+function carLabel(c) { if (!c) return 'Tesla'; const mn = String(c.marketing_name || ''); return (/model|cyber|semi/i.test(mn) ? mn : 'Model ' + (c.model || '')).replace(/\s*(Highland|Juniper).*/i, '').trim() || 'Tesla'; }
+function drawNav(active) {
+  const c = cur();
+  const nav2 = document.getElementById('nav'); if (!nav2) return;
+  nav2.innerHTML = `<div class="sb-top"><div class="sb-logo"><svg viewBox="0 0 24 24"><path d="${NAVI.car}"/></svg><span>TESLAMATE UI</span></div></div>
+    <button class="sb-car" id="sbcar" title="${X('Detalii mașină', 'Car details')}"><span>${esc(carLabel(c))}</span>${nicon('info')}</button>
+    <div class="sb-menu">${MENU.map(([k, ro, en, ic]) => `<a href="#/${k}" class="${active === k ? 'on' : ''}">${nicon(ic)}<span>${X(ro, en)}</span></a>`).join('')}</div>
+    <div class="sb-foot"><a href="#/settings" class="${active === 'settings' ? 'on' : ''}">${nicon('gear')}<span>${X('Setări', 'Settings')}</span></a>
+      <div class="sb-lang"><button data-lang="ro" class="${LANG === 'ro' ? 'on' : ''}">RO</button><button data-lang="en" class="${LANG === 'en' ? 'on' : ''}">EN</button></div></div>`;
+  nav2.querySelectorAll('[data-lang]').forEach((b) => b.onclick = () => { LANG = b.dataset.lang; try { localStorage.setItem('lang', LANG); } catch (x) { /* ignore */ } document.documentElement.lang = LANG; render(); });
+  nav2.querySelectorAll('a').forEach((a) => a.addEventListener('click', () => document.body.classList.remove('nav-open')));
+  const sc = document.getElementById('sbcar'); if (sc) sc.onclick = carInfo;
+  const tt = document.getElementById('tbtitle'), cur2 = MENU.find((m) => m[0] === active);
+  if (tt) tt.textContent = cur2 ? X(cur2[1], cur2[2]) : (active === 'settings' ? X('Setări', 'Settings') : carLabel(c));
+}
+function carInfo() {
+  const c = cur(); if (!c) return; const L = c.live || {};
+  const row = (k, v) => v == null || v === '' ? '' : `<div class="row" style="padding:7px 0;border-bottom:1px solid var(--line)"><span class="mut">${k}</span><div class="sp"></div><b>${esc(String(v))}</b></div>`;
+  const m = document.createElement('div'); m.className = 'modal';
+  m.innerHTML = `<div class="modal-card"><button class="rp-cx" aria-label="close">✕</button><h2 style="margin:0 0 8px;text-transform:none;letter-spacing:0;font-size:20px;color:var(--tx)">${esc(c.name || carLabel(c))}</h2>
+    ${row(X('Model', 'Model'), c.marketing_name || ('Model ' + (c.model || '')))}${row(X('Versiune', 'Trim'), c.trim)}${row(X('Culoare', 'Colour'), c.color)}${row(X('Jante', 'Wheels'), c.wheel_type)}
+    ${row('VIN', c.vin ? '…' + String(c.vin).slice(-8) : '')}${row('Software', L.version)}${row(X('Odometru', 'Odometer'), L.odometer != null ? nf(L.odometer) + ' km' : '')}${row(X('Eficiență de referință', 'Reference efficiency'), c.efficiency != null ? nf(c.efficiency * 1000) + ' Wh/km' : '')}</div>`;
+  m.onclick = (e) => { if (e.target === m || e.target.classList.contains('rp-cx')) m.remove(); };
+  document.body.appendChild(m);
+}
+
+/* ---------- Activitate (cronologie + statistici) ---------- */
+let actMode = 'feed';
+async function pageActivity() {
+  const head = `<div class="top"><h1>${X('Activitate', 'Activity')}</h1></div><div class="seg"><button data-am="feed" class="${actMode === 'feed' ? 'on' : ''}">${X('Cronologie', 'Timeline')}</button><button data-am="stats" class="${actMode === 'stats' ? 'on' : ''}">${X('Statistici', 'Statistics')}</button></div>`;
+  if (actMode === 'stats') return head + await statsBody(true);
+  const ev = await api('/api/activity?car=' + car + '&days=30&limit=150');
+  const ICN = { drive: ['route', '#7aa8ff'], charge: ['bolt', '#d9ba80'], parked: ['parking', '#8f99a4'], update: ['info', '#b69bff'], app: ['bell', '#6fd6b8'] };
+  let last = '', html = '';
+  ev.forEach((e) => {
+    const k = dayKey(e.t); if (k !== last) { html += `<div class="day"><span>${dayLabel(k)}</span><span></span></div>`; last = k; }
+    const [ic, col] = ICN[e.type] || ICN.app;
+    const meta = e.type === 'drive' ? `${nf(e.km, 1)} km · ${nf(e.kwh, 1)} kWh · ${nf(e.soc0)}% → ${nf(e.soc1)}% · ${tm(e.t)}–${tm(e.end)}`
+      : e.type === 'charge' ? `+${nf(e.kwh, 1)} kWh · ${nf(e.soc0)}% → ${nf(e.soc1)}% · ${e.dc ? 'DC' : 'AC'} · ${tm(e.t)}–${tm(e.end)}${e.cost ? ' · ' + nf(e.cost, 2) + ' lei' : ''}`
+      : e.type === 'parked' ? `${hm(e.hours * 60)} · ${X('somn', 'sleep')} ${e.sleep_pct}% · ${e.drop > 0 ? '−' : '+'}${nf(Math.abs(e.drop))}% · ${tm(e.t)}–${tm(e.end)}`
+      : e.type === 'update' ? X('Actualizare software instalată', 'Software update installed') : esc(e.msg || '');
+    const href = e.type === 'drive' ? `#/drive/${e.id}` : e.type === 'charge' ? `#/charge/${e.id}` : e.type === 'parked' ? '#/parked' : '#';
+    html += `<a class="item act-i" href="${href}"><div class="t"><span class="ai" style="color:${col}">${nicon(ic)}</span><span>${esc(e.title)}</span></div><div class="m"><span>${meta}</span></div></a>`;
+  });
+  return head + (html || `<div class="empty">${X('Nimic înregistrat încă.', 'Nothing recorded yet.')}</div>`);
+}
+function afterActivity() { view.querySelectorAll('[data-am]').forEach((b) => b.onclick = () => { actMode = b.dataset.am; render(); }); view.querySelectorAll('[data-d]').forEach((b) => b.onclick = () => { days = +b.dataset.d; render(); }); }
+
+/* ---------- Starea bateriei ---------- */
+async function pageBattery() {
+  const b = await api('/api/battery?car=' + car);
+  return `<div class="top"><h1>${X('Starea bateriei', 'Battery health')}</h1></div>
+  ${healthShellBody()}
+  <h2>${X('Autonomie la 100%', 'Range at 100%')}</h2>${sec(X('Autonomie estimată la 100% (km)', 'Estimated range at 100% (km)'), line(b.range100.map((x) => [+new Date(x.week), x.range100]), { color: '#6fd6b8', dec: 0 }))}
+  <p class="note" style="margin-top:6px">${X('Calculată din autonomia ideală raportată la nivelul bateriei; scăderea lentă în timp indică degradarea.', 'Computed from ideal range reported against battery level; a slow decline over time indicates degradation.')}</p>
+  ${b.updates.length ? `<h2>${X('Actualizări software', 'Software updates')}</h2><div class="card">${b.updates.map((u) => `<div class="row" style="padding:5px 0"><b>${esc(u.version)}</b><div class="sp"></div><span class="mut">${T(u.start_date).toLocaleDateString(LOC(), { day: 'numeric', month: 'long', year: 'numeric' })}</span></div>`).join('')}</div>` : ''}`;
+}
+function healthShellBody() { return `<div id="bhealth"><div class="mut" style="font-size:13px">…</div></div>`; }
+
+/* ---------- Notificari ---------- */
+function pageNotif() { return `<div class="top"><h1>${X('Notificări', 'Notifications')}</h1><small>${X('Evenimente trimise pe telefon (webhook) și păstrate aici.', 'Events sent to your phone (webhook) and kept here.')}</small></div><div id="notif" style="margin-top:12px"></div>`; }
+
+/* ---------- PROFILER ---------- */
+let PFS = null, PFES = null, PFSEL = 'charging', PFMIN = 10, PFFILTER = '', PFOPEN = new Set(), PFTICK = 0;
+const pfDescAll = () => ({ performance: X('Viteză, accelerație, motoare, cuplu, temperaturi invertor', 'Speed, acceleration, motors, torque, inverter temperatures'), charging: X('Putere, tensiune, curent, celule, temperatură baterie', 'Power, voltage, current, cells, battery temperature'),
+  climate: X('Temperaturi, HVAC, scaune, dezghețare', 'Temperatures, HVAC, seats, defrost'), body: X('Uși, geamuri, lumini, port de încărcare', 'Doors, windows, lights, charge port'), safety: X('Sentry, centuri, presiune roți, avertizări', 'Sentry, belts, tyre pressure, warnings'),
+  nav: X('GPS, traseu, destinație, media', 'GPS, route, destination, media'), turbo: X('Toate semnalele, flux rapid', 'All signals, fast feed') });
+const pfLabel = (n) => n.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/^Di /, 'DI ').replace(/\bFl\b/, 'FL').replace(/\bFr\b/, 'FR').replace(/\bRl\b/, 'RL').replace(/\bRr\b/, 'RR');
+function pfFmt(n, v) {
+  if (v === null || v === undefined) return '—';
+  if (typeof v === 'boolean') return v ? X('Da', 'Yes') : X('Nu', 'No');
+  if (typeof v === 'number') return nf(v, Math.abs(v) >= 100 ? 1 : 2);
+  if (typeof v === 'object') return Object.entries(v).map(([k, x]) => k + ' ' + (typeof x === 'number' ? nf(x, 5) : x)).join(' · ');
+  let s = String(v); const stem = n.replace(/State$/, ''); if (s.startsWith(n)) s = s.slice(n.length); else if (s.startsWith(stem)) s = s.slice(stem.length); s = s.replace(/^State(?=[A-Z])/, ''); return s || String(v);
+}
+function spark(h, unit) {
+  const W = 150, H = 44, pl = 24;
+  if (!h || h.length < 2) return `<svg viewBox="0 0 ${W} ${H}" class="pf-sp"><path d="M${pl} ${H / 2}H${W}" stroke="#2b6cb0" stroke-width="1.4" stroke-dasharray="1 7" stroke-linecap="round"/></svg>`;
+  const mn = Math.min(...h), mx = Math.max(...h), r = mx - mn || Math.max(1, Math.abs(mx) * .02), lo = mn - r * .1, hi = mx + r * .1;
+  const X0 = (i) => pl + i / (h.length - 1) * (W - pl - 2), Y0 = (y) => 5 + (1 - (y - lo) / (hi - lo)) * (H - 14);
+  const f = (v) => nf(v, Math.abs(v) >= 100 ? 0 : 1) + (unit ? ' ' + unit : '');
+  return `<svg viewBox="0 0 ${W} ${H}" class="pf-sp"><text x="0" y="10">${f(hi)}</text><text x="0" y="${H - 2}">${f(lo)}</text>
+    <path d="${h.map((y, i) => (i ? 'L' : 'M') + X0(i).toFixed(1) + ' ' + Y0(y).toFixed(1)).join('')}" fill="none" stroke="#3b82f6" stroke-width="1.3"/>
+    ${h.length < 60 ? h.map((y, i) => `<circle cx="${X0(i).toFixed(1)}" cy="${Y0(y).toFixed(1)}" r="1.7" fill="#3b82f6"/>`).join('') : ''}</svg>`;
+}
+const PF_SUFFIX = /(RearLeft|RearRight|RearCenter|FrontLeft|FrontRight|REL|RER|Fl|Fr|Rl|Rr|Left|Right|F|R|L|0|1|2|3)$/;
+function pfGroupKey(n) { return n.replace(PF_SUFFIX, '') || n; }
+const PF_ICO = { 'A': 'M5 18V9M10 18V5M15 18v-7M20 18v-3', 'V': 'M13 3L5 14h6l-1 7 8-11h-6z', 'Nm': 'M4 18a8 8 0 1 1 16 0M12 14l3-4', 'rpm': 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z', '°C': 'M10 14V5a2 2 0 1 1 4 0v9a4 4 0 1 1-4 0z', 'kW': 'M13 3L5 14h6l-1 7 8-11h-6z', 'km/h': 'M4 18a8 8 0 1 1 16 0M12 14l4-5', 'bar': 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z', '%': 'M5 18L19 6M7 8h.01M17 16h.01' };
+function pfClose() { if (PFES) { PFES.close(); PFES = null; } }
+async function pageProfiler() {
+  let d; try { d = await api('/api/profiler'); } catch (e) { return `<div class="empty">${esc(e.message)}</div>`; }
+  PFS = { meta: d.meta, values: d.values || {}, hist: d.hist || {}, status: d };
+  const cats = { perf: X('Performanță', 'Performance'), charge: X('Încărcare', 'Charging'), climate: X('Climă', 'Climate'), body: X('Caroserie', 'Body'), safety: X('Siguranță', 'Safety'), nav: X('Navigație', 'Navigation'), other: X('Altele', 'Other') };
+  PFS.cats = cats;
+  return `<div class="top row"><div><h1>Profiler</h1><small>${X('Date live de la mașină (Fleet Telemetry) — pe sesiuni scurte', 'Live data from the car (Fleet Telemetry) — in short sessions')}</small></div><div class="sp"></div><span class="pill" id="pfst"></span></div>
+  <div id="pfctl"></div><div id="pftiles" class="grid g3" style="margin-top:14px"></div>
+  <div class="row" style="margin-top:14px;gap:8px"><input id="pfq" class="pf-q" placeholder="${X('Caută semnal…', 'Search signal…')}" value="${esc(PFFILTER)}"><a class="pf-dl" href="/api/profiler/export.csv">⬇ CSV</a></div>
+  <div id="pflist"></div>`;
+}
+function pfRenderCtl() {
+  const box = $('#pfctl'); if (!box || !PFS) return; const st = PFS.status, se = st.session;
+  const left = se ? Math.max(0, Math.round((se.until * 1000 - Date.now()) / 1000)) : 0;
+  const pill = $('#pfst'); if (pill) { pill.className = 'pill ' + (se ? 'ok' : ''); pill.textContent = se ? (se.sim ? X('Simulare · ', 'Simulation · ') : '● ') + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') : X('Inactiv', 'Idle'); }
+  const key = (se ? se.started : 0) + PFSEL + PFMIN;
+  if (box.dataset.k === key) return;
+  box.dataset.k = key;
+  const cards = Object.entries(st.profiles).map(([k, p]) => `<button class="pf-card ${PFSEL === k ? 'on' : ''}" data-pf="${k}" ${se ? 'disabled' : ''}><b>${LANG === 'en' ? p.en : p.ro}</b><small>${p.count} ${X('semnale', 'signals')}</small><span>${pfDescAll()[k] || ''}</span></button>`).join('');
+  setHtml(box, se ? `<div class="card"><div class="row"><div><b>${LANG === 'en' ? st.profiles[se.profile].en : st.profiles[se.profile].ro}</b><small class="mut" style="display:block">${se.fields} ${X('semnale · se oprește automat', 'signals · stops automatically')}</small></div><div class="sp"></div><button class="pf-btn stop" id="pfstop">${X('Oprește', 'Stop')}</button></div>
+      ${(se.dropped || []).length ? `<p class="note" style="margin:8px 0 0">${X('Omise (lipsește permisiunea de locație vehicle_location sau nu sunt acceptate): ', 'Skipped (missing vehicle_location scope or not accepted): ')}${esc(se.dropped.slice(0, 8).join(', '))}${se.dropped.length > 8 ? '…' : ''}</p>` : ''}</div>`
+    : `<div class="pf-cards">${cards}</div><div class="card" style="margin-top:10px"><div class="row"><label class="cf" style="margin:0;flex:1">${X('Durată', 'Duration')}<select id="pfmin" style="width:100%">${[5, 10, 15, 30].map((m) => `<option value="${m}" ${m === PFMIN ? 'selected' : ''}>${m} min</option>`).join('')}</select></label><button class="pf-btn" id="pfgo" style="margin-top:14px">${X('Pornește sesiunea', 'Start session')}</button></div>
+      <p class="note" style="margin:8px 0 0">${X('Mașina trebuie să fie trează și conectată; cât durează sesiunea NU adoarme. Alerta Sentry rămâne activă. La final revine automat la configurația normală. Tesla poate taxa semnalele de telemetrie.', 'The car must be awake and connected; it will NOT sleep during the session. Sentry alerts stay active. At the end it automatically reverts to the normal configuration. Tesla may bill telemetry signals.')}</p></div>
+      <div class="toast" id="pfmsg" style="display:none"></div>`);
+  box.querySelectorAll('[data-pf]').forEach((b) => b.onclick = () => { PFSEL = b.dataset.pf; pfRenderCtl(); });
+  const m = $('#pfmin'); if (m) m.onchange = () => { PFMIN = +m.value; };
+  const go = $('#pfgo'); if (go) go.onclick = async () => {
+    const pin = S.public_demo ? '' : getPin(); if (!pin && !S.public_demo) return; const msg = $('#pfmsg'); msg.style.display = ''; msg.className = 'toast busy'; msg.textContent = X('Se configurează mașina…', 'Configuring the car…');
+    try { const r = await fetch('/api/profiler/start', { method: 'POST', headers: { 'X-Pin': pin, 'Content-Type': 'application/json' }, body: JSON.stringify({ car, profile: PFSEL, minutes: PFMIN }) }); const j = await r.json();
+      if (r.status === 403) localStorage.removeItem('pin');
+      if (j.ok || S.public_demo) { PFS.status = await api('/api/profiler'); pfRenderCtl(); } else { msg.className = 'toast bad'; msg.textContent = '✗ ' + (j.reason || j.error || 'eroare'); } } catch (e) { msg.className = 'toast bad'; msg.textContent = '✗ ' + e.message; }
+  };
+  const sp = $('#pfstop'); if (sp) sp.onclick = async () => { const pin = getPin(); if (!pin && !S.public_demo) return; const r = await fetch('/api/profiler/stop', { method: 'POST', headers: { 'X-Pin': pin || '', 'Content-Type': 'application/json' }, body: '{}' }); await r.json(); PFS.status = await api('/api/profiler'); box.dataset.k = ''; pfRenderCtl(); };
+}
+function pfRenderData() {
+  if (!PFS) return; const q2 = (PFFILTER || '').toLowerCase(), fav = lsGet('pf_fav', []);
+  const T0 = PFS.values, v = (n) => (T0[n] ? T0[n][0] : null);
+  const names = Object.keys(T0).filter((n) => !q2 || n.toLowerCase().includes(q2) || pfLabel(n).toLowerCase().includes(q2));
+  const tiles = [[X('Viteză', 'Speed'), v('VehicleSpeed'), 'km/h'], [X('Baterie', 'Battery'), v('BatteryLevel') ?? v('Soc'), '%'], [X('Putere încărcare', 'Charging power'), v('DCChargingPower') || v('ACChargingPower'), 'kW'], [X('Tensiune pachet', 'Pack voltage'), v('PackVoltage'), 'V'], [X('Curent pachet', 'Pack current'), v('PackCurrent'), 'A'], [X('Temp. interior', 'Inside temp'), v('InsideTemp'), '°C']].filter((t) => t[1] != null);
+  const tl = $('#pftiles'); if (tl) tl.innerHTML = tiles.map((t) => `<div class="st"><i>${t[0]}</i><b>${pfFmt('', t[1])}<small>${t[2]}</small></b></div>`).join('');
+  const box = $('#pflist'); if (!box) return;
+  if (!names.length) { box.innerHTML = `<div class="empty">${PFS.status.session ? X('Aștept date de la mașină… (mașina trebuie să fie trează și online)', 'Waiting for data from the car… (the car must be awake and online)') : X('Pornește o sesiune ca să vezi semnalele live.', 'Start a session to see live signals.')}</div>`; return; }
+  // grupuri ca in Tessie: semnale inrudite (ex. DiMotorCurrentF/R/REL/RER) intr-un rand de celule; restul pe categorii
+  const byKey = {}; names.forEach((n) => { (byKey[pfGroupKey(n)] = byKey[pfGroupKey(n)] || []).push(n); });
+  const groups = [], singles = {};
+  const favs = names.filter((n) => fav.includes(n)); if (favs.length) groups.push([X('Favorite', 'Favorites'), favs, 'pf-fv']);
+  Object.entries(byKey).forEach(([k, arr]) => { if (arr.length >= 2) groups.push([pfLabel(k), arr.sort(), PFS.meta[arr[0]]?.unit || '']); else (singles[PFS.meta[arr[0]]?.cat || 'other'] = singles[PFS.meta[arr[0]]?.cat || 'other'] || []).push(arr[0]); });
+  groups.sort((a, b) => (a[2] === 'pf-fv' ? -1 : b[2] === 'pf-fv' ? 1 : 0));
+  Object.keys(PFS.cats).forEach((c) => { if (singles[c]) groups.push([PFS.cats[c], singles[c].sort(), '']); });
+  const now = Date.now() / 1000;
+  const cell = (n) => { const [val, ts] = T0[n], m = PFS.meta[n] || {}, h = PFS.hist[n], age = now - ts, num = typeof val === 'number';
+    return `<div class="pf-c ${age > 30 ? 'old' : ''}" data-n="${n}"><div class="pf-cn"><span>${n}</span><button class="pf-s ${fav.includes(n) ? 'on' : ''}" data-fav="${n}" aria-label="favorite">★</button></div><div class="pf-cv">${esc(pfFmt(n, val))}${m.unit && num ? '<small> ' + m.unit + '</small>' : ''}</div>${num ? spark(h, m.unit) : ''}</div>`; };
+  box.innerHTML = `<div class="pf-panel">${groups.map(([title, arr, unit]) => `<section class="pf-g"><h3><svg viewBox="0 0 24 24"><path d="${PF_ICO[unit] || PF_ICO.bar}"/></svg>${esc(title)}</h3><div class="pf-gr">${arr.map(cell).join('')}</div></section>`).join('')}</div>`;
+  box.querySelectorAll('[data-fav]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); const f = lsGet('pf_fav', []), i = f.indexOf(b.dataset.fav); if (i < 0) f.push(b.dataset.fav); else f.splice(i, 1); lsSet('pf_fav', f); pfRenderData(); });
+}
+function afterProfiler() {
+  pfClose(); pfRenderCtl(); pfRenderData();
+  const q3 = $('#pfq'); if (q3) q3.oninput = () => { PFFILTER = q3.value; pfRenderData(); };
+  PFES = new EventSource('/api/profiler/stream');
+  PFES.onmessage = (e) => {
+    const m = JSON.parse(e.data); if (!PFS) return;
+    if (m.status) { PFS.status = m.status; $('#pfctl') && ($('#pfctl').dataset.k = ''); pfRenderCtl(); return; }
+    Object.entries(m.d || {}).forEach(([k, v]) => { PFS.values[k] = [v, m.t]; if (typeof v === 'number') { const h = (PFS.hist[k] = PFS.hist[k] || []); h.push(v); if (h.length > 120) h.shift(); } });
+    const now = performance.now(); if (now - PFTICK > 700) { PFTICK = now; pfRenderData(); }
+  };
+  clearInterval(window.__pfT); window.__pfT = setInterval(() => { if (location.hash.startsWith('#/profiler')) pfRenderCtl(); else { clearInterval(window.__pfT); pfClose(); } }, 1000);
 }
