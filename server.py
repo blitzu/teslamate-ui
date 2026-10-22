@@ -552,7 +552,7 @@ def demo_overview(days):
                 by_day=sorted(by_day.values(), key=lambda x: x['day']), charge_by_day=sorted(ch.values(), key=lambda x: x['day']), odometer=18432.4)
 
 
-DEMO_VD = dict(climate_state=dict(driver_temp_setting=21.0, passenger_temp_setting=21.0, is_climate_on=False, seat_heater_left=0, seat_heater_right=0, seat_heater_rear_left=0,
+DEMO_VD = dict(caps=dict(rear_seats=True), climate_state=dict(driver_temp_setting=21.0, passenger_temp_setting=21.0, is_climate_on=False, seat_heater_left=0, seat_heater_right=0, seat_heater_rear_left=0,
                                    seat_heater_rear_center=0, seat_heater_rear_right=0, steering_wheel_heater=False, is_front_defroster_on=False, defrost_mode=0,
                                    cabin_overheat_protection='On', cop_activation_temperature='High'),
                charge_state=dict(charge_current_request=16, charge_current_request_max=32, charge_limit_soc=90, scheduled_charging_mode='StartAt',
@@ -977,6 +977,49 @@ def run_command(car, name, arg=None):
     return dict(ok=ok, code=c, reason=resp.get('reason') or r.get('error') or r.get('raw') or '')
 
 
+CAPFILE = '/data/caps.json'
+
+
+def caps_load(car):
+    try:
+        return json.load(open(CAPFILE)).get(str(car)) or {}
+    except Exception:
+        return {}
+
+
+def caps_save(car, d):
+    try:
+        allc = {}
+        try:
+            allc = json.load(open(CAPFILE))
+        except Exception:
+            pass
+        allc[str(car)] = d
+        os.makedirs(os.path.dirname(CAPFILE), exist_ok=True)
+        json.dump(allc, open(CAPFILE, 'w'))
+    except Exception as e:  # noqa
+        print('caps:', e, flush=True)
+
+
+def vehicle_data(car, force=False):
+    d = _vehicle_data(car, force)
+    caps = caps_load(car)               # dotari invatate cand masina a fost online (persistate; raman valabile cand doarme)
+    if 'rear_seats' not in caps and ha_ok():
+        # fara date de la masina: daca ESP32 raporteaza scaunul din fata dar NU pe cele din spate, masina nu are bancheta incalzita
+        try:
+            bad = ('unknown', 'unavailable', None)
+            fl = (ha_state('select.%s_front_left_seat_climate' % HA['prefix']) or {}).get('state')
+            rl = (ha_state('select.%s_rear_left_seat_heat' % HA['prefix']) or {}).get('state')
+            rr = (ha_state('select.%s_rear_right_seat_heat' % HA['prefix']) or {}).get('state')
+            if fl not in bad and rl in bad and rr in bad:
+                caps = dict(rear_seats=False, source='ha')
+                caps_save(car, caps)
+        except Exception:
+            pass
+    d['caps'] = caps
+    return d
+
+
 VD = {}   # car -> (ts, data): ultima stare citita direct din masina (clima/incarcare/programari)
 VD_KEYS = {
     'climate_state': ('driver_temp_setting', 'passenger_temp_setting', 'inside_temp', 'outside_temp', 'is_climate_on', 'seat_heater_left', 'seat_heater_right',
@@ -989,7 +1032,7 @@ VD_KEYS = {
 }
 
 
-def vehicle_data(car, force=False):
+def _vehicle_data(car, force=False):
     """Citeste starea direct din masina. NU trezeste masina (ca sa nu strice somnul) - doar daca TeslaMate o vede online."""
     c = VD.get(car)
     if c and time.time() - c[0] < 45 and not force:
@@ -1000,12 +1043,16 @@ def vehicle_data(car, force=False):
     vin = vin_for(car)
     if not vin:
         raise RuntimeError('Nu există VIN în TeslaMate.')
-    ep = urllib.parse.quote('charge_state;climate_state;charge_schedule_data;preconditioning_schedule_data', safe='')
+    ep = urllib.parse.quote('charge_state;climate_state;charge_schedule_data;preconditioning_schedule_data;vehicle_config', safe='')
     code, r = vehicle_call(vin, 'vehicle_data?endpoints=' + ep, method='GET')
     resp = r.get('response') or {}
     if code != 200 or not resp:
         return dict(c[1], stale=True, error=r.get('error') or code) if c else dict(error=r.get('error') or code, asleep=code == 408)
     out = {k: {x: (resp.get(k) or {}).get(x) for x in keys} for k, keys in VD_KEYS.items()}
+    vc = resp.get('vehicle_config') or {}
+    if vc:
+        out['config'] = {k: vc.get(k) for k in ('rear_seat_heaters', 'has_seat_cooling', 'seat_type', 'steering_wheel_type', 'plg', 'sun_roof_installed', 'third_row_seats', 'car_type', 'trim_badging', 'wheel_type', 'can_actuate_trunks', 'motorized_charge_port')}
+        caps_save(car, dict(rear_seats=bool(vc.get('rear_seat_heaters')), seat_cooling=bool(vc.get('has_seat_cooling')), updated=time.time()))
     out['charge_schedules'] = (resp.get('charge_schedule_data') or {}).get('charge_schedules') or []
     out['precondition_schedules'] = (resp.get('preconditioning_schedule_data') or {}).get('precondition_schedules') or []
     VD[car] = (time.time(), out)

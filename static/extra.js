@@ -54,6 +54,7 @@ async function afterClimate() {
   if (sub) sub.textContent = nf(L.inside_temp, 1) + '° ' + X('în mașină', 'inside') + ' · ' + nf(L.outside_temp, 1) + '° ' + X('afară', 'outside');
   if (pill) { pill.className = 'pill ' + (L.is_climate_on ? 'ok' : ''); pill.textContent = L.is_climate_on ? tr('Climatizare pornită') : tr('Climatizare oprită'); }
   const note = vd.asleep && !has ? `<p class="note">${X('Mașina doarme: nu cunosc setările curente (arăt ultimele folosite din aplicație). Orice comandă o trezește.', 'The car is asleep: current settings unknown (showing the last ones used here). Any command wakes it.')}</p>` : '';
+  const caps = vd.caps || {}, SEATS_SHOWN = SEATS.filter(([i]) => i <= 1 || caps.rear_seats !== false);
   const seatBtn = ([i, , pos]) => `<button class="seat ${pos} l${CL.seats[i]}" data-seat="${i}" aria-label="seat ${pos}"><span>${[0, 1, 2, 3].map((n) => `<i class="${n < CL.seats[i] ? 'on' : ''}"></i>`).join('')}</span></button>`;
   const segB = (key, opts, cur2) => `<div class="seg" data-seg="${key}">${opts.map(([v, l]) => `<button data-v="${v}" class="${v === cur2 ? 'on' : ''}">${l}</button>`).join('')}</div>`;
   setHtml($('#cl'), `${note}
@@ -62,7 +63,7 @@ async function afterClimate() {
       <div class="tstep"><button id="tm">−</button><div><b id="tv">${nf(CL.temp, 1)}</b><small>°C</small></div><button id="tp">+</button></div></div>
   </div>
   <h2>${tr('Scaune încălzite')}</h2>
-  <div class="card seats"><img src="/car.png" alt="">${SEATS.map(seatBtn).join('')}</div>
+  <div class="card seats"><div class="seatimg"><img src="/car.png" alt="">${SEATS_SHOWN.map(seatBtn).join('')}</div></div>${caps.rear_seats === undefined ? `<p class="note" style="margin:6px 4px">${X('Dotările (ex. bancheta încălzită) se detectează automat când mașina e online; până atunci arăt toate scaunele.', 'Equipment (e.g. heated rear seat) is detected automatically when the car is online; until then all seats are shown.')}</p>` : ''}
   <div class="card" style="margin-top:10px">${sw('wheel', CL.wheel, tr('Volan încălzit'))}${sw('defrost', CL.defrost, tr('Dezgheață (max)'))}</div>
   <h2>${tr('Protecție supraîncălzire habitaclu')}</h2>
   <div class="card">${segB('cop', [['Off', X('Oprit', 'Off')], ['FanOnly', X('Doar ventilator', 'Fan only')], ['On', X('Pornit', 'On')]], CL.cop)}
