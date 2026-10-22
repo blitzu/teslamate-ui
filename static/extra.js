@@ -970,7 +970,7 @@ function openPhoto(L, o) {
   const any = st.anyDoor || st.frunk || st.trunk || st.windows;
   if (!any) return '<div class="pp" id="pp"></div>';
   const bg = "background-image:url('/car.png')";
-  const piece = (k, cls) => `<div class="ppu" style="clip-path:polygon(${polyStr(k)})"></div><div class="ppc ${cls}" style="${bg};clip-path:polygon(${polyStr(k)});transform-origin:${hingeStr(k)}"></div>`;
+  const piece = (k, cls) => `<div class="ppu${k === 'hood' || k === 'trunk' ? ' sf' : ''}" style="clip-path:polygon(${polyStr(k)})"></div><div class="ppc ${cls}" style="${bg};clip-path:polygon(${polyStr(k)});transform-origin:${hingeStr(k)}"></div>`;
   let h = '';
   if (st.doorsKnown) {
     if (st.doors.fl) h += piece('fl', 'dl');

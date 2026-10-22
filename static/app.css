@@ -287,10 +287,10 @@ body.nav-open #nav{transform:none;box-shadow:0 0 40px #000a}
 /* piese din poza reala care se deschid */
 .pp{position:absolute;inset:0;pointer-events:none}
 .ppc,.ppu,.pg{position:absolute;inset:0;background-size:100% 100%;background-repeat:no-repeat}
-.ppu{background:linear-gradient(180deg,#14161a,#07080a);opacity:.96}
+.ppu{background:#0a0b0d;opacity:.9;filter:blur(2.5px)}.ppu.sf{background:linear-gradient(180deg,#1a1c20,#0a0b0d);opacity:.62;filter:blur(7px)}
 .ppc{filter:drop-shadow(0 6px 8px #000a);animation-duration:.9s;animation-timing-function:cubic-bezier(.2,.8,.3,1);animation-fill-mode:forwards}
 .ppc.dl{animation-name:pdl}.ppc.dl2{animation-name:pdl2}.ppc.dr{animation-name:pdr}.ppc.dr2{animation-name:pdr2}.ppc.hd{animation-name:phd}.ppc.tk{animation-name:ptk}
 @keyframes pdl{to{transform:rotate(38deg)}}@keyframes pdl2{to{transform:rotate(-38deg)}}@keyframes pdr{to{transform:rotate(-38deg)}}@keyframes pdr2{to{transform:rotate(38deg)}}
-@keyframes phd{to{transform:scaleY(.62);filter:brightness(.8) drop-shadow(0 8px 10px #000b)}}@keyframes ptk{to{transform:scaleY(.62);filter:brightness(.8) drop-shadow(0 -8px 10px #000b)}}
+@keyframes phd{to{transform:scaleY(.82);filter:brightness(.88) drop-shadow(0 6px 8px #000b)}}@keyframes ptk{to{transform:scaleY(.82);filter:brightness(.88) drop-shadow(0 -6px 8px #000b)}}
 .pg{border-radius:26px;border:3px solid #ffb15c;background:#ffb15c33;animation:glow 1.6s ease-in-out infinite}
 .pw{position:absolute;inset:0;width:100%;height:100%}.pw path{fill:none;stroke:#8fd3ff;stroke-width:6;stroke-linecap:round;stroke-dasharray:4 16;animation:dash 1.2s linear infinite}
