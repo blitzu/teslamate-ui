@@ -19,7 +19,7 @@ async function fire(name, label, arg, msgId) {
     const r = await fetch('/api/cmd/' + name, { method: 'POST', headers: { 'X-Pin': pin, 'Content-Type': 'application/json' }, body: JSON.stringify({ car, arg }) });
     const j = await r.json();
     if (r.status === 403) { localStorage.removeItem('pin'); toast(msgId, tr('PIN greșit.'), 'bad'); return null; }
-    toast(msgId, j.ok ? '✓ ' + label : '✗ ' + label + (j.reason ? ' — ' + j.reason : ''), j.ok ? 'ok' : 'bad');
+    toast(msgId, j.ok ? '✓ ' + label + (j.via === 'ble' ? ' · BLE' : '') : '✗ ' + label + (j.reason ? ' — ' + j.reason : ''), j.ok ? 'ok' : 'bad');
     return j;
   } catch (e) { toast(msgId, '✗ ' + label + ' — ' + e.message, 'bad'); return null; }
 }
@@ -133,16 +133,16 @@ async function afterCharges() {
 }
 
 /* ---------- NOTIFICARI (pe pagina Masina) ---------- */
-function notifShell() { return `<h2>${tr('Notificări')}</h2><div id="notif"></div>`; }
+function notifShell() { return `<h2>${tr('Notificări')}</h2><div id="notif"></div><div class="links"><a href="#/auto">⚙️ ${X('Automatizări', 'Automations')} ›</a><a href="#/sleep">😴 ${X('Somn și repaus', 'Sleep & idle')} ›</a></div>`; }
 async function afterNotif() {
   const box = $('#notif'); if (!box || S.public_demo) { if (box) box.innerHTML = ''; return; }
   let n; try { n = await api('/api/notify'); } catch (e) { return; }
   const st = n.settings || {};
-  setHtml(box, `<div class="card">${sw('n_plugged', st.plugged, tr('Cablu conectat'))}${sw('n_charge_done', st.charge_done, tr('Încărcare terminată'))}${sw('n_door', st.door, tr('Ușă / portbagaj deschise'))}
+  setHtml(box, `<div class="card">${sw('n_plugged', st.plugged, tr('Cablu conectat'))}${sw('n_charge_done', st.charge_done, tr('Încărcare terminată'))}${sw('n_door', st.door, tr('Ușă / portbagaj deschise'))}${sw('n_update', st.update, X('Update software disponibil', 'Software update available'))}${sw('n_low_batt', st.low_batt, X('Baterie sub 20% la parcare', 'Battery below 20% while parked'))}
     ${n.hook ? '' : `<p class="note" style="margin:8px 0 0">${X('Telefonul nu e legat încă (lipsește NOTIFY_WEBHOOK) — notificările apar doar aici.', 'Phone not linked yet (NOTIFY_WEBHOOK missing) — notifications only show here.')}</p>`}
     <div class="links"><a href="#" id="ntest">${tr('Trimite test')}</a></div>
     <div id="nlist">${(n.events || []).slice(0, 8).map((e) => `<div class="row nrow"><div><b>${esc(e.title)}</b><small>${esc(e.msg)}</small></div><div class="sp"></div><span class="mut" style="font-size:11.5px">${ago(e.t)}</span></div>`).join('') || `<p class="note" style="margin:8px 0 0">${tr('Nicio notificare încă.')}</p>`}</div></div>`);
-  ['plugged', 'charge_done', 'door'].forEach((k) => { const e = $('#n_' + k); if (e) e.onchange = () => fetch('/api/notify/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [k]: e.checked }) }); });
+  ['plugged', 'charge_done', 'door', 'update', 'low_batt'].forEach((k) => { const e = $('#n_' + k); if (e) e.onchange = () => fetch('/api/notify/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [k]: e.checked }) }); });
   const t = $('#ntest'); if (t) t.onclick = async (ev) => { ev.preventDefault(); await fetch('/api/notify/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); setTimeout(afterNotif, 400); };
 }
 
@@ -244,7 +244,7 @@ async function startReplay(id) {
   root.innerHTML = `<div id="rpmap"></div><div class="rp-top"><button class="rp-btn" id="rpx" aria-label="close">✕</button><div class="rp-clock"><b id="rpt">--:--</b><small id="rpd"></small></div><div class="rp-wx" id="rpw"></div></div>
   <div class="rp-intro" id="rpi"><div class="rp-card"><small>${X('Traseu', 'Route')}</small><h2 id="rpit">…</h2><p id="rpid"></p><span class="rp-load" id="rpl">${X('Se încarcă harta…', 'Loading map…')}</span></div></div>
   <div class="rp-zoom"><button class="rp-btn" id="rpzi" aria-label="zoom in">＋</button><button class="rp-btn" id="rpzo" aria-label="zoom out">−</button><button class="rp-btn fo" id="rpfo" aria-label="follow">◎</button></div>
-  <div class="rp-ctl"><button class="rp-btn" id="rpp" aria-label="play">❚❚</button><input type="range" id="rps" min="0" max="1000" value="0"><button class="rp-btn wide" id="rpv">1×</button></div>
+  <div class="rp-ctl"><button class="rp-btn" id="rpp" aria-label="play">❚❚</button><input type="range" id="rps" min="0" max="1000" value="0"><button class="rp-btn" id="rpr" aria-label="record" title="Video">⏺</button><button class="rp-btn wide" id="rpv">1×</button></div>
   <div class="rp-end" id="rpe"></div>`;
   document.body.appendChild(root);
   const done = () => { stopReplay(); location.hash = '#/drive/' + id; };
@@ -260,7 +260,7 @@ async function startReplay(id) {
   root.querySelector('#rpit').textContent = names.join(' • ') || X('Cursă', 'Drive');
   root.querySelector('#rpid').textContent = new Date(t0).toLocaleDateString(LOC(), { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) + ' · ' + nf(T0.km, 1) + ' km';
   const ml = window.maplibregl;
-  const map2 = new ml.Map({ container: 'rpmap', interactive: true, keyboard: false, attributionControl: { compact: true }, center: [tl[0].lon, tl[0].lat], zoom: 12, pitch: 0, fadeDuration: 0, maxPitch: 70,
+  const map2 = new ml.Map({ container: 'rpmap', interactive: true, keyboard: false, attributionControl: { compact: true }, center: [tl[0].lon, tl[0].lat], zoom: 12, pitch: 0, fadeDuration: 0, maxPitch: 70, preserveDrawingBuffer: true,
     style: { version: 8, sources: { osm: { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, maxzoom: 19, attribution: '© OpenStreetMap' } },
              layers: [{ id: 'osm', type: 'raster', source: 'osm', paint: { 'raster-saturation': -.25, 'raster-contrast': .05, 'raster-fade-duration': 0 } }] } });
   // zoom de baza: ~230 px/s deplasare pe ecran indiferent cat de lunga e calatoria (nivelul de zoom coboara pe trasee lungi)
@@ -306,13 +306,13 @@ async function startReplay(id) {
     if (!RP || RP.stage !== 'intro') return;
     clearTimeout(RP.introT); RP.stage = 'fly'; root.querySelector('#rpi').classList.remove('show');
     map2.setPadding({ top: Math.round(innerHeight * .3), bottom: 0, left: 0, right: 0 });
-    map2.flyTo({ center: [tl[0].lon, tl[0].lat], zoom: RP.zb, pitch: 62, bearing: tl[0].hd, duration: 2800, essential: true, curve: 1.2 });
+    map2.flyTo({ center: [tl[0].lon, tl[0].lat], zoom: RP.zb, pitch: RP.rec ? 50 : 58, bearing: tl[0].hd, duration: 2800, essential: true, curve: 1.2 });
     map2.once('moveend', () => { if (RP) { RP.stage = 'play'; RP.playing = true; RP.last = performance.now(); RP.z = RP.zb; RP.chd = tl[0].hd; setPlayBtn(); } });
   }
   const clearPop = () => { if (RP.pop) { RP.pop.remove(); RP.pop = null; } if (RP.dot) { RP.dot.remove(); RP.dot = null; } };
   function setFollow() {
     RP.follow = true; root.querySelector('#rpfo').classList.remove('show'); RP.freeze = performance.now() + 700;
-    const p = atPh(tl, RP.ph); map2.easeTo({ center: [p.lon, p.lat], zoom: RP.z, bearing: RP.chd, pitch: 62, duration: 650 });
+    const p = atPh(tl, RP.ph); map2.easeTo({ center: [p.lon, p.lat], zoom: RP.z, bearing: RP.chd, pitch: RP.rec ? 50 : 58, duration: 650 });
   }
   root.querySelector('#rpfo').onclick = setFollow;
   const zoomBy = (d) => { if (RP.stage === 'play' && RP.follow) RP.zoff = Math.max(-4, Math.min(3.5, RP.zoff + d)); else map2.easeTo({ zoom: map2.getZoom() + d, duration: 250 }); };
@@ -340,17 +340,17 @@ async function startReplay(id) {
   }
   const setPlayBtn = () => { root.querySelector('#rpp').textContent = RP.playing ? '❚❚' : '▶'; };
   root.querySelector('#rpp').onclick = () => { if (RP.stage === 'end') return restart(); if (RP.stage !== 'play') return; RP.playing = !RP.playing; setPlayBtn(); };
-  root.querySelector('#rpv').onclick = (e) => { RP.speed = RP.speed === 1 ? 2 : RP.speed === 2 ? 4 : 1; e.target.textContent = RP.speed + '×'; };
+  root.querySelector('#rpv').onclick = (e) => { RP.speed = RP.speed === 1 ? 2 : RP.speed === 2 ? 4 : RP.speed === 4 ? .5 : 1; e.target.textContent = RP.speed + '×'; };
   const sl = root.querySelector('#rps');
   sl.oninput = () => { if (RP.stage === 'intro' || RP.stage === 'fly') return; RP.playing = false; if (RP.stage === 'end') { map2.setPadding({ top: Math.round(innerHeight * .3), bottom: 0, left: 0, right: 0 }); } RP.stage = 'play'; showCards(true); root.querySelector('#rpe').classList.remove('show'); RP.ph = sl.value / 1000 * RP.end; setPlayBtn(); draw(0.016, true); };
   const showCards = (on) => { [RP.cardL, RP.cardR].forEach((el) => { el.style.display = on ? '' : 'none'; }); };
   function restart() {
-    clearPop(); RP.follow = true; root.querySelector('#rpfo').classList.remove('show'); showCards(true); RP.ph = 0; RP.stage = 'play'; RP.playing = true; RP.last = performance.now(); root.querySelector('#rpe').classList.remove('show');
+    clearPop(); root.querySelector('#rpe').classList.remove('show'); RP.follow = true; root.querySelector('#rpfo').classList.remove('show'); showCards(true); RP.ph = 0; RP.stage = 'play'; RP.playing = true; RP.last = performance.now(); root.querySelector('#rpe').classList.remove('show');
     map2.setPadding({ top: Math.round(innerHeight * .3), bottom: 0, left: 0, right: 0 });
-    map2.jumpTo({ center: [tl[0].lon, tl[0].lat], zoom: RP.zb, pitch: 62, bearing: tl[0].hd }); RP.chd = tl[0].hd; setPlayBtn();
+    map2.jumpTo({ center: [tl[0].lon, tl[0].lat], zoom: RP.zb, pitch: RP.rec ? 50 : 58, bearing: tl[0].hd }); RP.chd = tl[0].hd; setPlayBtn();
   }
   function finish() {
-    RP.stage = 'end'; RP.playing = false; setPlayBtn(); showCards(false);
+    RP.stage = 'end'; RP.playing = false; setPlayBtn(); showCards(false); stopRecord();
     const p = atPh(tl, RP.end), net = Math.max(0, p.used - p.regen);
     root.querySelector('#rpe').innerHTML = `<div class="rp-card"><small>${X('Sosit', 'Arrived')} · ${tfmt2(t1)}</small><h2>${esc(names[names.length - 1] || '')}</h2>
       <div class="rp-sum"><div><b>${nf(T0.km, 1)}</b><small>km</small></div><div><b>${dur((t1 - t0) / 1000)}</b><small>${X('durată totală', 'total time')}</small></div><div><b>${nf(net, 1)}</b><small>kWh ${X('consum net', 'net used')}</small></div>
@@ -369,12 +369,12 @@ async function startReplay(id) {
     const p = atPh(tl, RP.ph), kd = (tau) => force ? 1 : 1 - Math.exp(-dtS / tau);
     RP.car.setLngLat([p.lon, p.lat]); RP.mL.setLngLat([p.lon, p.lat]); RP.mR.setLngLat([p.lon, p.lat]);
     RP.hd = (RP.hd + angd(RP.hd, p.hd) * kd(.25) + 360) % 360;
-    RP.chd = (RP.chd + angd(RP.chd, p.hd) * kd(.9) + 360) % 360;
+    RP.chd = (RP.chd + angd(RP.chd, p.hd) * kd(RP.rec ? 1.6 : .9) + 360) % 360;
     RP.car.setRotation(RP.hd);
     RP.zo += (RP.zoff - RP.zo) * kd(.25);
     if (RP.stage === 'play' && RP.follow && performance.now() > RP.freeze) {
       RP.z += (RP.zb - Math.max(-1.2, Math.min(1.3, .6 * Math.log2(Math.max(p.v, 10) / T0.vAvg))) - RP.z) * kd(1.2);
-      map2.jumpTo({ center: [p.lon, p.lat], bearing: RP.chd, pitch: 62, zoom: RP.z + RP.zo });
+      map2.jumpTo({ center: [p.lon, p.lat], bearing: RP.chd, pitch: RP.rec ? 50 : 58, zoom: RP.z + RP.zo + (RP.rec ? .45 : 0) });
     }
     if ((RP.cb++ % 3) === 0 || force) {
       map2.setPaintProperty('done-l', 'line-gradient', GRAD(p.cd / T0.cdTotal));
@@ -394,15 +394,55 @@ async function startReplay(id) {
       $('#rps').value = Math.round(RP.ph / RP.end * 1000);
     }
   }
+
+  /* ---------- export video: compune harta + cardurile intr-un canvas si il inregistreaza ---------- */
+  const rrect = (c, x, y, w, h, r) => { c.beginPath(); if (c.roundRect) c.roundRect(x, y, w, h, r); else c.rect(x, y, w, h); };
+  function compose() {
+    const R = RP.rec, c = R.ctx, mc = map2.getCanvas(), W = R.cv.width, H = R.cv.height, k = W / mc.clientWidth, p = atPh(tl, RP.ph);
+    c.drawImage(mc, 0, 0, W, H);
+    const P = (lon, lat) => { const q = map2.project([lon, lat]); return [q.x * k, q.y * k]; };
+    const pill = (txt, x, y, col) => { c.font = `700 ${12 * k}px system-ui,sans-serif`; const w = c.measureText(txt).width + 24 * k; rrect(c, x, y - 12 * k, w, 24 * k, 8 * k); c.fillStyle = '#0b0d10e6'; c.fill(); c.fillStyle = '#fff'; c.textBaseline = 'middle'; c.fillText(txt, x + 12 * k, y); if (col) { c.fillStyle = col; } };
+    const disc = (x, y, col, ic) => { c.beginPath(); c.arc(x, y, 14 * k, 0, 7); c.fillStyle = col; c.fill(); c.lineWidth = 2 * k; c.strokeStyle = '#fff'; c.stroke(); c.font = `${14 * k}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = '#fff'; c.fillText(ic, x, y + 1 * k); c.textAlign = 'left'; };
+    // optiuni de pe traseu
+    const [sx, sy] = P(tl[0].lon, tl[0].lat); if (RP.ph < 6) { disc(sx, sy - 18 * k, '#0b0d10', '⚑'); }
+    RP.stopEls.forEach(([st]) => { if (RP.ph >= st.pt0) { const [x, y] = P(st.lon, st.lat); disc(x, y - 18 * k, st.kind === 'charge' ? '#2f8f69' : '#e8943a', st.kind === 'charge' ? '⚡' : '⏸'); pill((st.kind === 'charge' ? X('Încărcare ', 'Charging ') : X('Oprit ', 'Stopped ')) + dur(st.sec), x + 20 * k, y - 18 * k); } });
+    // masina
+    const [cx, cy] = P(p.lon, p.lat), img = RP.carEl.querySelector('img');
+    c.save(); c.translate(cx, cy); c.rotate((RP.hd - map2.getBearing()) * Math.PI / 180); c.scale(1, Math.max(.45, Math.cos(map2.getPitch() * Math.PI / 180))); if (img && img.complete) c.drawImage(img, -17 * k, -36 * k, 34 * k, 72 * k); c.restore();
+    // carduri lipite de masina
+    const cw = (innerWidth < 520 ? 104 : 136) * k, ch = 84 * k, card = (x, lines, title) => { rrect(c, x, cy - ch / 2 - 6 * k, cw, ch, 14 * k); c.fillStyle = '#0b0d10e6'; c.fill(); c.fillStyle = '#8f99a4'; c.font = `800 ${9 * k}px system-ui`; c.textBaseline = 'top'; c.fillText(title.toUpperCase(), x + 11 * k, cy - ch / 2 + 2 * k); lines.forEach((l, i) => { c.fillStyle = l[1]; c.font = `${i === 0 ? 800 : 700} ${(i === 0 ? 22 : 11.5) * k}px system-ui`; c.fillText(l[0], x + 11 * k, cy - ch / 2 + (i === 0 ? 16 : 42 + (i - 1) * 15) * k); }); };
+    if (RP.stage !== 'end') card(cx - cw - 34 * k, [[nf(p.dist, 1) + ' km', '#fff'], ['▲ ' + nf(p.ele) + ' m', '#cfd5db'], [p.v > 1 ? nf(p.v) + ' km/h' : '', '#6fd6b8']], X('Distanță', 'Distance'));
+    if (RP.stage !== 'end') card(cx + 34 * k, [[nf(p.soc) + '%', '#fff'], [X('Net ', 'Net ') + nf(Math.max(0, p.used - p.regen), 1) + ' kWh', '#ff9a5c'], [X('Recup. ', 'Regen ') + nf(p.regen, 1), '#6fd6b8'], p.chg > 0 ? [X('Încărcat ', 'Charged ') + nf(p.chg, 1), '#7aa8ff'] : ['', '#fff']], X('Baterie', 'Battery'));
+    // ceas + vreme
+    c.textAlign = 'center'; c.textBaseline = 'top'; c.font = `800 ${46 * k}px system-ui`; c.lineWidth = 6 * k; c.strokeStyle = '#fffd'; c.fillStyle = '#0b0d10'; const t1s = tfmt2(p.rt); c.strokeText(t1s, W / 2, 14 * k); c.fillText(t1s, W / 2, 14 * k);
+    c.font = `800 ${13 * k}px system-ui`; const d1s = new Date(p.rt).toLocaleDateString(LOC(), { weekday: 'short', day: 'numeric', month: 'short' }).toUpperCase(); c.strokeText(d1s, W / 2, 64 * k); c.fillText(d1s, W / 2, 64 * k); c.textAlign = 'left';
+    const w = wxAt(RP.wx[p.si], p.rt); if (w) { const [ic, tx] = WX(w.c, w.day); rrect(c, W - 150 * k, 12 * k, 138 * k, 54 * k, 14 * k); c.fillStyle = '#0b0d10e6'; c.fill(); c.fillStyle = '#fff'; c.textBaseline = 'top'; c.font = `800 ${16 * k}px system-ui`; c.fillText(ic + ' ' + nf(w.t) + '°C', W - 140 * k, 18 * k); c.fillStyle = '#aab3bd'; c.font = `700 ${10.5 * k}px system-ui`; c.fillText(tx + ' · ' + X('estimat', 'est.'), W - 140 * k, 40 * k); c.fillText('Open-Meteo', W - 140 * k, 53 * k); }
+  }
+  async function startRecord() {
+    if (!window.MediaRecorder) { alert(X('Browserul nu suportă înregistrarea video.', 'This browser does not support video recording.')); return; }
+    if (RP.stage === 'intro') flyStart();
+    const mc = map2.getCanvas(), k = Math.min(1, 1280 / mc.width), cv = document.createElement('canvas'); cv.width = Math.round(mc.width * k); cv.height = Math.round(mc.height * k);
+    const mime = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'].find((m) => MediaRecorder.isTypeSupported(m)) || '';
+    const rec = new MediaRecorder(cv.captureStream(30), mime ? { mimeType: mime, videoBitsPerSecond: 5e6 } : { videoBitsPerSecond: 5e6 }), chunks = [];
+    rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    rec.onstop = () => { const type = rec.mimeType || 'video/webm', ext = type.includes('mp4') ? 'mp4' : 'webm', a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(chunks, { type })); a.download = 'traseu-' + new Date(t0).toISOString().slice(0, 10) + '.' + ext; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 20000); root.classList.remove('recording'); };
+    RP.rec = { cv, ctx: cv.getContext('2d'), rec }; root.classList.add('recording'); RP.speed = 1; root.querySelector('#rpv').textContent = '1×'; clearPop();
+    if (RP.stage !== 'fly') restart();
+    else map2.once('moveend', () => {});
+    rec.start(250);
+  }
+  function stopRecord() { if (!RP.rec) return; const r = RP.rec.rec; RP.rec = null; setTimeout(() => { try { r.stop(); } catch (e) { root.classList.remove('recording'); } }, 1200); }
+  root.querySelector('#rpr').onclick = () => { if (RP.rec) return; if (confirm(X('Înregistrez animația ca video (durează cât animația). Continui?', 'Record the animation as a video (takes as long as the animation). Continue?'))) startRecord(); };
   function frame(ts) {
     if (!RP) return;
     const dtS = Math.min(.08, Math.max(.001, (ts - RP.last) / 1000));
     if (RP.playing && RP.stage === 'play') {
-      RP.ph += dtS * RP.speed;
+      RP.ph += dtS * RP.speed * (RP.rec ? .6 : 1);
       if (RP.ph >= RP.end) { RP.ph = RP.end; draw(dtS); finish(); }
     }
     RP.last = ts;
     if (RP.stage === 'play' || RP.stage === 'end' || RP.stage === 'fly') draw(dtS);
+    if (RP.rec) compose();
     RP.raf = requestAnimationFrame(frame);
   }
 }
@@ -411,4 +451,136 @@ function stopReplay() {
   cancelAnimationFrame(RP.raf); clearTimeout(RP.introT);
   try { RP.map.remove(); } catch (e) { /* ignore */ }
   RP.root.remove(); RP = null; document.getElementById('rp')?.remove();
+}
+
+/* ---------- SOMN si consum in repaus (#/sleep) ---------- */
+let sleepDays = 7;
+async function pageSleep() {
+  const z = await api('/api/sleep?car=' + car + '&days=' + sleepDays);
+  const now = Date.now(), span = 48 * 3600e3, t0 = now - span;
+  const W = 340, H = 46, x = (ms) => 6 + Math.max(0, Math.min(1, (ms - t0) / span)) * (W - 12);
+  const rects = z.runs.map((r) => { const a = +T(r.start), b = r.end ? +T(r.end) : now; if (b < t0) return ''; return `<rect x="${x(a).toFixed(1)}" y="${r.s === 'sleep' ? 8 : 18}" width="${Math.max(1, x(b) - x(Math.max(a, t0))).toFixed(1)}" height="${r.s === 'sleep' ? 20 : 10}" rx="2" fill="${r.s === 'sleep' ? '#7aa8ff' : '#d9ba80'}"/>`; }).join('');
+  const ticks = [0, 12, 24, 36, 48].map((h) => { const ms = t0 + h * 3600e3; return `<text x="${x(ms)}" y="${H - 2}" text-anchor="middle">${new Date(ms).toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' })}</text>`; }).join('');
+  const tl = `<svg viewBox="0 0 ${W} ${H}">${rects}${ticks}</svg><div class="legend"><span><i style="background:#7aa8ff"></i>${X('Doarme', 'Asleep')}</span><span><i style="background:#d9ba80"></i>${X('Trează', 'Awake')}</span></div>`;
+  const hint = z.short_wakes >= 4 ? `<div class="card hint"><b>${X('Tipar de treziri scurte', 'Short-wake pattern')}</b><p>${X(`${z.short_wakes} treziri de ~${z.short_med} min în ${z.days} zile (între 8 și 16 min). Treziri periodice regulate arată de obicei un client care „bătătorește" mașina (BLE, telemetrie, o aplicație sau un accesoriu) — nu mașina singură.`, `${z.short_wakes} wakes of ~${z.short_med} min in ${z.days} days (8–16 min). Regular periodic wakes usually mean a client polling the car (BLE, telemetry, an app or an accessory) rather than the car itself.`)}</p></div>` : '';
+  const idle = z.idle.map((i) => `<div class="item" style="cursor:default"><div class="t"><span>${new Date(T(i.start)).toLocaleDateString(LOC(), { day: 'numeric', month: 'short' })} ${tm(i.start)} → ${tm(i.end)}</span></div>
+    <div class="m"><span><b>${hm(i.hours * 60)}</b></span><span>${X('somn ', 'sleep ')}<b>${i.pct_sleep}%</b></span><span><b>${i.drop > 0 ? '−' : '+'}${nf(Math.abs(i.drop))}%</b></span><span>${i.kwh != null ? '<b>' + nf(i.kwh, 1) + '</b> kWh' : ''}</span><span>${nf(i.per_h * 100 / 100, 2)} %/h</span></div></div>`).join('') || `<div class="mut" style="font-size:13px;padding:8px 0">${X('Nicio perioadă în repaus în acest interval.', 'No idle periods in this range.')}</div>`;
+  return `<a class="back" href="#/car">‹ ${tr('Mașină')}</a>
+  <div class="top"><h1>${X('Somn și consum în repaus', 'Sleep & idle drain')}</h1><small>${X('offline din TeslaMate = adormită', 'TeslaMate offline = asleep')}</small></div>
+  <div class="seg">${[3, 7, 14, 30].map((n) => `<button data-sd="${n}" class="${n === sleepDays ? 'on' : ''}">${n} ${X('zile', 'days')}</button>`).join('')}</div>
+  <h2>${X('Rezumat', 'Summary')}</h2><div class="grid">${stat(X('Somn', 'Sleep'), nf(z.sleep_pct, 1), '%')}${stat(X('Ore dormite', 'Hours asleep'), nf(z.sleep_h, 1), 'h')}${stat(X('Treziri', 'Wakes'), nf(z.wakes))}${stat(X('Consum în repaus', 'Idle drain'), z.per_h != null ? nf(z.per_h, 2) : '—', '%/h')}${stat(X('Energie în repaus', 'Idle energy'), z.kwh_day != null ? nf(z.kwh_day, 2) : '—', 'kWh/' + X('zi', 'day'))}${stat(X('Pierdut total', 'Total lost'), nf(z.idle_drop), '%')}</div>
+  ${hint}
+  <h2>${X('Ultimele 48 de ore', 'Last 48 hours')}</h2><div class="card chart">${tl}</div>
+  ${sec(X('Somn pe zi (%)', 'Sleep per day (%)'), bars(z.by_day.map((d) => ({ l: new Date(d.day + 'T00:00:00').toLocaleDateString(LOC(), { day: 'numeric', month: 'short' }), v: d.pct })), { color: '#7aa8ff' }))}
+  <h2>${X('Perioade în repaus (între curse/încărcări)', 'Idle periods (between drives/charges)')}</h2>${idle}`;
+}
+function afterSleep() { view.querySelectorAll('[data-sd]').forEach((b) => b.onclick = () => { sleepDays = +b.dataset.sd; render(); }); }
+
+/* ---------- SANATATE BATERIE (pe Statistici) ---------- */
+function healthShell() { return `<h2>${X('Sănătatea bateriei', 'Battery health')}</h2><div id="bhealth"><div class="mut" style="font-size:13px">…</div></div>`; }
+async function afterHealth() {
+  const box = $('#bhealth'); if (!box) return;
+  let h; try { h = await api('/api/health_battery?car=' + car); } catch (e) { return; }
+  const COL = ['#6fd6b8', '#7aa8ff', '#d9ba80', '#ef7a7a', '#b69bff', '#8fd3ff'];
+  let cv = '';
+  if (h.curves.length) {
+    const Wd = 340, Hd = 130, pl = 30, pt = 8, pb = 18, mx = Math.max(10, ...h.curves.flatMap((c) => c.pts.map((p) => p[1])));
+    const X0 = (s) => pl + s / 100 * (Wd - pl - 6), Y0 = (v) => pt + (1 - v / mx) * (Hd - pt - pb);
+    cv = `<svg viewBox="0 0 ${Wd} ${Hd}"><path d="M${pl} ${Y0(0)}H${Wd - 6}M${pl} ${Y0(mx / 2)}H${Wd - 6}M${pl} ${Y0(mx)}H${Wd - 6}" stroke="#ffffff10"/>
+      ${h.curves.map((c, i) => `<path d="${c.pts.map((p, k) => (k ? 'L' : 'M') + X0(p[0]).toFixed(1) + ' ' + Y0(p[1]).toFixed(1)).join('')}" fill="none" stroke="${COL[i % 6]}" stroke-width="2" stroke-linejoin="round"/>`).join('')}
+      <text x="${pl - 5}" y="${Y0(mx) + 3}" text-anchor="end">${nf(mx)}</text><text x="${pl - 5}" y="${Y0(0) + 3}" text-anchor="end">0</text><text x="${pl}" y="${Hd - 3}">0%</text><text x="${Wd - 6}" y="${Hd - 3}" text-anchor="end">100%</text></svg>
+      <div class="legend" style="flex-wrap:wrap">${h.curves.map((c, i) => `<span><i style="background:${COL[i % 6]}"></i>${new Date(T(c.date)).toLocaleDateString(LOC(), { day: 'numeric', month: 'short' })} ${c.dc ? 'DC' : 'AC'}</span>`).join('')}</div>`;
+  }
+  const lab = (k) => k + '°';
+  setHtml(box, `<div class="grid">${stat(X('Capacitate utilizabilă', 'Usable capacity'), h.cap_now != null ? nf(h.cap_now, 1) : '—', 'kWh')}${stat(X('Degradare estimată', 'Estimated degradation'), h.degradation != null ? nf(h.degradation, 1) : '—', '%')}</div>
+    <p class="note" style="margin:6px 4px">${X('Estimată din energia adăugată pe sesiune / procentul încărcat (sesiuni de minim 15%). Mediană pe ultimele 8 sesiuni vs primele 8.', 'Estimated from energy added per session / percentage charged (sessions of at least 15%). Median of the last 8 sessions vs the first 8.')}</p>
+    ${sec(X('Capacitate estimată (kWh)', 'Estimated capacity (kWh)'), line(h.capacity.map((c) => [+T(c.date), c.cap]), { color: '#6fd6b8', dec: 1 }))}
+    ${sec(X('Curbe de încărcare (kW după nivel baterie)', 'Charging curves (kW by battery level)'), cv || `<div class="mut" style="font-size:13px;padding:10px 0">${X('Prea puține date', 'Not enough data')}</div>`)}
+    ${sec(X('Consum după temperatura exterioară (Wh/km)', 'Consumption by outside temperature (Wh/km)'), bars(h.by_temp.map((x) => ({ l: lab(x.x), v: x.wh })), { color: '#d9ba80' }))}
+    ${sec(X('Consum după viteza medie (Wh/km)', 'Consumption by average speed (Wh/km)'), bars(h.by_speed.map((x) => ({ l: x.x + '+', v: x.wh })), { color: '#7aa8ff' }))}`);
+}
+
+/* ---------- CURSA: scor + evenimente, grafice interactive legate de harta ---------- */
+function driveEvents(ev) {
+  if (!ev) return '';
+  const cls = ev.score >= 85 ? 'ok' : ev.score >= 65 ? 'warn' : 'bad';
+  return `<h2>${X('Stil de condus', 'Driving style')}</h2><div class="grid g3"><div class="st"><i>${X('Scor', 'Score')}</i><b><span class="pill ${cls}" style="font-size:19px">${ev.score}</span></b></div>${stat(X('Frânări bruște', 'Hard braking'), nf(ev.hard_brake))}${stat(X('Accelerări bruște', 'Hard accel.'), nf(ev.hard_accel))}${stat(X('Recuperat', 'Regenerated'), nf(ev.regen_kwh, 1), 'kWh')}</div>
+  <p class="note" style="margin:6px 4px">${X('Scor = 100 − 5 × frânări bruște − 3 × accelerări bruște (peste ~2,5 m/s²). Indicativ, calculat din punctele GPS.', 'Score = 100 − 5 × hard braking − 3 × hard acceleration (above ~2.5 m/s²). Indicative, computed from GPS samples.')}</p>`;
+}
+function driveHover(pts, lmap) {
+  if (!pts || pts.length < 3 || !window.L || !lmap) return;
+  const svgs = view.querySelectorAll('.chart svg');
+  let dot = null, tip = $('#dtip');
+  const t = (p) => +T(p[0]), t0 = t(pts[0]), t1 = t(pts[pts.length - 1]);
+  svgs.forEach((svg) => {
+    const line2 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line2.setAttribute('y1', 6); line2.setAttribute('y2', 92); line2.setAttribute('stroke', '#fff'); line2.setAttribute('stroke-opacity', '.5'); line2.style.display = 'none'; svg.appendChild(line2);
+    const move = (e) => {
+      const r = svg.getBoundingClientRect(), vb = svg.viewBox.baseVal, xv = (e.clientX - r.left) / r.width * vb.width;
+      const f = Math.max(0, Math.min(1, (xv - 30) / (vb.width - 36))), tt = t0 + f * (t1 - t0);
+      let i = 0; while (i < pts.length - 1 && t(pts[i + 1]) <= tt) i++;
+      const p = pts[i];
+      svgs.forEach((s2) => { const l2 = s2.querySelector('line:last-child'); if (l2) { l2.setAttribute('x1', 30 + f * (vb.width - 36)); l2.setAttribute('x2', 30 + f * (vb.width - 36)); l2.style.display = ''; } });
+      if (dot) dot.setLatLng([p[1], p[2]]); else dot = window.L.circleMarker([p[1], p[2]], { radius: 8, color: '#fff', weight: 3, fillColor: '#6fd6b8', fillOpacity: 1 }).addTo(lmap);
+      if (tip) tip.textContent = tm(p[0]) + ' · ' + nf(p[3]) + ' km/h · ' + nf(p[4]) + ' kW · ' + nf(p[5]) + '% · ' + nf(p[6]) + ' m';
+    };
+    svg.style.touchAction = 'pan-y';
+    svg.addEventListener('pointermove', move); svg.addEventListener('pointerdown', move);
+  });
+}
+
+/* ---------- AUTOMATIZARI (#/auto) ---------- */
+async function pageAuto() {
+  const d = await api('/api/rules');
+  const nm = (r) => r.type === 'arrive_gate' ? X('La sosirea în „', 'On arriving at “') + esc(r.geofence) + X('” deschide poarta (HomeLink)', '” open the gate (HomeLink)')
+    : r.type === 'plug_limit' ? X('La conectarea cablului', 'When the cable is plugged in') + (r.geofence ? X(' la „', ' at “') + esc(r.geofence) + '”' : '') + X(': limită ', ': limit ') + r.limit + '%'
+    : X('Pornește clima la ', 'Start climate at ') + r.time + ' · ' + (r.days === 'WEEKDAYS' ? X('Luni–Vineri', 'Weekdays') : r.days === 'WEEKEND' ? 'Weekend' : X('zilnic', 'daily'));
+  const list = d.rules.map((r) => `<div class="row srow"><div><b style="font-size:14px">${nm(r)}</b><small>${r.enabled ? X('activă', 'on') : X('oprită', 'off')}</small></div><div class="sp"></div>
+    <label class="sw" style="padding:0"><input type="checkbox" data-rt="${r.id}" ${r.enabled ? 'checked' : ''}><i></i></label><button class="x" data-rd="${r.id}" style="margin-left:10px">✕</button></div>`).join('') || `<div class="mut" style="font-size:13px">${X('Nicio automatizare încă.', 'No automations yet.')}</div>`;
+  const fg = d.geofences.map((g) => `<option>${esc(g)}</option>`).join('');
+  const log = d.log.map((l) => `<div class="row nrow"><div><b style="color:${l.ok ? 'var(--mint)' : '#ffb3b3'}">${esc(l.msg)}</b></div><div class="sp"></div><span class="mut" style="font-size:11.5px">${ago(l.t)}</span></div>`).join('') || `<p class="note" style="margin:0">${X('Nicio execuție încă.', 'No runs yet.')}</p>`;
+  return `<a class="back" href="#/car">‹ ${tr('Mașină')}</a>
+  <div class="top"><h1>${X('Automatizări', 'Automations')}</h1><small>${X('Rulează pe server, fără PIN — activează doar ce vrei. Comenzile merg prin BLE când e disponibil, altfel prin Tesla.', 'Run on the server without a PIN — enable only what you want. Commands go via BLE when available, otherwise via Tesla.')}</small></div>
+  <div class="card">${list}</div>
+  <h2>${X('Adaugă', 'Add')}</h2>
+  <div class="card"><div class="addf"><label>${X('Tip', 'Type')}<select id="rtype"><option value="arrive_gate">${X('Deschide poarta la sosire', 'Open gate on arrival')}</option><option value="plug_limit">${X('Limită la conectarea cablului', 'Charge limit when plugging in')}</option><option value="depart_climate">${X('Clima înainte de plecare', 'Pre-departure climate')}</option></select></label></div>
+    <div class="addf" id="rfields"></div>
+    <div class="links"><a href="#" id="radd">${X('Adaugă automatizarea', 'Add automation')}</a></div></div>
+  <div class="toast" id="rmsg">${X('Poarta și deschiderile cer prudență: GPS-ul poate „sări”. Fiecare regulă are pauză de 10 minute între declanșări.', 'Gates and openings need care: GPS can jitter. Each rule has a 10-minute cooldown between triggers.')}</div>
+  <h2>${X('Ultimele execuții', 'Recent runs')}</h2><div class="card">${log}</div>
+  <script type="application/json" id="rgf">${JSON.stringify(d.geofences)}</script>`;
+}
+function afterAuto() {
+  const gf = JSON.parse(document.getElementById('rgf')?.textContent || '[]'), opt = gf.map((g) => `<option>${esc(g)}</option>`).join('');
+  const fields = () => {
+    const t = $('#rtype').value;
+    $('#rfields').innerHTML = t === 'arrive_gate' ? `<label>${X('Loc (geofence TeslaMate)', 'Place (TeslaMate geofence)')}<select id="rgfn">${opt}</select></label>`
+      : t === 'plug_limit' ? `<label>${X('Loc (opțional)', 'Place (optional)')}<select id="rgfn"><option value="">—</option>${opt}</select></label><label>${X('Limită %', 'Limit %')}<input type="number" id="rlim" min="50" max="100" value="80"></label>`
+      : `<label>${X('Ora', 'Time')}<input type="time" id="rtime" value="07:30"></label><label>${X('Zile', 'Days')}<select id="rdays"><option value="ALL">${X('Zilnic', 'Daily')}</option><option value="WEEKDAYS">${X('Luni–Vineri', 'Weekdays')}</option><option value="WEEKEND">Weekend</option></select></label>`;
+  };
+  $('#rtype').onchange = fields; fields();
+  const post = async (body) => {
+    const pin = getPin(); if (!pin) return;
+    const r = await fetch('/api/rules', { method: 'POST', headers: { 'X-Pin': pin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), j = await r.json();
+    if (r.status === 403) { localStorage.removeItem('pin'); toast('rmsg', j.reason || tr('PIN greșit.'), 'bad'); return; }
+    if (j.ok === false || j.error) { toast('rmsg', '✗ ' + (j.reason || j.error), 'bad'); return; }
+    render();
+  };
+  $('#radd').onclick = (e) => { e.preventDefault(); const t = $('#rtype').value;
+    if (t === 'arrive_gate' && !confirm(X('Poarta se va deschide automat la sosire. Continui?', 'The gate will open automatically on arrival. Continue?'))) return;
+    post({ type: t, geofence: $('#rgfn')?.value, limit: $('#rlim')?.value, time: $('#rtime')?.value, days: $('#rdays')?.value }); };
+  view.querySelectorAll('[data-rt]').forEach((b) => b.onchange = () => post({ toggle: b.dataset.rt }));
+  view.querySelectorAll('[data-rd]').forEach((b) => b.onclick = () => { if (confirm(X('Ștergi automatizarea?', 'Delete this automation?'))) post({ delete: b.dataset.rd }); });
+}
+
+/* ---------- Sursa energiei pe pagina unei incarcari ---------- */
+async function afterChargeSolar(id) {
+  const box = $('#chsolar'); if (!box) return;
+  let d; try { d = await api('/api/charge_solar/' + id); } catch (e) { return; }
+  if (!d.available) { box.remove(); return; }
+  const sh = d.solar_share;
+  setHtml(box, `<h2>${X('Sursa energiei (estimat)', 'Energy source (estimate)')}</h2><div class="card"><div class="row"><div class="pct" style="font-size:40px">${sh != null ? sh : '—'}<small>%</small></div><div class="rng">${X('din soare / baterie casă', 'from solar / home battery')}</div></div>
+    <div class="bar"><div class="fill" style="width:${sh || 0}%"></div></div>
+    <div class="grid" style="margin-top:12px">${stat(X('Din rețea (import)', 'From grid (import)'), nf(d.grid_kwh, 1), 'kWh')}${stat(X('Consumat de mașină', 'Used by the car'), nf(d.car_kwh, 1), 'kWh')}</div>
+    <p class="note" style="margin:8px 0 0">${X('Estimare: importul din rețea al invertorului în timpul încărcării, comparat cu energia consumată de mașină. Consumul casei din rețea în acel interval poate umfla partea „din rețea”.', 'Estimate: the inverter’s grid import during the charge versus the energy the car used. House load drawn from the grid in that window can inflate the “from grid” part.')}</p></div>`);
 }

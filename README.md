@@ -8,19 +8,29 @@ A mobile-first, [Tessie](https://tessie.com)-style web app (installable PWA) on 
 
 ## Features
 
+<p align="center">
+  <img src="docs/img/car.jpg" width="190" alt="Car page"> &nbsp;
+  <img src="docs/img/climate.jpg" width="190" alt="Climate page"> &nbsp;
+  <img src="docs/img/replay.jpg" width="190" alt="3D route replay"> &nbsp;
+  <img src="docs/img/sleep.jpg" width="190" alt="Sleep and idle drain">
+</p>
+
 | Area | What you get |
 |---|---|
 | **Car** | Live state via TeslaMate MQTT (battery, range, charging, locks, doors, tyre pressure if available), top-down car picture, map, last drive/charge, **sleep card** (asleep since, last sleep, sleep in the last 24 h) |
-| **Controls** (Fleet API) | Lock/unlock, climate on/off, charging start/stop, charge port, sentry, frunk/trunk, vent/close windows, flash/honk, charge limit, **HomeLink** (open the gate/garage) |
+| **Controls** | Lock/unlock, climate, charging start/stop, charge port, sentry, frunk/trunk, vent/close windows, flash/honk, charge limit, **HomeLink**. Through the Fleet API, or **locally over BLE via Home Assistant** (see below) |
 | **Climate page** | Target temperature, 5 heated seats on the car picture, heated steering wheel, defrost, cabin overheat protection and its threshold |
-| **Charging control** | Charging current (A), scheduled charging and scheduled departure/preconditioning (the current Tesla schedule model — add/remove) |
-| **Drives** | Day-grouped list, detail with speed-coloured map and charts, and **animated 3D route replay**: tilted map that follows the car, clock, weather (Open-Meteo), speed-adaptive zoom, stops and charging stops on the route, battery/net/regen/charged figures, click any point on the route to inspect it, zoom and free-explore |
+| **Charging control** | Charging current (A), scheduled charging and scheduled departure/preconditioning (current Tesla schedule model — add/remove), **energy source of each charge** (grid vs solar, estimated, via Home Assistant) |
+| **Drives** | Day-grouped list; detail with speed-coloured map, charts linked to the map (touch a chart → the point on the map), **driving style** (hard braking/acceleration, regen, score); **animated 3D route replay**: tilted map following the car, clock, weather (Open-Meteo), speed-adaptive zoom, stops and charging stops, battery/net/regen/charged, click any route point to inspect it, zoom/free explore, and **export to video (MP4/WebM)** |
+| **Sleep & idle drain** | 48-hour sleep/awake timeline, sleep % per day, idle battery drain between drives/charges (%/h and kWh/day), detection of periodic short wakes (something polling the car) |
 | **Charges** | History with curves (power, SoC, energy), cost |
-| **Stats** | Distance/day, consumption, cost, battery range degradation, state history, software updates |
-| **Notifications** | Cable connected, charging complete, door/trunk opened (while locked, or left open > 5 min) — to a webhook (e.g. Home Assistant → phone) plus an in-app history |
+| **Stats** | Distance/day, consumption, cost, range degradation, **battery health** (usable capacity from charges, charging-curve comparison, consumption vs temperature and speed), state history, software updates |
+| **Notifications** | Cable connected, charging complete, door/trunk opened (while locked, or left open > 5 min), software update, battery < 20 % while parked — to a webhook (e.g. Home Assistant → phone) plus an in-app history |
+| **Automations** | Open the gate on arrival at a geofence, set a charge limit when plugging in, pre-departure climate |
+| **Sharing** | Roles for Cloudflare Access users: `admin`, `family` (everyday commands only), `viewer` (read-only) |
 | **PWA** | Add to Home Screen on iOS/Android; works as a standalone app |
 
-Read-only features (everything except Controls/Climate/Charging control/HomeLink) work with **just TeslaMate** — no Tesla developer account needed.
+Read-only features (everything except Controls/Climate/Charging control/HomeLink/Automations) work with **just TeslaMate** — no Tesla developer account needed.
 
 ## Architecture
 
@@ -69,6 +79,10 @@ Controls need a Tesla developer app, a public HTTPS domain that serves your publ
 
 Keep the app on your LAN unless you protect it. Options (Cloudflare Access recommended), PIN, passwords and what port 4101 exposes: **[docs/security.md](docs/security.md)**.
 
+## Home Assistant (optional)
+
+Local Bluetooth commands through an ESP32, energy source per charge: **[docs/home-assistant.md](docs/home-assistant.md)**.
+
 ## Notifications
 
 Set `NOTIFY_WEBHOOK` — see **[docs/notifications.md](docs/notifications.md)** (includes a Home Assistant automation).
@@ -87,6 +101,7 @@ Map tiles from OpenStreetMap, MapLibre GL JS and Leaflet from cdnjs, weather fro
 
 * [docs/fleet-api.md](docs/fleet-api.md) — Tesla developer app, domain, key, authorisation
 * [docs/security.md](docs/security.md) — internet exposure, PIN, passwords, Cloudflare Access
+* [docs/home-assistant.md](docs/home-assistant.md) — BLE commands, energy source, automations
 * [docs/notifications.md](docs/notifications.md) — webhook and Home Assistant example
 * [docs/troubleshooting.md](docs/troubleshooting.md) — common errors
 * [docs/development.md](docs/development.md) — structure, local demo, API, contributing

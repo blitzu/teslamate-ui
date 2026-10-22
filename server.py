@@ -71,6 +71,7 @@ def mqtt_thread():
             broadcast({'car': car, 'k': key, 'v': val})
             try:
                 notify_check(car, key, prev, val)
+                rules_check(car, key, prev, val)
             except Exception as e:  # noqa
                 print('notify:', e, flush=True)
 
@@ -226,6 +227,128 @@ def demo_trip(did):
             dict(drive=mk(d1['id'] + 1000, start2, end2, p2, 'Supercharger Pitești', 'Sibiu'), points=p2)]
     stops = [dict(kind='charge', lat=p1[-1][1], lon=p1[-1][2], start=t_end.isoformat(), end=start2.isoformat(), kwh=17.9, s0=round(p1[-1][5]), s1=round(p1[-1][5] + 28), dc=True, name='Supercharger Pitești')]
     return dict(segments=segs, stops=stops)
+
+
+def _runs(rows, now):
+    """Contopeste randurile din states in intervale (sleep = asleep+offline, awake = online), cronologic."""
+    out = []
+    for r in rows:
+        k = 'sleep' if r['s'] in ('asleep', 'offline') else 'awake'
+        st, en = r['start_date'], r['end_date']
+        if out and out[-1]['s'] == k and out[-1]['end'] == st:
+            out[-1]['end'] = en
+        else:
+            out.append(dict(s=k, start=st, end=en))
+    return out
+
+
+def sleep_report(car, days):
+    """Somn si consum in repaus: intervale de somn/veghe, scurgere de baterie intre activitati (curse/incarcari), tipar de treziri."""
+    now = dt.datetime.utcnow()
+    since = now - dt.timedelta(days=days)
+    P = lambda x: dt.datetime.fromisoformat(x) if x else now
+    rows = q("select state::text as s, start_date, end_date from states where car_id=%s and coalesce(end_date, now() at time zone 'utc') > %s order by start_date", (car, since))
+    runs = _runs(rows, now)
+    for r in runs:                                   # taie la fereastra ceruta
+        if P(r['start']) < since:
+            r['start'] = since.isoformat()
+    sleep_s = sum((min(P(r['end']), now) - P(r['start'])).total_seconds() for r in runs if r['s'] == 'sleep')
+    win = max((now - since).total_seconds(), 1)
+    # trezirile scurte repetate (tipar de tip 'ciclu BLE'): perioade veghe intre doua somnuri, fara curse/incarcari
+    awake = [(P(r['end']) - P(r['start'])).total_seconds() / 60 for i, r in enumerate(runs) if r['s'] == 'awake' and r['end'] and 0 < i < len(runs) - 1]
+    short = [m for m in awake if 8 <= m <= 16]
+    eff = (q("select efficiency from cars where id=%s", (car,)) or [{'efficiency': 0.15}])[0]['efficiency'] or 0.15
+    acts = q("""select 'd' as k, d.start_date, d.end_date, sp.battery_level as s0, ep.battery_level as s1, sp.ideal_battery_range_km as r0, ep.ideal_battery_range_km as r1
+        from drives d left join positions sp on sp.id=d.start_position_id left join positions ep on ep.id=d.end_position_id
+        where d.car_id=%s and d.end_date is not null and d.end_date > %s
+        union all select 'c', cp.start_date, cp.end_date, cp.start_battery_level, cp.end_battery_level, cp.start_ideal_range_km, cp.end_ideal_range_km
+        from charging_processes cp where cp.car_id=%s and cp.end_date is not null and cp.end_date > %s order by 2""", (car, since, car, since))
+    idle = []
+    for a, b in zip(acts, acts[1:]):
+        t0, t1 = P(a['end_date']), P(b['start_date'])
+        hrs = (t1 - t0).total_seconds() / 3600
+        if hrs < 0.5 or a['s1'] is None or b['s0'] is None:
+            continue
+        sl = sum(max(0, (min(P(r['end']), t1) - max(P(r['start']), t0)).total_seconds()) for r in runs if r['s'] == 'sleep') / 3600
+        drop = a['s1'] - b['s0']
+        kwh = ((a['r1'] or 0) - (b['r0'] or 0)) * eff if a['r1'] is not None and b['r0'] is not None else None
+        idle.append(dict(start=a['end_date'], end=b['start_date'], hours=round(hrs, 2), sleep_h=round(sl, 2), drop=drop, kwh=round(kwh, 2) if kwh is not None else None,
+                         per_h=round(drop / hrs, 3), pct_sleep=round(sl / hrs * 100)))
+    tot_h = sum(i['hours'] for i in idle)
+    tot_drop = sum(i['drop'] for i in idle)
+    tot_kwh = sum(i['kwh'] for i in idle if i['kwh'] is not None)
+    by_day = {}
+    for r in runs:
+        if r['s'] != 'sleep':
+            continue
+        a, b = P(r['start']), min(P(r['end']), now)
+        while a < b:
+            d0 = a.replace(hour=0, minute=0, second=0, microsecond=0)
+            e = min(b, d0 + dt.timedelta(days=1))
+            by_day[d0.date().isoformat()] = by_day.get(d0.date().isoformat(), 0) + (e - a).total_seconds()
+            a = e
+    return dict(days=days, runs=runs[-300:], sleep_pct=round(sleep_s / win * 100, 1), sleep_h=round(sleep_s / 3600, 1),
+                wakes=len([r for r in runs if r['s'] == 'awake']), short_wakes=len(short), short_med=round(sorted(short)[len(short) // 2], 1) if short else None,
+                idle=idle[::-1][:30], idle_hours=round(tot_h, 1), idle_drop=tot_drop, idle_kwh=round(tot_kwh, 1), per_h=round(tot_drop / tot_h, 3) if tot_h else None,
+                kwh_day=round(tot_kwh / (tot_h / 24), 2) if tot_h else None, by_day=[dict(day=k, pct=round(v / 864, 1)) for k, v in sorted(by_day.items())])
+
+
+def battery_health(car):
+    """Capacitate utilizabila estimata din incarcari, curbe de incarcare comparate, consum in functie de temperatura si viteza."""
+    ses = q("""select cp.id, cp.start_date, cp.charge_energy_added as kwh, cp.start_battery_level as s0, cp.end_battery_level as s1,
+        (select bool_or(fast_charger_present) from charges ch where ch.charging_process_id=cp.id) as dc
+        from charging_processes cp where cp.car_id=%s and cp.end_date is not null and cp.charge_energy_added > 3 and cp.end_battery_level - cp.start_battery_level >= 15
+        order by cp.start_date""", (car,))
+    cap = [dict(date=x['start_date'], cap=round(x['kwh'] / (x['s1'] - x['s0']) * 100, 1)) for x in ses]
+    vals = [c['cap'] for c in cap]
+    med = lambda v: sorted(v)[len(v) // 2] if v else None
+    now_c, first_c = med(vals[-8:]), med(vals[:8])
+    last = [x for x in ses[-12:]][-6:]
+    curves = []
+    for x in last:
+        pts = q("""select battery_level as soc, avg(charger_power) as kw from charges where charging_process_id=%s and battery_level is not null and charger_power is not null
+            group by battery_level order by 1""", (x['id'],))
+        bucket = {}
+        for p in pts:
+            bucket.setdefault(int(p['soc']) // 5 * 5, []).append(p['kw'])
+        curves.append(dict(id=x['id'], date=x['start_date'], dc=bool(x['dc']), pts=[[k, round(sum(v) / len(v), 1)] for k, v in sorted(bucket.items())]))
+    eff = (q("select efficiency from cars where id=%s", (car,)) or [{'efficiency': 0.15}])[0]['efficiency'] or 0.15
+    dr = q("""select d.distance, d.duration_min, d.outside_temp_avg as t, (d.start_ideal_range_km - d.end_ideal_range_km) as rng from drives d
+        where d.car_id=%s and d.end_date is not null and d.distance > 5 and d.duration_min > 3 and d.start_date > (now() at time zone 'utc') - interval '1 year'""", (car,))
+    bt, bs = {}, {}
+    for d in dr:
+        if d['rng'] is None or d['distance'] is None or d['distance'] <= 0:
+            continue
+        wh = d['rng'] * eff * 1000 / d['distance']
+        if not 40 < wh < 400:
+            continue
+        if d['t'] is not None:
+            bt.setdefault(int(d['t'] // 5 * 5), []).append(wh)
+        sp = d['distance'] / d['duration_min'] * 60
+        bs.setdefault(int(sp // 20 * 20), []).append(wh)
+    f = lambda b: [dict(x=k, wh=round(sum(v) / len(v)), n=len(v)) for k, v in sorted(b.items())]
+    return dict(capacity=cap, cap_now=now_c, cap_first=first_c, degradation=round((1 - now_c / first_c) * 100, 1) if now_c and first_c else None,
+                curves=curves, by_temp=f(bt), by_speed=f(bs))
+
+
+def drive_events(did):
+    """Evenimente din puncte brute: franari/accelerari bruste (>= ~2,5 m/s2), energie recuperata, scor simplu de conducere."""
+    rows = q("select date, speed, power from positions where drive_id=%s and speed is not null order by date", (did,))
+    acc = brk = 0
+    regen = 0.0
+    for a, b in zip(rows, rows[1:]):
+        dtt = (_dtp(b['date']) - _dtp(a['date'])).total_seconds()
+        if dtt <= 0 or dtt > 6:
+            continue
+        g = (b['speed'] - a['speed']) / 3.6 / dtt          # m/s2
+        if g > 2.5:
+            acc += 1
+        elif g < -2.5:
+            brk += 1
+        if b['power'] is not None and b['power'] < 0:
+            regen += -b['power'] * dtt / 3600
+    score = max(0, 100 - 5 * brk - 3 * acc)
+    return dict(hard_accel=acc, hard_brake=brk, regen_kwh=round(regen, 2), score=score)
 
 
 def overview(car, days):
@@ -390,12 +513,164 @@ DEMO_VD = dict(climate_state=dict(driver_temp_setting=21.0, passenger_temp_setti
                precondition_schedules=[dict(id=2, days_of_week=62, precondition_time=435, enabled=True, one_time=False)])
 
 
+def demo_sleep(days):
+    r = random.Random(3)
+    now = dt.datetime.utcnow()
+    runs, t = [], now - dt.timedelta(days=days)
+    sleeping = True
+    while t < now:
+        m = r.choice([25, 38, 90, 200, 420]) if sleeping else r.choice([12, 12, 13, 25, 60])
+        e = min(t + dt.timedelta(minutes=m), now)
+        runs.append(dict(s='sleep' if sleeping else 'awake', start=t.isoformat(), end=e.isoformat() if e < now else None))
+        t, sleeping = e, not sleeping
+    return dict(days=days, runs=runs, sleep_pct=72.4, sleep_h=round(days * 24 * .724, 1), wakes=19, short_wakes=9, short_med=12.1,
+                idle=[dict(start=(now - dt.timedelta(hours=30 + 20 * i)).isoformat(), end=(now - dt.timedelta(hours=18 + 20 * i)).isoformat(), hours=12 + i, sleep_h=9 + i * .5, drop=1 + i % 2, kwh=round(.6 + i * .2, 2), per_h=round((1 + i % 2) / (12 + i), 3), pct_sleep=75) for i in range(5)],
+                idle_hours=88, idle_drop=7, idle_kwh=4.8, per_h=.08, kwh_day=1.3, by_day=[dict(day=(now - dt.timedelta(days=d)).date().isoformat(), pct=round(60 + 25 * random.Random(d).random(), 1)) for d in range(days - 1, -1, -1)])
+
+
+def demo_health():
+    r = random.Random(5)
+    now = dt.datetime.utcnow()
+    cap = [dict(date=(now - dt.timedelta(days=60 - i * 3)).isoformat(), cap=round(57.4 - i * .03 + r.uniform(-.5, .5), 1)) for i in range(20)]
+    curves = [dict(id=i, date=(now - dt.timedelta(days=5 * i)).isoformat(), dc=i % 2 == 0, pts=[[s, round((150 * (1 - s / 105) ** 1.4 if i % 2 == 0 else 10.8) + r.uniform(-3, 3), 1)] for s in range(10, 95, 5)]) for i in range(4)]
+    return dict(capacity=cap, cap_now=57.0, cap_first=57.5, degradation=0.9, curves=curves, by_temp=[dict(x=t, wh=int(128 + (15 - t) * 1.4), n=6) for t in range(-5, 30, 5)], by_speed=[dict(x=s, wh=int(110 + abs(s - 60) * 1.1), n=8) for s in range(20, 140, 20)])
+
+
 def demo_battery():
     now = dt.date.today()
     rng = [dict(week=(now - dt.timedelta(weeks=w)).isoformat(), range100=round(540 - (52 - w) * .06 + random.Random(w).uniform(-3, 3), 1), rated100=0) for w in range(52, -1, -4)]
     return dict(range100=rng, states=[dict(s='online', hours=214), dict(s='asleep', hours=412), dict(s='offline', hours=6)],
                 updates=[dict(start_date=(dt.datetime.utcnow() - dt.timedelta(days=12)).isoformat(), version='2026.14.3'), dict(start_date=(dt.datetime.utcnow() - dt.timedelta(days=45)).isoformat(), version='2026.8.6')])
 
+
+
+# ---------------------------------------------------------------- Home Assistant (comenzi locale prin ESP32 BLE + date solare)
+HA = dict(url=os.environ.get('HA_URL', '').rstrip('/'), token=os.environ.get('HA_TOKEN', ''), prefix=os.environ.get('HA_BLE_PREFIX', 'tesla_ble'),
+          ble=os.environ.get('BLE_FIRST', '1') == '1', grid=os.environ.get('HA_GRID_IMPORT', ''), pv=os.environ.get('HA_PV_POWER', ''))
+
+
+def ha_ok():
+    return bool(HA['url'] and HA['token'])
+
+
+def ha_req(method, path, data=None, timeout=12):
+    return http(HA['url'] + path, data, headers={'Authorization': 'Bearer ' + HA['token']}, method=method, timeout=timeout)
+
+
+def ha_state(eid):
+    try:
+        c, r = ha_req('GET', '/api/states/' + eid, timeout=6)
+        return r if c == 200 else None
+    except Exception:
+        return None
+
+
+def ble_plan(name, arg):
+    """comanda -> (domeniu, serviciu, date) pentru entitatile esphome-tesla-ble din HA; None = nu exista cale BLE (se foloseste Fleet API)."""
+    p, a = HA['prefix'], (arg if isinstance(arg, dict) else {})
+    E = lambda d, x: {'entity_id': '%s.%s_%s' % (d, p, x)}
+    if name == 'lock':
+        return 'lock', 'lock', E('lock', 'doors')
+    if name == 'unlock':
+        return 'lock', 'unlock', E('lock', 'doors')
+    if name in ('climate_on', 'climate_off'):
+        return 'climate', 'set_hvac_mode', dict(E('climate', 'climate'), hvac_mode='heat_cool' if name == 'climate_on' else 'off')
+    if name in ('charge_start', 'charge_stop'):
+        return 'switch', 'turn_on' if name == 'charge_start' else 'turn_off', E('switch', 'charger')
+    if name in ('sentry_on', 'sentry_off'):
+        return 'switch', 'turn_on' if name == 'sentry_on' else 'turn_off', E('switch', 'sentry_mode')
+    if name in ('flash', 'honk', 'wake'):
+        return 'button', 'press', E('button', {'flash': 'flash_lights', 'honk': 'sound_horn', 'wake': 'wake_up'}[name])
+    if name in ('frunk', 'trunk'):
+        return 'cover', 'open_cover', E('cover', name)
+    if name in ('port_open', 'port_close'):
+        return 'cover', 'open_cover' if name == 'port_open' else 'close_cover', E('cover', 'charge_port_door')
+    if name == 'charge_limit':
+        return 'number', 'set_value', dict(E('number', 'charging_limit'), value=int(max(50, min(100, float(arg)))))
+    if name == 'charging_amps':
+        return 'number', 'set_value', dict(E('number', 'charging_amps'), value=int(max(1, min(48, float(a.get('amps', 0))))))
+    if name == 'set_temps':
+        return 'climate', 'set_temperature', dict(E('climate', 'climate'), temperature=float(a.get('driver', 21)))
+    if name == 'steering_heater':
+        return 'switch', 'turn_on' if a.get('on') else 'turn_off', E('switch', 'heated_steering')
+    if name == 'defrost':
+        return 'climate', 'set_preset_mode', dict(E('climate', 'climate'), preset_mode='Defrost' if a.get('on') else 'Normal')
+    if name == 'cop':
+        return 'select', 'select_option', dict(E('select', 'cabin_overheat_protection'), option='Off' if not a.get('on') else ('Fan only' if a.get('fan_only') else 'On'))
+    if name == 'cop_temp':
+        return 'select', 'select_option', dict(E('select', 'cabin_overheat_temperature'), option=['Low', 'Medium', 'High'][int(a.get('level', 2))])
+    if name == 'seat_heater' and int(a.get('seat', -1)) in (0, 1):
+        return 'select', 'select_option', dict(E('select', 'front_left_seat_climate' if int(a['seat']) == 0 else 'front_right_seat_climate'),
+                                                option=['Off', 'Low heat', 'Medium heat', 'High heat'][int(a.get('level', 0))])
+    return None
+
+
+def ble_run(name, arg):
+    """Incearca comanda local prin ESP32 BLE (prin HA). None => foloseste Fleet API. Dict => rezultat (ok/eroare) pe calea BLE."""
+    if not (ha_ok() and HA['ble']):
+        return None
+    plan = ble_plan(name, arg)
+    if not plan:
+        return None
+    st = ha_state('binary_sensor.%s_status' % HA['prefix'])
+    if not st or st.get('state') != 'on':
+        return None
+    last = lambda: (ha_state('sensor.%s_last_command' % HA['prefix']) or {}).get('state')
+    before = last()
+    c, r = ha_req('POST', '/api/services/%s/%s' % plan[:2], plan[2])
+    if c >= 300:
+        return None
+    for _ in range(9):
+        time.sleep(.7)
+        now = last()
+        if now and now != before:
+            if 'success' in now.lower():
+                return dict(ok=True, via='ble', code=200, reason=now)
+            return None                       # BLE a esuat -> incearca Fleet
+    return dict(ok=True, via='ble', code=200, reason='trimis prin BLE (fără confirmare)')
+
+
+def ha_history(eid, t0, t1):
+    """Serie (timp UNIX, valoare) pentru un senzor numeric, din istoricul HA."""
+    q_ = urllib.parse.urlencode(dict(filter_entity_id=eid, end_time=t1.isoformat() + '+00:00', minimal_response='1', no_attributes='1'))
+    c, r = ha_req('GET', '/api/history/period/%s+00:00?%s' % (t0.isoformat(), q_), timeout=25)
+    out = []
+    if c == 200 and r and isinstance(r, list) and r[0]:
+        for x in r[0]:
+            try:
+                out.append((dt.datetime.fromisoformat(x['last_changed'].replace('Z', '+00:00')).timestamp(), float(x['state'])))
+            except (ValueError, KeyError, TypeError):
+                pass
+    return out
+
+
+def _integral(series, t0, t1):
+    """kWh dintr-o serie de puteri (W), functie constanta pe portiuni."""
+    if not series:
+        return 0.0
+    pts = [(max(t, t0), v) for t, v in series]
+    pts.append((t1, pts[-1][1]))
+    e = 0.0
+    for (ta, v), (tb, _) in zip(pts, pts[1:]):
+        if tb > ta:
+            e += v * (min(tb, t1) - ta) / 3600 / 1000
+    return e
+
+
+def charge_solar(cid):
+    """Estimare: cat din energia unei incarcari a venit din retea (import invertor) vs. restul (solar/baterie casa)."""
+    if not (ha_ok() and HA['grid']):
+        return dict(available=False)
+    cp = q("select start_date, end_date, charge_energy_used, charge_energy_added from charging_processes where id=%s", (cid,))
+    if not cp or not cp[0]['end_date']:
+        return dict(available=False)
+    cp = cp[0]
+    t0, t1 = _dtp(cp['start_date']), _dtp(cp['end_date'])
+    car_kwh = cp['charge_energy_used'] or cp['charge_energy_added'] or 0
+    grid = _integral(ha_history(HA['grid'], t0 - dt.timedelta(minutes=1), t1), t0.replace(tzinfo=dt.timezone.utc).timestamp(), t1.replace(tzinfo=dt.timezone.utc).timestamp())
+    pv = _integral(ha_history(HA['pv'], t0 - dt.timedelta(minutes=1), t1), t0.replace(tzinfo=dt.timezone.utc).timestamp(), t1.replace(tzinfo=dt.timezone.utc).timestamp()) if HA['pv'] else None
+    share = max(0.0, min(1.0, 1 - grid / car_kwh)) if car_kwh else None
+    return dict(available=True, car_kwh=round(car_kwh, 2), grid_kwh=round(grid, 2), pv_kwh=round(pv, 2) if pv is not None else None, solar_share=round(share * 100) if share is not None else None)
 
 
 # ---------------------------------------------------------------- Tesla Fleet API (comenzi)
@@ -458,7 +733,7 @@ def proxy_ctx():
 
 def fleet_status():
     t = tok_load()
-    return dict(configured=bool(FL['cid'] and FL['secret'] and FL['domain']), key=os.path.isfile(KEYPUB), authorized=bool(t.get('refresh_token')),
+    return dict(ble=bool(ha_ok() and HA['ble']), configured=bool(FL['cid'] and FL['secret'] and FL['domain']), key=os.path.isfile(KEYPUB), authorized=bool(t.get('refresh_token')),
                 registered=bool(t.get('registered')), pin=bool(FL['pin']), domain=FL['domain'],
                 ready=bool(FL['cid'] and FL['secret'] and FL['domain'] and t.get('refresh_token') and FL['pin']))
 
@@ -628,6 +903,10 @@ def ensure_awake(vin, lv):
 def run_command(car, name, arg=None):
     lv = LIVE.get(car, {})
     ep, pl = ('wake_up', {}) if name == 'wake' else build_cmd(name, arg, lv)       # valideaza inainte sa trezeasca masina
+    ble = ble_run(name, arg)
+    if ble:
+        VD.pop(car, None)
+        return ble
     vin = vin_for(car)
     if not vin:
         raise RuntimeError('Nu există VIN în TeslaMate (conectează mașina în TeslaMate).')
@@ -679,7 +958,7 @@ def vehicle_data(car, force=False):
 # ---------------------------------------------------------------- notificari (cablu, incarcare gata, usi) -> telefon prin webhook Home Assistant + istoric in aplicatie
 NFILE = '/data/notify.json'
 NHOOK = os.environ.get('NOTIFY_WEBHOOK', '')
-NDEFAULT = dict(plugged=True, charge_done=True, door=True)
+NDEFAULT = dict(plugged=True, charge_done=True, door=True, update=True, low_batt=True)
 EVENTS = []          # cele mai noi primele, max 60
 NLOCK = threading.Lock()
 LAST_SENT = {}
@@ -732,6 +1011,10 @@ def notify_check(car, key, old, new):
         notify('plugged', '🔌 Cablu conectat', '%s: cablul a fost conectat%s.' % (nm, ' (baterie %s%%)' % soc if soc is not None else ''))
     elif key == 'charging_state' and new == 'Complete' and st['charge_done'] and _once('charge_done', 600):
         notify('charge_done', '🔋 Încărcare terminată', '%s: baterie %s%%%s.' % (nm, soc if soc is not None else '?', ', limita %s%%' % lv['charge_limit_soc'] if lv.get('charge_limit_soc') else ''))
+    elif key == 'update_available' and new is True and st['update'] and _once('update', 6 * 3600):
+        notify('update', '⬇️ Update software disponibil', '%s: versiune nouă %s.' % (nm, lv.get('update_version') or ''))
+    elif key == 'battery_level' and isinstance(new, (int, float)) and new < 20 <= (old or 0) and st['low_batt'] and not lv.get('plugged_in') and lv.get('shift_state') in (None, 'P') and _once('low_batt', 12 * 3600):
+        notify('low_batt', '🪫 Baterie scăzută', '%s: baterie %s%% și nu e conectată la priză.' % (nm, new))
     elif key in OPEN_KEYS and new is True and st['door']:
         what = OPEN_KEYS[key]
         if lv.get('locked') and key != 'windows_open' and _once('door_locked:' + key, 120):
@@ -745,6 +1028,105 @@ def notify_check(car, key, old, new):
         t = threading.Timer(300, later)
         t.daemon = True
         t.start()
+
+
+
+# ---------------------------------------------------------------- automatizari (reguli salvate in /data/rules.json)
+RFILE = '/data/rules.json'
+RULE_TYPES = ('arrive_gate', 'depart_climate', 'plug_limit')
+RLOG = []            # ultimele executii
+RLOCK = threading.Lock()
+
+
+def rules_load():
+    try:
+        return json.load(open(RFILE))
+    except Exception:
+        return []
+
+
+def rules_save(rs):
+    os.makedirs(os.path.dirname(RFILE), exist_ok=True)
+    json.dump(rs, open(RFILE, 'w'))
+
+
+def rule_log(msg, ok=True):
+    with RLOCK:
+        RLOG.insert(0, dict(t=dt.datetime.utcnow().replace(microsecond=0).isoformat(), msg=msg, ok=ok))
+        del RLOG[40:]
+    notify('rule', '⚙️ Automatizare', msg)
+
+
+def rule_exec(car, rule, name, arg=None):
+    def go():
+        try:
+            r = run_command(car, name, arg)
+            rule_log('%s: %s %s%s' % (rule.get('name') or rule['type'], name, 'OK' if r.get('ok') else 'EȘUAT', ' (BLE)' if r.get('via') == 'ble' else ''), bool(r.get('ok')))
+        except Exception as e:  # noqa
+            rule_log('%s: %s eșuat - %s' % (rule.get('name') or rule['type'], name, e), False)
+    threading.Thread(target=go, daemon=True).start()
+
+
+def rules_check(car, key, old, new):
+    """Evenimente MQTT -> reguli de tip eveniment."""
+    if old is None or old == new:
+        return
+    lv = LIVE.get(car, {})
+    for r in rules_load():
+        if not r.get('enabled') or not _once('rule:%s' % r['id'], 600):
+            continue
+        t = r.get('type')
+        if t == 'arrive_gate' and key == 'geofence' and new == r.get('geofence') and old != new:
+            rule_exec(car, r, 'homelink')
+        elif t == 'plug_limit' and key == 'plugged_in' and new is True and (not r.get('geofence') or lv.get('geofence') == r.get('geofence')):
+            rule_exec(car, r, 'charge_limit', int(r.get('limit', 80)))
+
+
+def rules_clock():
+    """Reguli cu ora (clima inainte de plecare): verificate la fiecare 30 s."""
+    last = {}
+    tz = None
+    try:
+        import zoneinfo
+        tz = zoneinfo.ZoneInfo(os.environ.get('TZ', 'UTC'))
+    except Exception:
+        pass
+    while True:
+        time.sleep(30)
+        try:
+            now = dt.datetime.now(tz) if tz else dt.datetime.now()
+            for r in rules_load():
+                if r.get('enabled') and r.get('type') == 'depart_climate':
+                    days = r.get('days') or 'ALL'
+                    wd = now.weekday()
+                    if days == 'WEEKDAYS' and wd > 4 or days == 'WEEKEND' and wd < 5:
+                        continue
+                    if now.strftime('%H:%M') == r.get('time') and last.get(r['id']) != now.strftime('%Y-%m-%d'):
+                        last[r['id']] = now.strftime('%Y-%m-%d')
+                        for c in list(LIVE):
+                            rule_exec(c, r, 'climate_on')
+        except Exception as e:  # noqa
+            print('rules clock:', e, flush=True)
+
+
+def rule_clean(b):
+    t = b.get('type')
+    if t not in RULE_TYPES:
+        raise ValueError('tip invalid')
+    r = dict(id=secrets.token_hex(4), type=t, enabled=True, name=str(b.get('name') or '')[:60])
+    if t in ('arrive_gate', 'plug_limit'):
+        r['geofence'] = str(b.get('geofence') or '')[:80]
+        if t == 'arrive_gate' and not r['geofence']:
+            raise ValueError('alege locul (geofence)')
+    if t == 'plug_limit':
+        r['limit'] = int(max(50, min(100, float(b.get('limit', 80)))))
+    if t == 'depart_climate':
+        hh = str(b.get('time') or '07:30')
+        if not (len(hh) == 5 and hh[2] == ':' and hh[:2].isdigit() and hh[3:].isdigit()):
+            raise ValueError('ora invalida')
+        r['time'] = hh
+        r['days'] = b.get('days') if b.get('days') in ('ALL', 'WEEKDAYS', 'WEEKEND') else 'ALL'
+    return r
 
 
 # ---------------------------------------------------------------- acces din internet (parola + cookie semnat)
@@ -772,6 +1154,9 @@ def sess_ok(v):
 
 
 ACCESS = dict(team=os.environ.get('ACCESS_TEAM', ''), aud=os.environ.get('ACCESS_AUD', ''), email=os.environ.get('ACCESS_EMAIL', ''))
+# roluri pe e-mail (doar prin Cloudflare Access): ROLES='sotia@example.com:family,musafir@example.com:viewer'; ACCESS_EMAIL = administratorul
+ROLES = {k.strip().lower(): v.strip() for k, _, v in (x.partition(':') for x in os.environ.get('ROLES', '').split(',') if ':' in x)}
+FAMILY_OK = {'lock', 'unlock', 'climate_on', 'climate_off', 'set_temps', 'seat_heater', 'steering_heater', 'defrost', 'charge_start', 'charge_stop', 'flash', 'honk', 'wake', 'sentry_on', 'sentry_off'}
 _JWKS = []
 
 
@@ -785,7 +1170,8 @@ def access_ok(token):
             _JWKS.append(jwt.PyJWKClient('https://%s/cdn-cgi/access/certs' % ACCESS['team'], cache_keys=True, lifespan=3600))
         key = _JWKS[0].get_signing_key_from_jwt(token).key
         claims = jwt.decode(token, key, algorithms=['RS256'], audience=ACCESS['aud'], issuer='https://' + ACCESS['team'])
-        return not ACCESS['email'] or claims.get('email') == ACCESS['email']
+        em = str(claims.get('email') or '').lower()
+        return em or True if (ROLES or not ACCESS['email'] or em == ACCESS['email'].lower()) else False
     except Exception as e:  # noqa
         print('access jwt:', e, flush=True)
         return False
@@ -859,6 +1245,7 @@ def api_state():
 
 class H(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.0'
+    role = 'admin'
 
     def log_message(self, *a):
         pass
@@ -872,7 +1259,9 @@ class H(BaseHTTPRequestHandler):
     def authed(self):
         if DEMO_ONLY or not self.via_internet():
             return True            # LAN: ca pana acum
-        if access_ok(self.headers.get('Cf-Access-Jwt-Assertion', '')):
+        em = access_ok(self.headers.get('Cf-Access-Jwt-Assertion', ''))
+        if em:
+            self.role = 'admin' if em is True else ROLES.get(em, 'admin' if em == ACCESS['email'].lower() else 'viewer')
             return True            # a trecut de Cloudflare Access (verificat criptografic)
         if not AUTH['pw']:
             return False           # din internet fara parola configurata: totul inchis
@@ -947,7 +1336,9 @@ class H(BaseHTTPRequestHandler):
             if p == '/api/health':
                 return self.send_json(dict(ok=True, mqtt=bool(LIVE)))
             if p == '/api/state':
-                return self.send_json(api_state())
+                d = api_state()
+                d['role'] = self.role
+                return self.send_json(d)
             if p == '/api/stream':
                 return self.stream()
             if p.startswith('/api/fleet/') and DEMO_ONLY:
@@ -987,6 +1378,21 @@ class H(BaseHTTPRequestHandler):
                 return self.send_json(dict(ok=True, sent=notify('test', '🔔 Test notificare', 'Notificările din aplicația Tesla funcționează.')))
             if not FL['pin'] or not secrets.compare_digest(self.headers.get('X-Pin', ''), FL['pin']):
                 return self.send_json(dict(ok=False, reason='PIN greșit sau neconfigurat.'), 403)
+            name = u.path.rsplit('/', 1)[1] if u.path.startswith('/api/cmd/') else ''
+            if self.role == 'viewer' or (self.role == 'family' and (name not in FAMILY_OK)):
+                return self.send_json(dict(ok=False, reason='Nu ai permisiunea pentru această acțiune (rol: %s).' % self.role), 403)
+            if u.path == '/api/rules':
+                rs = rules_load()
+                if body.get('delete'):
+                    rs = [r for r in rs if r['id'] != body['delete']]
+                elif body.get('toggle'):
+                    for r in rs:
+                        if r['id'] == body['toggle']:
+                            r['enabled'] = not r.get('enabled')
+                else:
+                    rs.append(rule_clean(body))
+                rules_save(rs[:30])
+                return self.send_json(dict(ok=True, rules=rs))
             if u.path == '/api/fleet/register':
                 return self.send_json(partner_register())
             if u.path.startswith('/api/cmd/'):
@@ -1003,7 +1409,7 @@ class H(BaseHTTPRequestHandler):
             return DEMO['drives'][off:off + lim] if demo else drives(car, lim, off)
         if p.startswith('/api/drive/'):
             did = int(p.rsplit('/', 1)[1])
-            return dict(points=demo_points(did) if demo else drive_points(did))
+            return dict(points=demo_points(did) if demo else drive_points(did), events=dict(hard_accel=2, hard_brake=1, regen_kwh=0.9, score=89) if demo else drive_events(did))
         if p.startswith('/api/trip/'):
             did = int(p.rsplit('/', 1)[1])
             return demo_trip(did) if demo else trip(car, did)
@@ -1017,8 +1423,24 @@ class H(BaseHTTPRequestHandler):
             return demo_overview(days) if demo else overview(car, days)
         if p == '/api/battery':
             return demo_battery() if demo else battery(car)
+        if p == '/api/sleep':
+            n = max(1, min(int(a.get('days', 7)), 60))
+            return demo_sleep(n) if demo else sleep_report(car, n)
+        if p == '/api/health_battery':
+            return demo_health() if demo else battery_health(car)
+        if p.startswith('/api/charge_solar/'):
+            return dict(available=False) if demo else charge_solar(int(p.rsplit('/', 1)[1]))
         if p == '/api/vdata':
             return DEMO_VD if demo else vehicle_data(car, a.get('force') == '1')
+        if p == '/api/rules':
+            fg = []
+            try:
+                fg = [x['n'] for x in q("select distinct name as n from geofences where name is not null order by 1")]
+            except Exception:
+                pass
+            with RLOCK:
+                lg = list(RLOG)
+            return dict(rules=[] if demo else rules_load(), log=lg, geofences=fg or ['Acasă'], ha=ha_ok())
         if p == '/api/notify':
             with NLOCK:
                 ev = list(EVENTS)
@@ -1118,5 +1540,6 @@ def serve_public():
 if __name__ == '__main__':
     if not DEMO_ONLY:
         threading.Thread(target=mqtt_thread, daemon=True).start()
+        threading.Thread(target=rules_clock, daemon=True).start()
         threading.Thread(target=serve_public, daemon=True).start()
     ThreadingHTTPServer(('0.0.0.0', PORT), H).serve_forever()

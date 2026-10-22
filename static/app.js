@@ -206,7 +206,7 @@ function sleepBlock(c) {
   const l1 = asleep ? X('😴 Doarme de ', '😴 Asleep for ') + d(mins) + from : X('Trează de ', 'Awake for ') + d(mins) + from;
   const l2 = z.last ? (asleep ? X('Somnul anterior: ', 'Previous sleep: ') : X('Ultimul somn: ', 'Last sleep: ')) + d((T(z.last.end) - T(z.last.start)) / 60000) + ' (' + t(z.last.start) + '–' + t(z.last.end) + ')' : X('Niciun somn înregistrat încă', 'No sleep recorded yet');
   const pc = Math.round((z.sec24 || 0) / 864);
-  return `<div class="sleepc"><b>${l1}</b><span>${l2}</span><span>${X('Somn în ultimele 24 h: ', 'Sleep in the last 24 h: ')}${hm((z.sec24 || 0) / 60)} (${pc}%)</span></div>`;
+  return `<a class="sleepc" href="#/sleep" style="display:block;text-decoration:none;color:inherit"><b>${l1}</b><span>${l2}</span><span>${X('Somn în ultimele 24 h: ', 'Sleep in the last 24 h: ')}${hm((z.sec24 || 0) / 60)} (${pc}%)</span><span style="color:var(--mint)">${X('Detalii somn și consum în repaus ›', 'Sleep & idle drain details ›')}</span></a>`;
 }
 
 function drawMap(el, L) {
@@ -263,7 +263,7 @@ function sec(title, inner) { return `<h2>${title}</h2><div class="card chart">${
 async function pageDrive(id) {
   const rows = await api('/api/drives?car=' + car + '&limit=200');
   const d = rows.find((r) => r.id == id) || rows[0];
-  const pts = (await api('/api/drive/' + id)).points;
+  const dd = await api('/api/drive/' + id), pts = dd.points;
   const wh = d && d.distance > 0 && d.kwh != null ? d.kwh * 1000 / d.distance : null;
   const t = (p) => +T(p[0]);
   const html = `<a class="back" href="#/drives">‹ Curse</a>
@@ -271,6 +271,8 @@ async function pageDrive(id) {
   <a class="play" href="#/trip/${id}"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>${X('Reluare traseu', 'Replay route')}</a>
   <div class="map big" id="dmap"></div>
   <h2>Rezumat</h2><div class="grid g3">${stat('Distanță', nf(d?.distance, 1), 'km')}${stat('Durată', hm(d?.duration_min))}${stat('Consum', nf(d?.kwh, 1), 'kWh')}${stat('Eficiență', nf(wh), 'Wh/km')}${stat('Viteză max', nf(d?.speed_max), 'km/h')}${stat('Putere max', nf(d?.power_max), 'kW')}${stat('Baterie', nf(d?.start_soc) + '→' + nf(d?.end_soc), '%')}${stat('Temp. ext.', nf(d?.outside_temp_avg, 1), '°C')}${stat('Urcare', nf(d?.ascent), 'm')}</div>
+  ${driveEvents(dd.events)}
+  <div class="toast" id="dtip">${X('Atinge un grafic ca să vezi punctul pe hartă.', 'Touch a chart to see the point on the map.')}</div>
   ${sec('Viteză (km/h)', line(pts.map((p) => [t(p), p[3]]), { color: '#7aa8ff', fx: (x) => new Date(x).toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' }) }))}
   ${sec('Putere (kW)', line(pts.map((p) => [t(p), p[4]]), { color: '#d9ba80', fx: (x) => new Date(x).toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' }) }))}
   ${sec('Baterie (%)', line(pts.map((p) => [t(p), p[5]]), { color: '#6fd6b8', fx: (x) => new Date(x).toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' }) }))}
@@ -285,6 +287,7 @@ async function pageDrive(id) {
     const dot = (p, c) => window.L.circleMarker([p[1], p[2]], { radius: 7, color: '#0b0d10', weight: 3, fillColor: c, fillOpacity: 1 }).addTo(map);
     dot(pts[0], '#6fd6b8'); dot(pts[pts.length - 1], '#ef7a7a');
     map.fitBounds(pts.map((p) => [p[1], p[2]]), { padding: [24, 24] });
+    driveHover(pts, map);
   }, 0);
   return html;
 }
@@ -297,6 +300,7 @@ async function pageCharge(id) {
   return `<a class="back" href="#/charges">‹ Încărcări</a>
   <div class="top row"><div><h1 style="font-size:21px">${esc(c?.name)}</h1><small>${c ? T(c.start_date).toLocaleDateString(LOC(), { weekday: 'long', day: 'numeric', month: 'long' }) + ' · ' + tm(c.start_date) + '–' + tm(c.end_date) : ''}</small></div><div class="sp"></div><span class="badge ${c?.dc ? 'dc' : 'ac'}">${c?.dc ? 'DC' : 'AC'}</span></div>
   <h2>Rezumat</h2><div class="grid g3">${stat('Adăugat', nf(c?.charge_energy_added, 1), 'kWh')}${stat('Durată', hm(c?.duration_min))}${stat('Putere max', nf(c?.power_max), 'kW')}${stat('Baterie', nf(c?.start_soc) + '→' + nf(c?.end_soc), '%')}${stat('Consumat din rețea', nf(c?.charge_energy_used, 1), 'kWh')}${stat('Cost', c?.cost ? nf(c.cost, 2) : '—', (S.currency ?? '€'))}</div>
+  <div id="chsolar"></div>
   ${sec('Putere de încărcare (kW)', line(pts.map((p) => [t(p), p[1]]), { color: '#d9ba80', fx }))}
   ${sec('Nivel baterie (%)', line(pts.map((p) => [t(p), p[2]]), { color: '#6fd6b8', fx, min: 0, max: 100 }))}
   ${sec('Energie adăugată (kWh)', line(pts.map((p) => [t(p), p[5]]), { color: '#7aa8ff', fx, dec: 1 }))}`;
@@ -320,6 +324,7 @@ async function pageStats() {
   ${sec('kWh încărcați pe zi', bars(o.charge_by_day.map((x) => ({ l: lab(x.day), v: x.kwh })), { color: '#d9ba80' }))}
   <h2>Baterie</h2>${sec('Autonomie estimată la 100% (km)', line(b.range100.map((x) => [+new Date(x.week), x.range100]), { color: '#6fd6b8', dec: 0 }))}
   <p class="note" style="margin-top:6px">Calculată din autonomia ideală raportată la nivelul bateriei; scăderea lentă în timp indică degradarea.</p>
+  ${healthShell()}
   <h2>Stare mașină (ultimele 30 de zile)</h2><div class="card">${stateBar}</div>
   ${b.updates.length ? `<h2>Actualizări software</h2><div class="card">${b.updates.map((u) => `<div class="row" style="padding:5px 0"><b>${esc(u.version)}</b><div class="sp"></div><span class="mut">${T(u.start_date).toLocaleDateString(LOC(), { day: 'numeric', month: 'long', year: 'numeric' })}</span></div>`).join('')}</div>` : ''}`;
 }
@@ -351,7 +356,7 @@ async function sendCmd(name, label, arg, tile) {
     const r = await fetch('/api/cmd/' + name, { method: 'POST', headers: { 'X-Pin': pin, 'Content-Type': 'application/json' }, body: JSON.stringify({ car, arg }) });
     const j = await r.json();
     if (r.status === 403) { localStorage.removeItem('pin'); msg(tr('PIN greșit.'), 'bad'); return; }
-    msg(j.ok ? '✓ ' + label : '✗ ' + label + (j.reason ? ' — ' + j.reason : ''), j.ok ? 'ok' : 'bad');
+    msg(j.ok ? '✓ ' + label + (j.via === 'ble' ? ' · BLE' : '') : '✗ ' + label + (j.reason ? ' — ' + j.reason : ''), j.ok ? 'ok' : 'bad');
   } catch (e) { msg('✗ ' + label + ' — ' + e.message, 'bad'); }
   finally { if (tile) tile.classList.remove('busy'); }
 }
@@ -360,7 +365,7 @@ async function renderCmds() {
   if (S.demo && !S.public_demo) { setHtml(box, '<div class="note">Comenzile apar după ce mașina e conectată în TeslaMate și contul Tesla e autorizat.</div>'); return; }
   let f; if (S.public_demo) f = { ready: true }; else { try { f = await api('/api/fleet/status'); } catch (e) { return; } }
   const L = (cur() || {}).live || {};
-  if (!f.ready) {
+  if (!(f.ready || f.ble)) {
     const step = (ok, t) => `<div class="row" style="padding:5px 0"><span style="width:22px">${ok ? '✓' : '○'}</span><span class="${ok ? '' : 'mut'}">${t}</span></div>`;
     setHtml(box, `<div class="card">${step(f.configured, 'Aplicație Tesla (client id/secret) și domeniu configurate')}${step(f.key, 'Cheie publică generată')}${step(f.pin, 'PIN setat')}${step(f.registered, 'Domeniu înregistrat la Tesla')}${step(f.authorized, 'Cont Tesla autorizat')}
       <div class="links" style="flex-wrap:wrap">
@@ -436,7 +441,7 @@ async function render() {
   const [p, arg] = h.split('/');
   route = p;
   if (typeof RP !== 'undefined' && RP && p !== 'trip') stopReplay();
-  renderNav(['drive', 'trip'].includes(p) ? 'drives' : p === 'charge' ? 'charges' : p);
+  renderNav(['drive', 'trip'].includes(p) ? 'drives' : p === 'charge' ? 'charges' : p === 'sleep' || p === 'auto' ? 'car' : p);
   const seq = ++renderSeq;
   let html = '';
   try {
@@ -446,6 +451,8 @@ async function render() {
     else if (p === 'drive') html = await pageDrive(arg);
     else if (p === 'charge') html = await pageCharge(arg);
     else if (p === 'stats') html = await pageStats();
+    else if (p === 'sleep') html = await pageSleep();
+    else if (p === 'auto') html = await pageAuto();
     else if (p === 'climate') html = pageClimate();
     else if (p === 'trip') html = '';
     else html = pageCar();
@@ -459,6 +466,10 @@ async function render() {
   if (p === 'climate') afterClimate();
   if (p === 'charges') afterCharges();
   if (p === 'trip') startReplay(arg);
+  if (p === 'sleep') afterSleep();
+  if (p === 'auto') afterAuto();
+  if (p === 'charge') afterChargeSolar(arg);
+  if (p === 'stats') afterHealth();
   if (p === 'stats') view.querySelectorAll('.seg button').forEach((b) => b.onclick = () => { days = +b.dataset.d; render(); });
   if (p === 'car') scrollTo(0, y); else if (seq === renderSeq && !window.__keep) scrollTo(0, 0);
 }

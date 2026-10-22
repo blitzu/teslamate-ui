@@ -41,6 +41,21 @@ ACCESS_EMAIL=you@example.com
 
 Keep your tunnel hostnames for the app (`car.example.com`) and for the Tesla key (`tesla.example.com` → 4101) separate; only the latter must be reachable without a login.
 
+## Roles (sharing with family)
+
+With Cloudflare Access you can let other people in and limit what they can do. Add their e-mails to the Access policy, then set in `.env.access`:
+
+```
+ACCESS_EMAIL=you@example.com                       # the administrator
+ROLES=wife@example.com:family,guest@example.com:viewer
+```
+
+* `admin` — everything (also anyone on your LAN or using the app password).
+* `family` — lock/unlock, climate, temperature, seats, steering heater, defrost, charge start/stop, flash/honk, wake, sentry. No frunk/trunk, windows, HomeLink, charge schedules/amps, automations.
+* `viewer` — read-only.
+
+Enforced on the server; everyone still needs the command PIN.
+
 ## Hardening checklist
 
 * Back up `fleet/private-key.pem` offline; if it leaks, remove the virtual key from the car (Controls → Locks → Keys) and regenerate.

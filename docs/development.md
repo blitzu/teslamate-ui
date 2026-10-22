@@ -34,6 +34,8 @@ Without `DEMO_ONLY`, but with no reachable TeslaMate database, the app also fall
 | `GET /api/overview`, `/api/battery` | statistics |
 | `GET /api/vdata?car=` | climate/charge settings and schedules read from the car (only when TeslaMate says it is online; never wakes it) |
 | `GET /api/notify`, `POST /api/notify/settings`, `POST /api/notify/test` | notification history/settings |
+| `GET /api/sleep?days=`, `/api/health_battery`, `/api/charge_solar/<id>` | sleep & idle drain report, battery health, energy source of a charge |
+| `GET/POST /api/rules` | automations (POST needs the PIN) |
 | `POST /api/cmd/<name>` | command (header `X-Pin`, body `{"car":1,"arg":…}`); names in `CMDS` / `build_cmd()` in `server.py` |
 | `GET /api/fleet/status`, `/api/fleet/login`, `POST /api/fleet/register` | Fleet API onboarding |
 

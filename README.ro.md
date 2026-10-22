@@ -9,6 +9,7 @@ Aplicație web pentru telefon (PWA) peste propriul tău [TeslaMate](https://gith
 * **Clima:** temperatură, 5 scaune încălzite, volan, dezgheață, protecție la supraîncălzire.
 * **Încărcări:** istoric + control (curent în amperi, programări, plecare programată).
 * **Curse:** istoric, hartă colorată după viteză și **reluare animată 3D** a traseului (cu vreme, opriri, încărcări, zoom, click pe traseu).
+* **Somn și consum în repaus**, **sănătatea bateriei**, **export video** al traseului, **automatizări** (poartă la sosire, limită la conectare, clima înainte de plecare), comenzi **locale prin BLE** (ESP32 + Home Assistant) și roluri pentru familie.
 * **Statistici**, **notificări** (cablu conectat, încărcare terminată, ușă deschisă) către un webhook (ex. Home Assistant → telefon).
 
 Fără cont de developer Tesla funcționează tot, **mai puțin comenzile**.

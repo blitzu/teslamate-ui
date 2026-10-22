@@ -1,0 +1,27 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - name: Python syntax
+        run: python -m py_compile server.py
+      - name: JavaScript syntax
+        run: for f in static/app.js static/extra.js; do node --check "$f"; done
+      - name: Demo server smoke test
+        run: |
+          pip install paho-mqtt psycopg2-binary "pyjwt[crypto]"
+          DEMO_ONLY=1 PORT=4110 python server.py &
+          sleep 3
+          curl -fs localhost:4110/api/health
+          curl -fs localhost:4110/api/state | python -c "import sys,json; d=json.load(sys.stdin); assert d['cars']"
+          curl -fs localhost:4110/api/sleep?days=3 >/dev/null
+          curl -fs localhost:4110/api/trip/3 >/dev/null
+          curl -fsI localhost:4110/car.png | head -1
+      - name: Docker build
+        run: docker build -t teslamate-ui . && docker build -f Dockerfile.proxy -t teslamate-ui-proxy .
