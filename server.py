@@ -1818,7 +1818,11 @@ def la_payload(car):
     cs = lv.get('charging_state')
     if cs == 'Charging':
         tl = lv.get('time_to_full_charge') or 0
-        kw = ('%.1f' % float(lv.get('charger_power') or 0)).replace('.', ',')
+        kwf = float(lv.get('charger_power') or 0)                  # TeslaMate da kW intregi: rafinam cu tensiune x curent (1 sau 3 faze, cea mai apropiata de valoarea raportata)
+        v_, a_ = lv.get('charger_voltage'), lv.get('charger_actual_current')
+        if v_ and a_:
+            kwf = min((v_ * a_ * ph / 1000.0 for ph in (1, 3)), key=lambda x: abs(x - kwf))
+        kw = ('%.1f' % kwf).replace('.', ',')
         rest = ('%d h %02d min' % (int(tl), int(tl % 1 * 60))) if tl >= 1 else ('%d min' % max(1, round(tl * 60))) if tl else ''
         d = dict(base, critical_text=rest or '%s%%' % soc, notification_icon='mdi:ev-station', notification_icon_color='#4CC2A0', progress=soc, progress_max=max(lim, soc + 1), progress_bar_color='#4CC2A0',
                  background_color='#0B0D10', text_color='#FFFFFF')
