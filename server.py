@@ -160,6 +160,208 @@ def real_cost(row, allow_fetch=True):
     return RC_CACHE[k], True
 
 
+# ---------------------------------------------------------------- cost / furnizor per incarcare (doar in aplicatie) + pret combustibil zilnic
+METAFILE = '/data/charge_meta.json'     # {id_incarcare: {cost: total, provider: nume}} - nu se scrie nimic in TeslaMate
+FUELFILE = '/data/fuel_prices.json'     # {days: {YYYY-MM-DD: {euro95: EUR/l, diesel: EUR/l, rate: EUR->moneda, cur: cod, upd: data sursei, ts: cand am citit}}}
+MLOCK = threading.Lock()
+PROV_AUTO = [(r'supercharger', 'Tesla Supercharger'), (r'acas|home', 'Acasă'), (r'ionity', 'Ionity'), (r'renovatio', 'Renovatio'), (r'enel', 'Enel X'), (r'eldrive', 'Eldrive'),
+             (r'electrica', 'Electrica'), (r'\bmol\b', 'MOL'), (r'omv', 'OMV'), (r'petrom', 'Petrom'), (r'kaufland', 'Kaufland'), (r'lidl', 'Lidl'), (r'mega image', 'Mega Image'),
+             (r'fastned', 'Fastned'), (r'allego', 'Allego'), (r'shell', 'Shell Recharge'), (r'virta', 'Virta'), (r'nelion', 'Nelion'), (r'plugpoint|plug point', 'PlugPoint'),
+             (r'rompetrol', 'Rompetrol'), (r'lukoil', 'Lukoil'), (r'socar', 'Socar'), (r'electra', 'Electra'), (r'atlante', 'Atlante')]
+CUR_CODES = {'lei': 'RON', 'ron': 'RON', '€': 'EUR', 'eur': 'EUR', '$': 'USD', 'usd': 'USD', '£': 'GBP', 'gbp': 'GBP', 'zł': 'PLN', 'pln': 'PLN', 'kč': 'CZK', 'czk': 'CZK',
+             'ft': 'HUF', 'huf': 'HUF', 'лв': 'BGN', 'bgn': 'BGN', 'chf': 'CHF', 'sek': 'SEK', 'dkk': 'DKK', 'nok': 'NOK'}
+FUEL_STATE = dict(last=0, err='')
+
+
+def provider_auto(name):
+    for rx, nm in PROV_AUTO:
+        if re.search(rx, name or '', re.I):
+            return nm
+    return ''
+
+
+def _json_file(path, default):
+    try:
+        return json.load(open(path))
+    except Exception:
+        return default
+
+
+def _json_save(path, obj):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + '.tmp'
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as f:
+        json.dump(obj, f)
+    os.replace(tmp, path)
+
+
+def meta_load():
+    return _json_file(METAFILE, {})
+
+
+def meta_update(cid, body):
+    """Seteaza/sterge costul total si furnizorul unei incarcari (cheie lipsa = neschimbat; '' sau null = sterge)."""
+    cid = str(int(cid))
+    with MLOCK:
+        m = meta_load()
+        e = dict(m.get(cid) or {})
+        if 'cost' in body:
+            v = body['cost']
+            if v is None or str(v).strip() == '':
+                e.pop('cost', None)
+            else:
+                v = float(str(v).replace(',', '.'))
+                if not (0 <= v < 100000):
+                    raise ValueError('cost invalid')
+                e['cost'] = round(v, 2)
+        if 'provider' in body:
+            p = re.sub(r'[<>"]', '', str(body['provider'] or '')).strip()[:40]
+            if p:
+                e['provider'] = p
+            else:
+                e.pop('provider', None)
+        if e:
+            m[cid] = e
+        else:
+            m.pop(cid, None)
+        _json_save(METAFILE, m)
+    return e
+
+
+def decorate(rows):
+    """Adauga furnizorul (manual sau dedus din locatie) si costul efectiv: manual > real (energie din retea) > TeslaMate."""
+    m = meta_load()
+    for r in rows:
+        e = m.get(str(r['id'])) or {}
+        r['cost_manual'] = e.get('cost')
+        r['provider_set'] = bool(e.get('provider'))
+        r['provider'] = e.get('provider') or provider_auto(r.get('name'))
+        r['cost_eff'] = e['cost'] if e.get('cost') is not None else (r['cost_real'] if r.get('cost_real') is not None else r.get('cost'))
+    return rows
+
+
+def _fnum(x, d=0.0):
+    try:
+        return float(str(x).replace(',', '.'))
+    except (TypeError, ValueError):
+        return d
+
+
+def fuel_conf():
+    ft = str(cget('fuel_type', 'FUEL_TYPE', 'euro95')).lower()
+    return dict(type=ft if ft in ('euro95', 'diesel', 'manual') else 'euro95', manual=_fnum(cget('fuel_price', 'FUEL_PRICE', '')),
+                l100=_fnum(cget('ice_l100', 'ICE_L100', '')), country=str(cget('fuel_country', 'FUEL_COUNTRY', 'Romania')) or 'Romania')
+
+
+def fuel_book(fc=None):
+    """Pretul pe litru (in moneda aplicatiei) pentru fiecare zi stocata, pentru combustibilul ales: [(zi, pret)] sortat."""
+    fc = fc or fuel_conf()
+    out = []
+    if fc['type'] != 'manual':
+        for day, d in sorted((_json_file(FUELFILE, {}).get('days') or {}).items()):
+            eur, rate = d.get(fc['type']), d.get('rate')
+            if eur and rate:
+                out.append((day, round(eur * rate, 3)))
+    return out
+
+
+def fuel_lookup(book, day, manual=0.0):
+    """(pret, tip): exact = citit in ziua respectiva; carry = ultimul pret cunoscut dinainte; early = primul pret cunoscut (zile anterioare primei citiri); manual."""
+    import bisect
+    if book:
+        i = bisect.bisect_left(book, (day, -1))
+        if i < len(book) and book[i][0] == day:
+            return book[i][1], 'exact'
+        if i > 0:
+            return book[i - 1][1], 'carry'
+        return book[0][1], 'early'
+    return (manual, 'manual') if manual else (None, None)
+
+
+def _get_text(url, timeout=20):
+    req = urllib.request.Request(url, headers={'User-Agent': 'teslamate-ui/1.0 (+fuel price lookup)', 'Accept': 'text/plain,application/json'})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read(400_000).decode('utf-8', 'replace')
+
+
+def fuel_fetch():
+    """Citeste pretul national mediu (Euro 95 / Diesel, EUR/l) de pe fuel-prices.eu - pentru Romania vine din Monitorul Preturilor Carburantilor - si il stocheaza pe ziua de azi."""
+    fc = fuel_conf()
+    slug = re.sub(r'[^A-Za-z-]', '', fc['country'].strip().replace(' ', '-')) or 'Romania'
+    try:
+        txt = _get_text('https://www.fuel-prices.eu/%s/llms.txt' % slug)
+        e95 = re.search(r'^Euro 95\s+€\s*([0-9]+\.[0-9]+)', txt, re.M)
+        dsl = re.search(r'^Diesel\s+€\s*([0-9]+\.[0-9]+)', txt, re.M)
+        upd = re.search(r'^Last updated:\s*(\d{4}-\d{2}-\d{2})', txt, re.M)
+        if not (e95 and dsl):
+            raise ValueError('format necunoscut la fuel-prices.eu/%s' % slug)
+        code = CUR_CODES.get(str(CURRENCY).strip().lower(), '')
+        rate = None
+        if code == 'EUR':
+            rate = 1.0
+        elif code:
+            rate = float(json.loads(_get_text('https://api.frankfurter.dev/v1/latest?base=EUR&symbols=' + code))['rates'][code])
+        day = dt.date.today().isoformat()
+        with MLOCK:
+            data = _json_file(FUELFILE, {})
+            data.setdefault('days', {})[day] = dict(euro95=float(e95.group(1)), diesel=float(dsl.group(1)), rate=rate, cur=code, upd=upd.group(1) if upd else '', ts=int(time.time()), country=slug)
+            _json_save(FUELFILE, data)
+        FUEL_STATE.update(last=time.time(), err='')
+        return dict(ok=True, day=day, euro95=float(e95.group(1)), diesel=float(dsl.group(1)), rate=rate, cur=code)
+    except Exception as e:  # noqa
+        FUEL_STATE['err'] = str(e)[:200]
+        print('fuel:', e, flush=True)
+        return dict(ok=False, reason=str(e)[:200])
+
+
+def fuel_loop():
+    time.sleep(25)
+    while True:
+        if fuel_conf()['type'] != 'manual':
+            fuel_fetch()
+        time.sleep(6 * 3600)
+
+
+def fuel_info():
+    fc = fuel_conf()
+    book = fuel_book(fc)
+    return dict(type=fc['type'], country=fc['country'], l100=fc['l100'], manual=fc['manual'] or None, currency=CURRENCY, convertible=bool(CUR_CODES.get(str(CURRENCY).strip().lower())),
+                today=fuel_lookup(book, dt.date.today().isoformat(), fc['manual'])[0], days=[dict(day=d, price=p) for d, p in book[-120:]], last=FUEL_STATE['last'] or None, error=FUEL_STATE['err'] or None,
+                source='fuel-prices.eu (Monitorul Prețurilor Carburanților)' if fc['country'].lower() == 'romania' else 'fuel-prices.eu')
+
+
+def ice_calc(by_day, ev_kwh, ev_cost, kwh_charged, l100=None, book=None, manual=None):
+    """Compara km parcursi cu o masina termica: litri = km/100 x l/100km, la pretul combustibilului din fiecare zi (stocat zilnic)."""
+    fc = fuel_conf()
+    l100 = fc['l100'] if l100 is None else l100
+    if not l100 or l100 <= 0:
+        return dict(enabled=False, type=fc['type'], currency=CURRENCY)
+    book = fuel_book(fc) if book is None else book
+    manual = fc['manual'] if manual is None else manual
+    cost = liters = km_tot = 0.0
+    est = miss = 0
+    days = []
+    for x in by_day:
+        km = x.get('km') or 0
+        p, kind = fuel_lookup(book, x['day'], manual)
+        if p is None:
+            miss += 1
+            continue
+        lit = km / 100 * l100
+        cost += lit * p
+        liters += lit
+        km_tot += km
+        est += 1 if kind != 'exact' else 0
+        days.append(dict(day=x['day'], km=round(km, 1), price=round(p, 3), cost=round(lit * p, 2), kind=kind))
+    ev = round(ev_kwh * ev_cost / kwh_charged, 2) if (kwh_charged and ev_cost is not None and ev_kwh) else None
+    avg = round(cost / liters, 3) if liters else None
+    return dict(enabled=True, type=fc['type'], l100=l100, currency=CURRENCY, km=round(km_tot, 1), liters=round(liters, 1), cost=round(cost, 2), avg_price=avg,
+                ev_cost=ev, saving=round(cost - ev, 2) if ev is not None else None, per100_ice=round(l100 * avg, 2) if avg else None,
+                per100_ev=round(ev / km_tot * 100, 2) if (ev is not None and km_tot) else None, est_days=est, missing_days=miss, days=days[-90:],
+                prices=[dict(day=d, price=p) for d, p in book if not by_day or d >= by_day[0]['day']][-200:])
+
+
 def charges(car, limit, offset):
     rows = _charges_rows(car, limit, offset)
     if ha_ok() and HA['grid']:
@@ -171,7 +373,7 @@ def charges(car, limit, offset):
                 r['cost_real'] = val
             except Exception as e:  # noqa
                 print('real cost:', e, flush=True)
-    return rows
+    return decorate(rows)
 
 
 def _charges_rows(car, limit, offset):
@@ -442,20 +644,31 @@ def overview(car, days):
         where d.car_id=%s and d.start_date>=%s group by 1 order by 1""", (car, since))
     chday = q("""select to_char(date_trunc('day', start_date),'YYYY-MM-DD') as day, sum(charge_energy_added) kwh, sum(cost) cost
         from charging_processes where car_id=%s and start_date>=%s group by 1 order by 1""", (car, since))
-    if ha_ok() and HA['grid']:
-        try:                                                  # cost real: AC acasa = import retea x tarif; restul (DC/public) = cost TeslaMate
-            budget, tot = 60, 0.0
-            for r in _charges_rows(car, 600, 0):
-                if _dtp(r['start_date']) < since:
-                    continue
+    try:                                                      # cost efectiv: manual > real (AC acasa = import retea x tarif) > cost TeslaMate
+        budget, tot, man = 60, 0.0, 0
+        meta = meta_load()
+        for r in _charges_rows(car, 600, 0):
+            if _dtp(r['start_date']) < since:
+                continue
+            me = meta.get(str(r['id'])) or {}
+            if me.get('cost') is not None:
+                tot += me['cost']
+                man += 1
+                continue
+            val = None
+            if ha_ok() and HA['grid']:
                 val, fetched = real_cost(r, budget > 0)
                 budget -= 1 if fetched else 0
-                tot += val if val is not None else (r['cost'] or 0)
-            ch['cost_real'] = round(tot, 2)
-        except Exception as e:  # noqa
-            print('overview real cost:', e, flush=True)
+            tot += val if val is not None else (r['cost'] or 0)
+        ch['cost_eff'] = round(tot, 2)
+        ch['manual_n'] = man
+        if ha_ok() and HA['grid']:
+            ch['cost_real'] = ch['cost_eff']
+    except Exception as e:  # noqa
+        print('overview cost:', e, flush=True)
     odo = q("select max(odometer) odo from positions where car_id=%s", (car,))
-    return dict(days=days, drives=d, charges=ch, by_day=byday, charge_by_day=chday, odometer=(odo[0]['odo'] if odo else None))
+    ice = ice_calc(byday, d['kwh'], ch.get('cost_eff', ch['cost']), ch['kwh'])
+    return dict(days=days, drives=d, charges=ch, by_day=byday, charge_by_day=chday, odometer=(odo[0]['odo'] if odo else None), ice=ice)
 
 
 def sleep_info(car):
@@ -591,8 +804,9 @@ def demo_overview(days):
     D = DEMO['drives']
     C = DEMO['charges']
     return dict(days=days, drives=dict(n=len(D), km=sum(d['distance'] for d in D), minutes=sum(d['duration_min'] for d in D), kwh=sum(d['kwh'] for d in D), vmax=max(d['speed_max'] for d in D)),
-                charges=dict(n=len(C), kwh=sum(c['charge_energy_added'] for c in C), cost=sum(c['cost'] for c in C), minutes=sum(c['duration_min'] for c in C)),
-                by_day=sorted(by_day.values(), key=lambda x: x['day']), charge_by_day=sorted(ch.values(), key=lambda x: x['day']), odometer=18432.4)
+                charges=dict(n=len(C), kwh=sum(c['charge_energy_added'] for c in C), cost=sum(c['cost'] for c in C), cost_eff=sum(c['cost'] for c in C), manual_n=0, minutes=sum(c['duration_min'] for c in C)),
+                by_day=sorted(by_day.values(), key=lambda x: x['day']), charge_by_day=sorted(ch.values(), key=lambda x: x['day']), odometer=18432.4,
+                ice=ice_calc(sorted(by_day.values(), key=lambda x: x['day']), sum(d['kwh'] for d in D), sum(c['cost'] for c in C), sum(c['charge_energy_added'] for c in C), l100=7.2, book=[(x['day'], round(7.3 + .3 * math.sin(i / 3), 3)) for i, x in enumerate(sorted(by_day.values(), key=lambda x: x['day']))], manual=0))
 
 
 DEMO_VD = dict(caps=dict(rear_seats=True), climate_state=dict(driver_temp_setting=21.0, passenger_temp_setting=21.0, is_climate_on=False, seat_heater_left=0, seat_heater_right=0, seat_heater_rear_left=0,
@@ -1122,7 +1336,7 @@ def _vehicle_data(car, force=False):
 CFGFILE = '/data/config.json'
 CFG = {}
 CFG_SECRETS = ('fleet_secret', 'pin', 'ha_token', 'notify_webhook', 'app_password', 'tessie_token')
-CFG_KEYS = CFG_SECRETS + ('app_url', 'price_grid', 'fleet_id', 'fleet_domain', 'fleet_base', 'ha_url', 'ha_prefix', 'ha_ble', 'ha_grid', 'ha_pv', 'currency', 'link_tm', 'link_gf', 'acc_team', 'acc_aud', 'acc_email', 'roles')
+CFG_KEYS = CFG_SECRETS + ('app_url', 'price_grid', 'fleet_id', 'fleet_domain', 'fleet_base', 'ha_url', 'ha_prefix', 'ha_ble', 'ha_grid', 'ha_pv', 'currency', 'ice_l100', 'fuel_type', 'fuel_price', 'fuel_country', 'link_tm', 'link_gf', 'acc_team', 'acc_aud', 'acc_email', 'roles')
 EU_BASE = 'https://fleet-api.prd.eu.vn.cloud.tesla.com'
 
 
@@ -1182,7 +1396,7 @@ def cfg_public():
         fleet=dict(id=g('fleet_id', 'FLEET_CLIENT_ID'), domain=g('fleet_domain', 'FLEET_DOMAIN'), base=g('fleet_base', 'FLEET_BASE', EU_BASE), secret_set=bool(FL['secret']), pin_set=bool(FL['pin'])),
         ha=dict(url=HA['url'], token_set=bool(HA['token']), prefix=HA['prefix'], ble=HA['ble'], grid=HA['grid'], pv=HA['pv']),
         notify=dict(webhook_set=bool(NHOOK)), tessie=dict(token_set=bool(cget('tessie_token', 'TESSIE_TOKEN'))),
-        display=dict(app_url=APPURL, price_grid=cget('price_grid', 'PRICE_GRID', ''), currency=CURRENCY, teslamate=LINKS['teslamate'], grafana=LINKS['grafana']),
+        display=dict(app_url=APPURL, price_grid=cget('price_grid', 'PRICE_GRID', ''), currency=CURRENCY, ice_l100=cget('ice_l100', 'ICE_L100', ''), fuel_type=fuel_conf()['type'], fuel_price=cget('fuel_price', 'FUEL_PRICE', ''), fuel_country=fuel_conf()['country'], teslamate=LINKS['teslamate'], grafana=LINKS['grafana']),
         access=dict(team=ACCESS['team'], aud=ACCESS['aud'], email=ACCESS['email'], roles=str(cget('roles', 'ROLES')), password_set=bool(AUTH['pw'])))
 
 
@@ -1205,6 +1419,18 @@ def cfg_update(b):
             errs.append('webhook invalid')
         if k == 'fleet_domain' and ('/' in v or ' ' in v):
             errs.append('domeniul se scrie fără https:// și fără /')
+        if k in ('ice_l100', 'fuel_price') and v:
+            try:
+                x = float(v.replace(',', '.'))
+                if not (0 <= x <= (60 if k == 'ice_l100' else 1000)):
+                    raise ValueError
+                v = v.replace(',', '.')
+            except ValueError:
+                errs.append('valoare invalidă pentru %s' % k)
+        if k == 'fuel_type' and v not in ('', 'euro95', 'diesel', 'manual'):
+            errs.append('tip combustibil invalid')
+        if k == 'fuel_country' and v and not re.fullmatch(r'[A-Za-z -]{2,40}', v):
+            errs.append('țara se scrie cu litere (ex. Romania, Germany)')
         if k == 'price_grid' and v:
             try:
                 float(v.replace(',', '.'))
@@ -1228,6 +1454,8 @@ def cfg_update(b):
     CFG.update(new)
     cfg_save()
     apply_config()
+    if fuel_conf()['type'] != 'manual':
+        threading.Thread(target=fuel_fetch, daemon=True).start()          # pret nou imediat dupa schimbarea tipului/tarii
     return True, ''
 
 
@@ -2215,6 +2443,16 @@ class H(BaseHTTPRequestHandler):
                 return self.send_json(dict(ok=False, reason='Nu ai permisiunea pentru această acțiune (rol: %s).' % self.role), 403)
             if u.path == '/api/import/tessie':
                 return self.send_json(imp_action(int(body.get('car', 1)), body))
+            if u.path == '/api/charge/meta':
+                try:
+                    cid = int(body.get('id'))
+                    if not q('select 1 from charging_processes where id=%s', (cid,)):
+                        return self.send_json(dict(ok=False, reason='Încărcare inexistentă'), 404)
+                    return self.send_json(dict(ok=True, meta=meta_update(cid, body)))
+                except (TypeError, ValueError) as e:
+                    return self.send_json(dict(ok=False, reason='Valoare invalidă (%s)' % e), 400)
+            if u.path == '/api/fuel/refresh':
+                return self.send_json(fuel_fetch())
             if u.path == '/api/profiler/start':
                 return self.send_json(pf_start(int(body.get('car', 1)), body.get('profile'), body.get('minutes', 5)))
             if u.path == '/api/profiler/stop':
@@ -2252,13 +2490,15 @@ class H(BaseHTTPRequestHandler):
             did = int(p.rsplit('/', 1)[1])
             return demo_trip(did) if demo else trip(car, did)
         if p == '/api/charges':
-            return DEMO['charges'][off:off + lim] if demo else charges(car, lim, off)
+            return decorate([dict(x) for x in DEMO['charges'][off:off + lim]]) if demo else charges(car, lim, off)
         if p.startswith('/api/charge/'):
             cid = int(p.rsplit('/', 1)[1])
             return dict(points=demo_charge_points(cid) if demo else charge_points(cid))
         if p == '/api/overview':
             days = int(a.get('days', 30))
             return demo_overview(days) if demo else overview(car, days)
+        if p == '/api/fuel':
+            return fuel_info()
         if p == '/api/battery':
             return demo_battery() if demo else battery(car)
         if p == '/api/sleep':
@@ -2413,5 +2653,6 @@ if __name__ == '__main__':
         threading.Thread(target=rules_clock, daemon=True).start()
         threading.Thread(target=pf_watch, daemon=True).start()
         threading.Thread(target=la_loop, daemon=True).start()
+        threading.Thread(target=fuel_loop, daemon=True).start()
         threading.Thread(target=serve_public, daemon=True).start()
     ThreadingHTTPServer(('0.0.0.0', PORT), H).serve_forever()

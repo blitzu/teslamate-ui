@@ -294,3 +294,11 @@ body.nav-open #nav{transform:none;box-shadow:0 0 40px #000a}
 @keyframes phd{to{transform:scaleY(.82);filter:brightness(.88) drop-shadow(0 6px 8px #000b)}}@keyframes ptk{to{transform:scaleY(.82);filter:brightness(.88) drop-shadow(0 -6px 8px #000b)}}
 .pg{border-radius:26px;border:3px solid #ffb15c;background:#ffb15c33;animation:glow 1.6s ease-in-out infinite}
 .pw{position:absolute;inset:0;width:100%;height:100%}.pw path{fill:none;stroke:#8fd3ff;stroke-width:6;stroke-linecap:round;stroke-dasharray:4 16;animation:dash 1.2s linear infinite}
+
+/* incarcari: furnizor, filtre */
+.prov{font-size:10.5px;font-weight:800;padding:3px 8px;border-radius:8px;background:#7aa8ff1f;color:#9fc0ff;margin-left:6px}
+.pchips{display:flex;flex-wrap:wrap;gap:7px;margin:12px 0 4px}
+.pchip{border:1px solid var(--line);background:var(--card);color:#cfd5db;font:inherit;font-size:12.5px;font-weight:700;padding:7px 12px;border-radius:13px;cursor:pointer}
+.pchip small{color:var(--mut);font-weight:700;margin-left:4px}
+.pchip.on{background:#6fd6b822;border-color:#6fd6b866;color:var(--mint)}.pchip.on small{color:var(--mint)}
+h3.sub{margin:14px 2px 6px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);font-weight:800}

@@ -25,8 +25,8 @@ A mobile-first, [Tessie](https://tessie.com)-style web app (installable PWA) on 
 | **Profiler** | Live streaming of 200+ vehicle signals (Fleet Telemetry) in short sessions: profiles, grouped cells with mini charts, tiles, CSV export - [docs/profiler.md](docs/profiler.md) |
 | **Import from Tessie** | Bring your Tessie history (drives with GPS paths, charges, costs) into TeslaMate — dry-run, one transaction, one-click undo - [docs/import-tessie.md](docs/import-tessie.md) |
 | **Sleep & idle drain** (Parked) | 48-hour sleep/awake timeline, sleep % per day, idle battery drain between drives/charges (%/h and kWh/day), detection of periodic short wakes (something polling the car) |
-| **Charges** | History with curves (power, SoC, energy), cost |
-| **Stats** | Distance/day, consumption, cost, range degradation, **battery health** (usable capacity from charges, charging-curve comparison, consumption vs temperature and speed), state history, software updates |
+| **Charges** | History with curves (power, SoC, energy), cost; **editable total cost per session**, **provider** per session (auto-detected from the place, editable) and a **provider filter with total kWh + cost** - [docs/costs.md](docs/costs.md) |
+| **Stats** | Distance/day, consumption, cost, **comparison with a petrol/diesel car** (your l/100 km × the fuel price of each day, fetched and stored daily), range degradation, **battery health** (usable capacity from charges, charging-curve comparison, consumption vs temperature and speed), state history, software updates |
 | **Notifications** | Cable connected, charging complete, door/trunk opened (while locked, or left open > 5 min), software update, battery < 20 % while parked — to a webhook (e.g. Home Assistant → phone) plus an in-app history |
 | **Automations** | Open the gate on arrival at a geofence, set a charge limit when plugging in, pre-departure climate |
 | **Sharing** | Roles for Cloudflare Access users: `admin`, `family` (everyday commands only), `viewer` (read-only) |
@@ -109,6 +109,7 @@ Map tiles from OpenStreetMap, MapLibre GL JS and Leaflet from cdnjs, weather fro
 * [docs/security.md](docs/security.md) — internet exposure, PIN, passwords, Cloudflare Access
 * [docs/home-assistant.md](docs/home-assistant.md) — BLE commands, energy source, automations
 * [docs/profiler.md](docs/profiler.md) - live telemetry profiler
+* [docs/costs.md](docs/costs.md) - editable charge costs, providers, ICE-car comparison and the daily fuel price
 * [docs/import-tessie.md](docs/import-tessie.md) - import your Tessie history
 * [docs/notifications.md](docs/notifications.md) — webhook and Home Assistant example
 * [docs/troubleshooting.md](docs/troubleshooting.md) — common errors

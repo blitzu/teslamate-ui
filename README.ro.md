@@ -7,10 +7,10 @@ Aplicație web pentru telefon (PWA) peste propriul tău [TeslaMate](https://gith
 ## Ce face
 * **Mașină:** stare live, hartă, card de somn (de când doarme, cât a dormit), comenzi (blocare, clima, încărcare, sentry, frunk/portbagaj, geamuri, HomeLink pentru poartă, limită încărcare).
 * **Clima:** temperatură, 5 scaune încălzite, volan, dezgheață, protecție la supraîncălzire.
-* **Încărcări:** istoric + control (curent în amperi, programări, plecare programată).
+* **Încărcări:** istoric + control (curent în amperi, programări, plecare programată). Cost total editabil per sesiune, furnizor (dedus din loc sau ales de tine) și filtru pe furnizor cu total kWh + cost ([docs/costs.md](docs/costs.md)).
 * **Curse:** istoric, hartă colorată după viteză și **reluare animată 3D** a traseului (cu vreme, opriri, încărcări, zoom, click pe traseu).
 * **Somn și consum în repaus**, **sănătatea bateriei**, **export video** al traseului, **automatizări** (poartă la sosire, limită la conectare, clima înainte de plecare), comenzi **locale prin BLE** (ESP32 + Home Assistant) și roluri pentru familie.
-* **Statistici**, **notificări** (cablu conectat, încărcare terminată, ușă deschisă) către un webhook (ex. Home Assistant → telefon).
+* **Statistici** (inclusiv comparație cu o mașină termică: l/100 km ai tăi × prețul combustibilului din fiecare zi, preluat și stocat zilnic), **notificări** (cablu conectat, încărcare terminată, ușă deschisă) către un webhook (ex. Home Assistant → telefon).
 
 Fără cont de developer Tesla funcționează tot, **mai puțin comenzile**.
 

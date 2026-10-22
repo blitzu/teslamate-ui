@@ -240,8 +240,8 @@ function driveItem(d) {
   <div class="m"><span><b>${nf(d.distance, 1)}</b> km</span><span><b>${hm(d.duration_min)}</b></span><span><b>${nf(d.kwh, 1)}</b> kWh</span><span><b>${nf(wh)}</b> Wh/km</span><span>${tm(d.start_date)}–${tm(d.end_date)}</span><span class="soc">${nf(d.start_soc)}% → ${nf(d.end_soc)}%</span></div></a>`;
 }
 function chargeItem(c) {
-  return `<a class="item" href="#/charge/${c.id}"><div class="t"><span>${esc(c.name)}</span><span class="badge ${c.dc ? 'dc' : 'ac'}">${c.dc ? 'DC' : 'AC'}</span></div>
-  <div class="m"><span><b>+${nf(c.charge_energy_added, 1)}</b> kWh</span><span><b>${hm(c.duration_min)}</b></span><span>max <b>${nf(c.power_max)}</b> kW</span>${c.cost_real != null ? `<span title="${X('Cost real estimat (doar energia din rețea) · TeslaMate: ', 'Estimated real cost (grid energy only) · TeslaMate: ')}${nf(c.cost, 2)}"><b>${nf(c.cost_real, 2)}</b> ${esc(S.currency ?? '€')} <small style="color:var(--mut)">(TM ${nf(c.cost, 2)})</small></span>` : (c.cost ? `<span><b>${nf(c.cost, 2)}</b> ${esc(S.currency ?? '€')}</span>` : '')}<span>${tm(c.start_date)}–${tm(c.end_date)}</span><span class="soc">${nf(c.start_soc)}% → ${nf(c.end_soc)}%</span></div></a>`;
+  return `<a class="item" href="#/charge/${c.id}"><div class="t"><span>${esc(c.name)}</span><span class="badge ${c.dc ? 'dc' : 'ac'}">${c.dc ? 'DC' : 'AC'}</span>${c.provider && c.provider !== c.name ? `<span class="prov">${esc(c.provider)}</span>` : ''}</div>
+  <div class="m"><span><b>+${nf(c.charge_energy_added, 1)}</b> kWh</span><span><b>${hm(c.duration_min)}</b></span><span>max <b>${nf(c.power_max)}</b> kW</span>${chCost(c)}<span>${tm(c.start_date)}–${tm(c.end_date)}</span><span class="soc">${nf(c.start_soc)}% → ${nf(c.end_soc)}%</span></div></a>`;
 }
 
 async function pageList(kind) {
@@ -295,11 +295,13 @@ async function pageDrive(id) {
 async function pageCharge(id) {
   const rows = await api('/api/charges?car=' + car + '&limit=200');
   const c = rows.find((r) => r.id == id) || rows[0];
+  window.__chrow = c; window.__chrows = rows;
   const pts = (await api('/api/charge/' + id)).points, t = (p) => +T(p[0]);
   const fx = (x) => new Date(x).toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' });
   return `<a class="back" href="#/charges">‹ Încărcări</a>
   <div class="top row"><div><h1 style="font-size:21px">${esc(c?.name)}</h1><small>${c ? T(c.start_date).toLocaleDateString(LOC(), { weekday: 'long', day: 'numeric', month: 'long' }) + ' · ' + tm(c.start_date) + '–' + tm(c.end_date) : ''}</small></div><div class="sp"></div><span class="badge ${c?.dc ? 'dc' : 'ac'}">${c?.dc ? 'DC' : 'AC'}</span></div>
-  <h2>Rezumat</h2><div class="grid g3">${stat('Adăugat', nf(c?.charge_energy_added, 1), 'kWh')}${stat('Durată', hm(c?.duration_min))}${stat('Putere max', nf(c?.power_max), 'kW')}${stat('Baterie', nf(c?.start_soc) + '→' + nf(c?.end_soc), '%')}${stat('Consumat din rețea', nf(c?.charge_energy_used, 1), 'kWh')}${stat('Cost', c?.cost ? nf(c.cost, 2) : '—', (S.currency ?? '€'))}</div>
+  <h2>Rezumat</h2><div class="grid g3">${stat('Adăugat', nf(c?.charge_energy_added, 1), 'kWh')}${stat('Durată', hm(c?.duration_min))}${stat('Putere max', nf(c?.power_max), 'kW')}${stat('Baterie', nf(c?.start_soc) + '→' + nf(c?.end_soc), '%')}${stat('Consumat din rețea', nf(c?.charge_energy_used, 1), 'kWh')}${stat('Cost', (c?.cost_eff ?? c?.cost) ? nf(c.cost_eff ?? c.cost, 2) : '—', S.currency ?? (S.currency ?? '€'))}${c?.cost_manual != null ? stat('Cost TeslaMate', c.cost ? nf(c.cost, 2) : '—', S.currency ?? (S.currency ?? '€')) : ''}</div>
+  <div id="chedit"></div>
   <div id="chsolar"></div>
   ${sec('Putere de încărcare (kW)', line(pts.map((p) => [t(p), p[1]]), { color: '#d9ba80', fx }))}
   ${sec('Nivel baterie (%)', line(pts.map((p) => [t(p), p[2]]), { color: '#6fd6b8', fx, min: 0, max: 100 }))}
@@ -320,8 +322,9 @@ async function statsBody(embed) {
   <div class="seg" style="margin-top:12px">${[7, 30, 90, 365].map((n) => `<button data-d="${n}" class="${n === days ? 'on' : ''}">${n === 365 ? tr('1 an') : n + tr(' zile')}</button>`).join('')}</div>
   <h2>Conducere</h2><div class="grid">${stat('Distanță', nf(d.km), 'km')}${stat('Curse', nf(d.n))}${stat('Timp la volan', hm(d.minutes))}${stat('Consum mediu', nf(wh), 'Wh/km')}${stat('Energie folosită', nf(d.kwh), 'kWh')}${stat('Viteză maximă', nf(d.vmax), 'km/h')}</div>
   ${sec('Kilometri pe zi', bars(o.by_day.map((x) => ({ l: lab(x.day), v: x.km })), { color: '#7aa8ff' }))}
-  <h2>Încărcare</h2><div class="grid">${stat('Încărcări', nf(ch.n))}${stat('Energie adăugată', nf(ch.kwh), 'kWh')}${ch.cost_real != null ? stat(X('Cost TeslaMate', 'TeslaMate cost'), nf(ch.cost, 2), (S.currency ?? '€')) + stat(X('Cost real estimat', 'Estimated real cost'), nf(ch.cost_real, 2), (S.currency ?? '€')) + stat(X('Cost real / 100 km', 'Real cost / 100 km'), d.km > 0 ? nf(ch.cost_real / d.km * 100, 2) : '—', (S.currency ?? '€')) + stat(X('Economie (soare/baterie)', 'Saved (solar/battery)'), nf(Math.max(0, ch.cost - ch.cost_real), 2), (S.currency ?? '€')) : stat('Cost total', nf(ch.cost, 2), (S.currency ?? '€')) + stat('Cost / 100 km', d.km > 0 && ch.cost ? nf(ch.cost / d.km * 100, 2) : '—', (S.currency ?? '€'))}</div>
+  <h2>Încărcare</h2><div class="grid">${stat('Încărcări', nf(ch.n))}${stat('Energie adăugată', nf(ch.kwh), 'kWh')}${costStats(ch, d)}</div>
   ${sec('kWh încărcați pe zi', bars(o.charge_by_day.map((x) => ({ l: lab(x.day), v: x.kwh })), { color: '#d9ba80' }))}
+  ${iceBlock(o)}
   <h2>Stare mașină (ultimele 30 de zile)</h2><div class="card">${stateBar}</div>`;
 }
 
@@ -443,7 +446,7 @@ async function render() {
   try {
     if (p === 'car') html = pageCar();
     else if (p === 'drives') html = await pageList('drives');
-    else if (p === 'charges') html = await pageList('charges');
+    else if (p === 'charges') html = await pageCharges();
     else if (p === 'drive') html = await pageDrive(arg);
     else if (p === 'charge') html = await pageCharge(arg);
     else if (p === 'stats') { actMode = 'stats'; html = await pageActivity(); }
@@ -474,7 +477,7 @@ async function render() {
   if (p === 'profiler') afterProfiler();
   if (p === 'auto') afterAuto();
   if (p === 'settings') afterSettings();
-  if (p === 'charge') afterChargeSolar(arg);
+  if (p === 'charge') { afterChargeSolar(arg); afterChargeEdit(); }
   if (p === 'car') scrollTo(0, y); else if (seq === renderSeq && !window.__keep) scrollTo(0, 0);
 }
 addEventListener('hashchange', render);
