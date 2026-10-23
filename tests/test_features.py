@@ -587,6 +587,11 @@ class ShareTests(unittest.TestCase):
         finally:
             os.environ.pop('SHARE_BASE', None)
 
+    def test_page_sends_a_referer_to_the_tile_server(self):
+        html = open(os.path.join(S.STATIC, 'share.html'), encoding='utf-8').read()
+        self.assertNotIn('no-referrer', html)                                  # OSM blocheaza cererile de dale fara Referer ("Access blocked" 403)
+        self.assertIn('content="strict-origin"', html)                         # doar domeniul, nu si calea cu tokenul
+
     def test_brute_force_is_blocked(self):
         class H:
             headers = {'CF-Connecting-IP': '8.8.4.4'}
