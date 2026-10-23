@@ -3,7 +3,7 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
-## 1.2.1 - unreleased
+## 1.2.1 - 2026-10-23
 
 ### Fixes
 - **Driving score was 0 on almost every drive.** Hard braking and acceleration were counted from every pair of neighbouring GPS points, so with points a quarter of a second apart and whole km/h speeds, normal 1-2 km/h steps looked like violent manoeuvres, and every sample counted again. They are now measured over a 1.5 s window (above about 3 m/s²), counted as episodes, and drives longer than 30 km get the penalty scaled down instead of always reaching 0.
