@@ -30,6 +30,7 @@ The **sleep guard** attributes each awake period to Sentry, a command (app/rule/
 - **Journey overview** (`#/journey/...`): a top-view map with the route, the charges and the stops between drives. Open it from the *Map* button of any drive (the whole trip), from the Drives list (the current period or filter), from a selection of drives, or by tag/date range on the page itself. Charges are included when they fall between the first departure and the last arrival (or carry the tag); a stop is a pause of at least 5 minutes between two drives that is not a charge. At most 300 drives per map.
 - **Saved places with a price per kWh:** on a charge page, save the place with a name, radius and price. Every charge inside the radius, old ones included, gets the cost kWh × price. Priority: manual cost, real home cost (Home Assistant), saved place, TeslaMate cost. Nothing is written to TeslaMate.
 - **Route replay:** the 3D/2D button flattens the camera into a top view, and the N button keeps north always up (and turns off map rotation). Both settings are remembered in the browser.
+- **Charging stats** (`#/chstats`): AC versus DC energy and share, average/peak speed per type, the average DC speed by battery level, the level where you start and stop charging, and kWh per month, for the chosen period.
 - **Google Maps links** for the location of a charge and for the start and arrival of a drive.
 
 ## Trips (`#/trips`)

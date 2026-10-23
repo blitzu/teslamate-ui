@@ -1101,7 +1101,7 @@ async function pageCharges() {
   const head = `<div class="top"><h1>${tr('Încărcări')}</h1></div>`;
   if (!chRows.length) return `${head}<div id="chfilt">${lfBar('charges')}</div><div class="empty">${X('Nimic în perioada aleasă.', 'Nothing in the chosen period.')}</div>${chargeCtlShell()}`;
   if (chF.p !== null && !chRows.some((r) => (r.provider || '') === chF.p)) chF.p = null;
-  return `${head}<div class="links" style="margin:0 2px"><a href="#" id="goctl">${X('Control încărcare ↓', 'Charging control ↓')}</a></div><div id="chfilt"></div><div id="chlist"></div>${chargeCtlShell()}`;
+  return `${head}<div class="links" style="margin:0 2px"><a href="#/chstats">📊 ${X('Statistici încărcări', 'Charging stats')}</a><a href="#" id="goctl">${X('Control încărcare ↓', 'Charging control ↓')}</a></div><div id="chfilt"></div><div id="chlist"></div>${chargeCtlShell()}`;
 }
 function chFiltered() {
   return chRows.filter((r) => chF.p === null || (r.provider || '') === chF.p);

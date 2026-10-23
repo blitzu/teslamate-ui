@@ -915,5 +915,30 @@ class UpdaterConnTests(unittest.TestCase):
             S.CFG.update(old[1])
 
 
+from features import chstats as CS  # noqa: E402
+
+
+class ChargingStatsTests(unittest.TestCase):
+    def test_summarize_splits_ac_dc_and_buckets(self):
+        rows = [dict(dc=False, charge_energy_added=10.0, charge_energy_used=11.0, duration_min=120, power_max=7, start_soc=20, end_soc=45, start_date='2026-09-10T10:00:00'),
+                dict(dc=True, charge_energy_added=30.0, charge_energy_used=33.0, duration_min=30, power_max=170, start_soc=8, end_soc=80, start_date='2026-10-01T10:00:00'),
+                dict(dc=True, charge_energy_added=20.0, charge_energy_used=None, duration_min=30, power_max=150, start_soc=10, end_soc=100, start_date='2026-10-02T10:00:00')]
+        r = CS.summarize(rows)
+        ac, dc = r['kinds']['ac'], r['kinds']['dc']
+        self.assertEqual((ac['n'], ac['kwh'], dc['n'], dc['kwh']), (1, 10.0, 2, 50.0))
+        self.assertEqual((dc['avg_kwh'], dc['avg_kw'], dc['power_max'], dc['avg_peak']), (25.0, 50.0, 170, 160))       # 50 kWh in 1 h = 50 kW
+        self.assertEqual(dc['used'], 53.0)                                                                           # fara kWh consumati: se iau cei adaugati
+        self.assertEqual(r['dc_share'], 83)
+        self.assertEqual([x['n'] for x in r['start_hist']['dc']][:2], [1, 1])                                        # 8% -> 0-10, 10% -> 10-20
+        self.assertEqual(r['end_hist']['dc'][7]['n'], 1)                                                             # 80% -> 70-80
+        self.assertEqual(r['end_hist']['dc'][9]['n'], 1)                                                             # 100% intra in 90-100
+        self.assertEqual([m['month'] for m in r['months']], ['2026-09', '2026-10'])
+        self.assertEqual(r['months'][1]['dc'], 50.0)
+
+    def test_empty(self):
+        r = CS.summarize([])
+        self.assertEqual((r['kinds']['dc']['n'], r['dc_share'], r['kinds']['ac']['avg_kw']), (0, None, None))
+
+
 if __name__ == '__main__':
     unittest.main()

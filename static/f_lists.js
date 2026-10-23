@@ -18,12 +18,12 @@ function lfQuery(k) {
   const [a, b] = lfRange(k), f = lfGet(k);
   return (a && !isNaN(a) ? '&from=' + encodeURIComponent(a.toISOString()) : '') + (b && !isNaN(b) ? '&to=' + encodeURIComponent(b.toISOString()) : '') + (f.tag ? '&tag=' + encodeURIComponent(f.tag) : '');
 }
-function lfBar(k) {
+function lfBar(k, o = {}) {
   const f = lfGet(k), P = [['all', X('Tot', 'All')], [30, X('30 zile', '30 days')], [90, X('90 zile', '90 days')], ['ytd', X('Anul acesta', 'This year')], ['ly', X('Anul trecut', 'Last year')], ['custom', X('Interval', 'Range')]];
   return `<div class="seg lfseg" style="margin-top:12px">${P.map(([v, l]) => `<button data-lfp="${v}" class="${String(f.p) === String(v) ? 'on' : ''}">${l}</button>`).join('')}</div>
     ${f.p === 'custom' ? `<div class="addf" style="margin-top:8px"><label>${X('De la', 'From')}<input type="date" id="lf_from" value="${esc(f.from)}"></label><label>${X('Până la', 'To')}<input type="date" id="lf_to" value="${esc(f.to)}"></label></div>` : ''}
     <div class="lfrow">${LF_TAGS.length ? `<label>${X('Tag', 'Tag')}<select id="lf_tag"><option value="">${X('toate', 'all')}</option>${LF_TAGS.map((t) => `<option value="${esc(t.name)}" ${t.name === f.tag ? 'selected' : ''}>${esc(t.name)} (${t.n})</option>`).join('')}</select></label>` : ''}
-    <label>${X('Pe pagină', 'Per page')}<select id="lf_n">${[25, 50, 100, 200].map((n) => `<option ${n === f.n ? 'selected' : ''}>${n}</option>`).join('')}</select></label></div>`;
+    ${o.noPage ? '' : `<label>${X('Pe pagină', 'Per page')}<select id="lf_n">${[25, 50, 100, 200].map((n) => `<option ${n === f.n ? 'selected' : ''}>${n}</option>`).join('')}</select></label>`}</div>`;
 }
 function lfBind(k, redraw) {
   document.querySelectorAll('[data-lfp]').forEach((b) => b.onclick = () => { const v = b.dataset.lfp; lfSet(k, { p: v === 'all' || v === 'ytd' || v === 'ly' || v === 'custom' ? v : +v, n: 50 }); redraw(); });

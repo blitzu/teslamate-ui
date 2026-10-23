@@ -3,6 +3,14 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.5.0 - unreleased
+
+### New features
+- **Charging stats** (`#/chstats`, link on the Charges page): energy charged AC versus DC (with the DC share), sessions, average and peak speed and efficiency for each type, the **average DC speed by battery level** (0-10 %, 10-20 % ... with average, maximum and sample count), the same for AC, the battery level where you start and stop charging, and kWh per month. It works for any period (30/90 days, this year, last year, a custom range) and tag, like the lists.
+
+### Fixes
+- **iPhone: the map was drawn over the side menu.** The map's internal layers sat above the menu, so opening the menu showed the map through it. Maps now stay below the menu and its backdrop.
+
 ## 1.4.0 - 2026-10-23
 
 ### New features
