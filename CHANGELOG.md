@@ -3,12 +3,7 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
-## 1.2.2 - unreleased
-
-### Fixes
-- **Live-location link: map tiles showed "Access blocked" (403).** The public page asked the browser to send no Referer, and OpenStreetMap's tile servers reject requests without one. The page now sends only its domain (never the path that contains the link's token).
-
-## 1.3.0 - unreleased
+## 1.3.0 - 2026-10-23
 
 ### New features
 - **Pages and period filters for Drives and Charges.** Both lists show 50 items at a time (25/50/100/200) with a "load more" button, and can be limited to the last 30 or 90 days, this year, last year or a custom date range. Drives are paged on the server, so the page no longer loads every drive.
@@ -19,6 +14,7 @@ Each version below becomes the text of its GitHub release and is shown in the ap
 - **Google Maps links:** open the location of a charge, and the start and arrival of a drive, in Google Maps.
 
 ### Fixes
+- **Live-location link: map tiles showed "Access blocked" (403).** The public page asked the browser to send no Referer, and OpenStreetMap's tile servers reject requests without one. The page now sends only its domain (never the path that contains the link's token).
 - Dates now show the year when it is not the current one (a drive from 25 September 2023 no longer shows as "25 September"), in lists, details and the replay.
 
 ## 1.2.1 - 2026-10-23
