@@ -696,7 +696,15 @@ function afterSettings() {
     if (apply && !confirm(X('Actualizez aplicația acum? Se repornește câteva zeci de secunde.', 'Update the app now? It restarts for a few tens of seconds.'))) return;
     say('updates', X('Se lucrează…', 'Working…'), 'busy');
     const [ok, j] = await call(apply ? '/api/update/apply' : '/api/update/check', {}, 'updates');
-    if (apply) say('updates', (ok && j.ok ? '✓ ' : '✗ ') + (j.reason || X('Cerere trimisă. Reîncarcă pagina peste ~1 minut.', 'Request sent. Reload the page in about a minute.')), ok && j.ok ? 'ok' : 'bad');
+    if (apply && ok && j.ok) {
+      say('updates', X('Se descarcă versiunea nouă și aplicația se repornește (circa un minut). Pagina se reîncarcă singură.', 'Downloading the new version and restarting the app (about a minute). The page reloads by itself.'), 'busy');
+      const oldBuild = S && S.app && S.app.build; let n = 0;
+      const t = setInterval(async () => {
+        n += 1;
+        try { const r = await fetch('/api/state', { cache: 'no-store' }); if (r.ok) { const d = await r.json(); if (oldBuild && d.app && d.app.build && d.app.build !== oldBuild) { clearInterval(t); say('updates', '✓ ' + X('Gata, se reîncarcă…', 'Done, reloading…'), 'ok'); setTimeout(() => location.reload(), 800); return; } } } catch (e) { /* aplicatia se reporneste */ }
+        if (n >= 75) { clearInterval(t); say('updates', '✗ ' + X('Nu am văzut versiunea nouă după 5 minute. Verifică jurnalul updater-ului (docker logs tessie-updater) sau reîncarcă pagina.', 'I did not see the new version after 5 minutes. Check the updater log (docker logs tessie-updater) or reload the page.'), 'bad'); }
+      }, 4000);
+    } else if (apply) say('updates', '✗ ' + (j.reason || X('Eroare', 'Error')), 'bad');
     else { say('updates', ok && j.ok ? '✓ ' + (j.newer ? X('Versiune nouă: v', 'New version: v') + j.latest : X('Ești la zi.', 'You are up to date.')) : '✗ ' + (j.reason || X('Eroare', 'Error')), ok && j.ok ? 'ok' : 'bad'); if (ok && j.ok) setTimeout(render, 1200); }
   });
   view.querySelectorAll('[data-save]').forEach((b) => b.onclick = async (e) => {

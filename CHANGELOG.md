@@ -7,6 +7,7 @@ Each version below becomes the text of its GitHub release and is shown in the ap
 
 ### New features
 - **Built-in updater (no Watchtower needed).** An optional `updater` container (`docker compose --profile updater up -d updater`) powers the **Update now** button and, if you want, updates the app by itself at an interval (for example once a day). It only runs `docker compose pull` and `up -d` for the services you list, behind a bearer token, publishes no port to the host and is a single small readable file. Setup is a few lines in `.env`; see `docs/updates.md`. The release workflow now also publishes its image (`ghcr.io/blitzu/teslamate-ui-updater`).
+- **"Update now" follows the update:** after you press it the page shows that the new version is being downloaded, waits for the app to restart with the new version and reloads itself.
 
 ## 1.3.0 - 2026-10-23
 
