@@ -56,6 +56,16 @@ jobs:
           tags: |
             ${{ env.IMAGE }}-proxy:${{ env.VER }}
             ${{ env.IMAGE }}-proxy:latest
+      - name: Build and push the updater image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.updater
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ env.IMAGE }}-updater:${{ env.VER }}
+            ${{ env.IMAGE }}-updater:latest
       - name: GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -23,6 +23,34 @@ Pin a version with `APP_TAG=1.0.0` in `.env` (default `latest`); roll back by se
 
 **From source.** `git pull && docker compose up -d --build`.
 
+## Built-in updater (no Watchtower)
+
+A tiny optional container, `updater`, gives the **Update now** button (and optional daily automatic updates) without any third-party tool. It exposes no port to the host: the app reaches it over the compose network. It only ever runs `docker compose pull` and `docker compose up -d` for the services in `UPDATER_SERVICES` (default `ui proxy`), after checking a bearer token, one run at a time.
+
+Set it up once, in `.env` (generate the token with `openssl rand -hex 16`):
+
+```bash
+UPDATER_TOKEN=<16+ random characters>
+PROJECT_DIR=/absolute/path/of/this/folder     # setup.sh writes it for new installs; check with `pwd`
+UPDATE_WEBHOOK=http://updater:8080/update
+UPDATE_TOKEN=<the same token>
+# UPDATER_AUTO_HOURS=24                          # optional: also update by itself once a day
+```
+
+```bash
+docker compose --profile updater up -d updater
+```
+
+Then **Settings → Version & updates** shows the **Update now** button when a new version exists; pressing it pulls the new images and restarts the app (about a minute). `GET http://updater:8080/status` (same token) shows the log of the last run.
+
+**What you should know**
+
+* It mounts the Docker socket, which is root-equivalent on the host. That is unavoidable for any updater (Watchtower does the same); this one is a single small file you can read ([`updater/updater.py`](../updater/updater.py)) and it only acts on the services you name. Do not publish its port and keep the token secret.
+* For installs from published images (`docker compose pull`). If you build from source, update with `git pull && docker compose up -d --build`.
+* The project folder is mounted **at the same path as on the host**, because compose resolves `./data`, `./fleet` and the env files relative to it; that is why `PROJECT_DIR` must be the real absolute path.
+* The updater itself is not restarted by its own run; update it from the host when a release changes it: `docker compose --profile updater pull updater && docker compose --profile updater up -d updater`.
+* Rolling back: set `APP_TAG=<previous version>` in `.env` and press the button (or run `docker compose up -d`).
+
 ## Automatic updates
 
 The app has no access to Docker (on purpose: it never mounts the Docker socket and cannot replace its own container), so automatic updates are done by a small updater that watches the images. [Watchtower](https://containrrr.dev/watchtower/) example, added to your `docker-compose.yml`:

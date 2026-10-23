@@ -1,0 +1,6 @@
+FROM alpine:3.22
+# Updater minimal: python (stdlib) + docker CLI cu plugin compose. Are nevoie de socket-ul Docker; vezi docs/updates.md.
+RUN apk add --no-cache python3 docker-cli docker-cli-compose
+COPY updater/updater.py /usr/local/bin/updater.py
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD wget -qO- http://127.0.0.1:8080/health >/dev/null || exit 1
+ENTRYPOINT ["python3", "/usr/local/bin/updater.py"]
