@@ -721,5 +721,13 @@ class ZonesTests(unittest.TestCase):
             S.OWN.run('delete from handoffs')
 
 
+class BuildIdTests(unittest.TestCase):
+    def test_build_id_is_stable_and_in_the_state(self):
+        a = S.static_build()
+        self.assertEqual(len(a), 10)
+        self.assertEqual(a, S.static_build())
+        self.assertEqual(S.app_brief()['build'], a)
+
+
 if __name__ == '__main__':
     unittest.main()

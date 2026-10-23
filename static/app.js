@@ -521,9 +521,15 @@ function carSoon(c) {                                   // redesenare cu throttl
   clearTimeout(t);
   t = setTimeout(() => { t = null; const y = scrollY; setHtml(view, pageCar()); drawMap($('#map'), c.live); afterCar(); scrollTo(0, y); }, Math.max(0, Math.min(400, 2000 - (now - rrFirst))));
 }
+function newBuild(n) {                                  // s-a facut deploy cat aplicatia statea suspendata in memorie (iOS): reincarc ca sa nu rulez cod vechi
+  const a = S && S.app && S.app.build, b = n && n.app && n.app.build;
+  if (a && b && a !== b) { location.reload(); return true; }
+  return false;
+}
 async function refreshState() {                         // dupa ce iOS suspenda aplicatia sau SSE s-a reconectat, starea din memorie poate fi veche
   try {
     const n = await api('/api/state');
+    if (newBuild(n)) return;
     if (n.demo || S.demo) return;
     S.lan_open = n.lan_open; S.role = n.role;
     n.cars.forEach((nc) => { const c = S.cars.find((x) => x.id === nc.id); if (!c) return; c.sleep = nc.sleep; c.live = Object.assign(c.live || {}, nc.live || {}); c.live_age = nc.live_age; });
@@ -548,7 +554,7 @@ async function boot() {
   live();
   setInterval(async () => {
     if (!S.demo) { refreshState(); return; }                  // instanta reala: sincronizeaza somnul si starea la 60 s
-    try { const n = await api('/api/state'); S = n; if (route === 'car') render(); } catch (e) { /* ignore */ }
+    try { const n = await api('/api/state'); if (newBuild(n)) return; S = n; if (route === 'car') render(); } catch (e) { /* ignore */ }
   }, 60000);
 }
 document.getElementById('burger')?.addEventListener('click', () => document.body.classList.toggle('nav-open'));

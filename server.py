@@ -483,8 +483,28 @@ def version_info():
                 url=u['url'], notes=u['notes'], published=u['published'], checked=u['checked'], error=u['error'], can_apply=bool(cget('update_webhook', 'UPDATE_WEBHOOK', '')))
 
 
+_BUILD = [0.0, '']
+
+
+def static_build():
+    """Amprenta fisierelor aplicatiei (cale, marime, data) + versiunea: se schimba la orice deploy. Clientul o compara si se reincarca singur."""
+    if time.time() - _BUILD[0] < 10 and _BUILD[1]:
+        return _BUILD[1]
+    h = hashlib.sha1(APP_VERSION.encode())
+    try:
+        for root, _, files in sorted(os.walk(STATIC)):
+            for f in sorted(files):
+                p = os.path.join(root, f)
+                st = os.stat(p)
+                h.update(('%s|%d|%d;' % (os.path.relpath(p, STATIC), st.st_size, int(st.st_mtime))).encode())
+    except OSError:
+        pass
+    _BUILD[0], _BUILD[1] = time.time(), h.hexdigest()[:10]
+    return _BUILD[1]
+
+
 def app_brief():
-    return dict(version=APP_VERSION, commit=BUILD_COMMIT, latest=UPD['latest'] if (update_enabled() and update_newer()) else '')
+    return dict(version=APP_VERSION, commit=BUILD_COMMIT, build=static_build(), latest=UPD['latest'] if (update_enabled() and update_newer()) else '')
 
 
 UPD.update({k: v for k, v in (jload(UPDFILE, {}) or {}).items() if k in UPD})
@@ -3201,9 +3221,14 @@ class H(BaseHTTPRequestHandler):
         ct = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml',
               '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png'}.get(os.path.splitext(f)[1], 'application/octet-stream')
         b = open(f, 'rb').read()
+        cc = 'no-cache'
+        if os.path.basename(f) == 'index.html':          # scripturile/stilurile primesc ?v=<amprenta>: un telefon cu o copie veche in memorie nu le mai poate refolosi
+            v = static_build()
+            b = re.sub(rb'(src|href)="((?!https?:|/)[\w./-]+\.(?:js|css))"', lambda m: m.group(1) + b'="' + m.group(2) + b'?v=' + v.encode() + b'"', b)
+            cc = 'no-store'
         self.send_response(200)
         self.send_header('Content-Type', ct)
-        self.send_header('Cache-Control', 'no-cache')
+        self.send_header('Cache-Control', cc)
         for k, v in SEC_HEADERS:
             self.send_header(k, v)
         self.send_header('Content-Length', str(len(b)))
