@@ -3,7 +3,7 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
-## 1.4.0 - unreleased
+## 1.4.0 - 2026-10-23
 
 ### New features
 - **One-click updates, nothing to configure.** The stack now includes a tiny `updater` container. When a new version exists, **Settings → Version & updates** shows what changed and an **Update now** button: it downloads the new images, restarts the app (about a minute) and the page waits for the new version and reloads itself. The updater finds its project by itself, creates its own token in `./data/updater.token` (the app reads it from there), publishes no port and only runs `docker compose pull` and `up -d` for the app's own services. Nothing is updated unless you press the button; `UPDATER_AUTO_HOURS=24` in `.env` turns on an optional daily automatic update. It needs the Docker socket, which is root-equivalent on the host, so `docs/updates.md` explains how to remove it if you prefer to update by hand. Whatever updater you already set up (for example Watchtower) keeps priority.
