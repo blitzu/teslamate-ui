@@ -535,6 +535,39 @@ class PushTests(unittest.TestCase):
         self.assertTrue(h['authorization'].startswith('vapid t='))
         self.assertEqual(seen[0].data[20], 65)                                     # lungimea cheii publice din antet
 
+    def test_app_update_push_goes_only_to_admin_devices(self):
+        S.OWN.run('delete from push_subs')
+        sub, _ = S.route_lookup('POST', '/api/push/subscribe')
+
+        class H:
+            headers = {'User-Agent': 't'}
+        for role, ep in (('admin', 'https://fcm.googleapis.com/admin1'), ('family', 'https://fcm.googleapis.com/fam1')):
+            h = H()
+            h.role = role
+            sub(h, dict(endpoint=ep, keys=dict(p256dh=self.UA, auth=self.AUTH)))
+        import urllib.request
+        real, seen = urllib.request.urlopen, []
+
+        def fake(req, timeout=0):
+            seen.append(req.full_url)
+
+            class R:
+                status = 201
+                def __enter__(self): return self
+                def __exit__(self, *a): return False
+            return R()
+        urllib.request.urlopen = fake
+        try:
+            for f in S.NOTIFY_SINKS:
+                if f.__module__ == 'features.push':
+                    f('app_update', 't', 'm', {})
+                    self.assertEqual(seen, ['https://fcm.googleapis.com/admin1'])                                # familia nu primeste
+                    seen.clear()
+                    f('alert', 't', 'm', {})
+                    self.assertEqual(sorted(seen), ['https://fcm.googleapis.com/admin1', 'https://fcm.googleapis.com/fam1'])     # alertele merg la toti
+        finally:
+            urllib.request.urlopen = real
+
 
 from features import share as SHR  # noqa: E402
 

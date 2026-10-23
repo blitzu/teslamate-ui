@@ -84,8 +84,17 @@ def init(S):
         except urllib.error.HTTPError as e:
             return e.code
 
-    def deliver(payload, urgency='normal', only=None):
-        subs = S.OWN.rows('select * from push_subs' + (' where id=?' if only else ''), (only,) if only else ())
+    ADMIN_ONLY = ('app_update',)                         # tipuri care au sens doar pentru administrator (Setarile nu se pot deschide de altcineva)
+
+    def deliver(payload, urgency='normal', only=None, role=None):
+        where, args = [], []
+        if only:
+            where.append('id=?')
+            args.append(only)
+        if role:
+            where.append('role=?')
+            args.append(role)
+        subs = S.OWN.rows('select * from push_subs' + (' where ' + ' and '.join(where) if where else ''), tuple(args))
         out = dict(sent=0, gone=0, failed=0)
         for s in subs:
             try:
@@ -108,7 +117,7 @@ def init(S):
     def sink(kind, title, msg, data):
         if not kinds().get(kind) or not S.OWN.one('select 1 x from push_subs limit 1'):
             return
-        deliver(dict(title=title, body=msg, kind=kind, tag='tesla_' + kind, path=S.KIND_ROUTE.get(kind, '#/car')), urgency='high' if kind in ('alert', 'rule') else 'normal')
+        deliver(dict(title=title, body=msg, kind=kind, tag='tesla_' + kind, path=S.KIND_ROUTE.get(kind, '#/car')), urgency='high' if kind in ('alert', 'rule') else 'normal', role='admin' if kind in ADMIN_ONLY else None)
 
     S.NOTIFY_SINKS.append(sink)
     S.PUSH_DELIVER = deliver

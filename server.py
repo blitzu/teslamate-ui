@@ -466,7 +466,7 @@ def update_check():
                 UPD['notified'] = UPD['latest']
             jsave(UPDFILE, dict(UPD))
         if first and nset_load().get('app_update', True):
-            notify('app_update', '🆕 Versiune nouă: v%s' % UPD['latest'], 'Ai v%s. Deschide Setări → Actualizări.' % APP_VERSION)
+            notify('app_update', '🆕 Versiune nouă: v%s' % UPD['latest'], 'Ai v%s. Deschide Setări → Versiune și actualizări%s.' % (APP_VERSION, ' și apasă „Actualizează acum”' if updater_conn()[0] else ' ca să vezi ce s-a schimbat'))
         return dict(ok=True, latest=UPD['latest'], newer=newer)
     except Exception as e:  # noqa
         msg = 'niciun release publicat încă' if (isinstance(e, urllib.error.HTTPError) and e.code == 404) else str(e)[:200]
