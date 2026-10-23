@@ -175,6 +175,7 @@ function pageCar() {
     (L.doors_open || L.windows_open || L.trunk_open || L.frunk_open) ? `<span id="openchips">${openChips(L, (S.opens || {})[c.id]) || chip('Ceva e deschis', false, true)}</span>` : '',
     L.update_available ? chip(tr('Update disponibil') + (L.update_version ? ' ' + esc(L.update_version) : ''), false) : '',
     L.healthy === false ? chip('Conexiune TeslaMate instabilă', false, true) : '',
+    ...(window.CAR_CHIPS || []).map((fn) => { try { return fn(c, L) || ''; } catch (e) { return ''; } }),
   ].join('');
   const tl = L.time_to_full_charge;
   const age = c.live_age != null ? (c.live_age < 90 ? 'live' : ago(new Date(Date.now() - c.live_age * 1000))) : (L.since ? ago(L.since) : '');

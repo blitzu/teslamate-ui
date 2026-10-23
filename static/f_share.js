@@ -1,5 +1,6 @@
 /* Setari → Link public de urmarire in timp real */
 SETTINGS_EXT.push({
+  cat: 'data', order: 2,
   async render() {
     let d; try { d = await api('/api/share'); } catch (e) { return ''; }
     const live = d.shares.filter((s) => !s.revoked && s.expires > d.now);
@@ -22,7 +23,7 @@ SETTINGS_EXT.push({
       e.preventDefault(); say(X('Se creează…', 'Creating…'), 'busy');
       const [ok, j] = await pinPost('/api/share/create', { hours: document.getElementById('sh_h').value, label: document.getElementById('sh_l').value, hide_home: document.getElementById('sh_home').checked, show_dest: document.getElementById('sh_dest').checked });
       if (!ok || !j.url) { say('✗ ' + (j.reason || X('Eroare', 'Error')), 'bad'); return; }
-      document.getElementById('sh_out').innerHTML = `<label class="cf">${X('Link (se arată o singură dată)', 'Link (shown once)')}<input readonly id="sh_url" value="${esc(j.url)}" onclick="this.select()"></label><div class="links"><a href="#" id="sh_copy">${X('Copiază', 'Copy')}</a>${navigator.share ? `<a href="#" id="sh_send">${X('Trimite…', 'Share…')}</a>` : ''}</div>`;
+      document.getElementById('sh_out').innerHTML = `<label class="cf">${X('Link (se arată o singură dată)', 'Link (shown once)')}<input readonly id="sh_url" value="${esc(j.url)}"></label><div class="links"><a href="#" id="sh_copy">${X('Copiază', 'Copy')}</a>${navigator.share ? `<a href="#" id="sh_send">${X('Trimite…', 'Share…')}</a>` : ''}</div>`;
       say('✓ ' + X('Creat', 'Created'), 'ok');
       document.getElementById('sh_copy').onclick = (ev) => { ev.preventDefault(); const i = document.getElementById('sh_url'); i.select(); try { navigator.clipboard.writeText(i.value); say('✓ ' + X('Copiat', 'Copied'), 'ok'); } catch (x) { document.execCommand('copy'); } };
       const s = document.getElementById('sh_send'); if (s) s.onclick = (ev) => { ev.preventDefault(); navigator.share({ title: X('Urmărește-mă live', 'Follow me live'), url: j.url }).catch(() => {}); };

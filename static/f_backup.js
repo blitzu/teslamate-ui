@@ -1,5 +1,6 @@
 /* Setari → Backup date TeslaMate (copie locala SQLite, sincronizata la 10 minute) */
 SETTINGS_EXT.push({
+  cat: 'data', order: 1,
   async render() {
     let st; try { st = await api('/api/backup/status'); } catch (e) { return ''; }
     const last = st.last, mb = (b) => (b / 1048576).toFixed(1) + ' MB';

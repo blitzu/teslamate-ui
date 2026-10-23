@@ -1,5 +1,6 @@
 /* Setari → Telegram (notificari pe un bot propriu) */
 SETTINGS_EXT.push({
+  cat: 'notif', order: 2,
   async render() {
     let st, cfg; try { st = await api('/api/telegram/status'); cfg = await api('/api/config'); } catch (e) { return ''; }
     const tg = cfg.telegram || {}, k = st.kinds;

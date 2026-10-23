@@ -332,3 +332,8 @@ code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em;backgroun
 .rs{display:inline-block;background:#ffffff12;border-radius:8px;padding:2px 7px;margin:0 3px 3px 0;font-size:11.5px}
 .addf label select{display:block;width:100%;margin-top:5px;background:#0b0d10;color:var(--tx);border:1px solid #ffffff1a;border-radius:12px;padding:10px;font:inherit;font-size:15px}
 .chips .chip{cursor:pointer}
+
+.scats{overflow-x:auto;scrollbar-width:none;position:sticky;top:0;z-index:5;margin-top:12px}.scats::-webkit-scrollbar{display:none}.scats button{flex:1 0 auto;white-space:nowrap;padding:9px 13px}
+.scat{display:none}.scat.on{display:block}
+.pstep{display:flex;gap:12px;align-items:flex-start;padding:9px 0;border-top:1px solid var(--line)}.pstep>b{flex:0 0 26px;height:26px;border-radius:50%;background:var(--mint);color:#06130f;display:grid;place-items:center;font-size:13px}.pstep>span{line-height:1.4}.pstep>span b{background:none;display:inline;color:var(--tx)}
+.bigbtn{width:100%;margin-top:6px;padding:16px;border:0;border-radius:16px;background:var(--mint);color:#06130f;font:inherit;font-weight:800;font-size:16px;cursor:pointer;min-height:52px}
