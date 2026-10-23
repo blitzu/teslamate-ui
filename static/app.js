@@ -464,7 +464,7 @@ async function render() {
   route = p;
   if (p !== 'trip' && typeof stopReplay === 'function') stopReplay();            // si cand reluarea inca se incarca (RP nu e setat)
   if (p !== 'profiler' && typeof pfClose === 'function') pfClose();
-  renderNav(['drive', 'trip'].includes(p) ? 'drives' : p === 'charge' ? 'charges' : p === 'sleep' ? 'parked' : p === 'stats' ? 'activity' : p === 'climate' ? 'car' : p);
+  renderNav(['drive', 'trip'].includes(p) ? 'drives' : p === 'charge' ? 'charges' : p === 'sleep' ? 'parked' : p === 'stats' ? 'activity' : p === 'climate' ? 'car' : (PAGES[p] && PAGES[p].nav) || p);
   const seq = ++renderSeq;
   document.body.classList.add('busy');                       // pagina veche ramane vizibila, usor estompata, cat se incarca cea noua
   let html = '';
@@ -482,6 +482,7 @@ async function render() {
     else if (p === 'profiler') html = await pageProfiler();
     else if (p === 'auto') html = await pageAuto();
     else if (p === 'settings') html = await pageSettings();
+    else if (PAGES[p]) html = await PAGES[p].render(arg);
     else if (p === 'climate') html = pageClimate();
     else if (p === 'trip') html = '';
     else { location.replace('#/car'); return; }
@@ -504,6 +505,7 @@ async function render() {
   if (p === 'profiler') afterProfiler();
   if (p === 'auto') afterAuto();
   if (p === 'settings') afterSettings();
+  if (PAGES[p] && PAGES[p].after) PAGES[p].after(arg);
   if (p === 'charge') { afterChargeSolar(arg); afterChargeEdit(); }
   const back = ['drive', 'charge', 'trip'].includes(prevRoute) && ['drives', 'charges', 'activity'].includes(p) && SCROLL[p] != null;
   if (p === 'car') scrollTo(0, y); else if (seq === renderSeq && !window.__keep) scrollTo(0, back ? SCROLL[p] : 0);

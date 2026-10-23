@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """TeslaMate UI (stil Tessie): backend. MQTT (live) + Postgres TeslaMate (istoric) -> JSON/SSE. Fara date demo cat timp TeslaMate nu are masini => mod DEMO."""
-import builtins, collections, json, math, os, re, queue, random, secrets, shutil, ssl, threading, time, datetime as dt
+import builtins, collections, sys, json, math, os, re, queue, random, secrets, shutil, ssl, threading, time, datetime as dt
 import urllib.request, urllib.error, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -113,6 +113,11 @@ def mqtt_thread():
             try:
                 notify_check(car, key, prev, val)
                 rules_check(car, key, prev, val, known)
+                for fn in MQTT_HOOKS:
+                    try:
+                        fn(car, key, prev, val, known)
+                    except Exception as e:  # noqa
+                        log('mqtt hook: %s' % e)
             except Exception as e:  # noqa
                 log('notify:', e, flush=True)
 
@@ -1384,6 +1389,13 @@ def _days(a):
     return d if d in ('ALL', 'WEEKDAYS') else ','.join(x for x in d.split(',') if x in ('SUN', 'MON', 'TUES', 'WED', 'THURS', 'FRI', 'SAT')) or 'ALL'
 
 
+def _pin4(a):
+    p = str(a.get('pin', ''))
+    if not re.fullmatch(r'\d{4}', p):
+        raise ValueError('PIN-ul mașinii: exact 4 cifre')
+    return p
+
+
 def build_cmd(name, arg, lv):
     """nume intern -> (endpoint Fleet, payload). Valideaza si limiteaza toate valorile primite de la client."""
     a = arg if isinstance(arg, dict) else {}
@@ -1443,6 +1455,16 @@ def build_cmd(name, arg, lv):
         if lv.get('latitude') is None or lv.get('longitude') is None:
             raise RuntimeError('Nu cunosc poziția mașinii (HomeLink are nevoie de ea).')
         return 'trigger_homelink', loc
+    if name in ('valet_on', 'valet_off'):
+        return 'set_valet_mode', {'on': name == 'valet_on', 'password': _pin4(a)}        # PIN-ul trece doar prin memorie: nu se salveaza si nu intra in jurnal
+    if name == 'valet_reset':
+        return 'reset_valet_pin', {}
+    if name in ('guest_on', 'guest_off'):
+        return 'guest_mode', {'enable': name == 'guest_on'}
+    if name == 'speed_limit_set':
+        return 'speed_limit_set_limit', {'limit_mph': int(_num(a, 'mph', 50, 90))}
+    if name in ('speed_limit_on', 'speed_limit_off', 'speed_limit_clear'):
+        return {'speed_limit_on': 'speed_limit_activate', 'speed_limit_off': 'speed_limit_deactivate', 'speed_limit_clear': 'speed_limit_clear_pin'}[name], {'pin': _pin4(a)}
     raise ValueError('comandă necunoscută')
 
 
@@ -1473,12 +1495,15 @@ def run_command(car, name, arg=None):
             if now - CMD_LAST.get(key, 0) < gap:
                 return dict(ok=False, code=429, reason='Comanda a fost trimisă acum câteva secunde — n-o repet ca să nu inverseze efectul. Așteaptă %d s.' % gap)
             CMD_LAST[key] = now
+    actor = getattr(CTX, 'actor', 'system')
     try:
         res = _run_command(car, name, arg)
-    except Exception:
+    except Exception as e:
         if gap:
             CMD_LAST.pop(key, None)
+        audit('cmd', car=car, name=name, actor=actor, ok=False, via='', note=str(e))
         raise
+    audit('cmd', car=car, name=name, actor=actor, ok=bool((res or {}).get('ok')), via=(res or {}).get('via', 'fleet'), note=(res or {}).get('reason', ''))
     if gap and not (res or {}).get('ok'):
         CMD_LAST.pop(key, None)                       # a esuat: reincercarea e permisa imediat
     return res
@@ -1598,8 +1623,8 @@ def _vehicle_data(car, force=False):
 # ---------------------------------------------------------------- configurare din aplicatie (/data/config.json; suprascrie valorile din .env)
 CFGFILE = DATA_DIR + '/config.json'
 CFG = {}
-CFG_SECRETS = ('fleet_secret', 'pin', 'ha_token', 'notify_webhook', 'app_password', 'tessie_token', 'update_token')
-CFG_KEYS = CFG_SECRETS + ('update_check', 'update_webhook', 'app_url', 'price_grid', 'fleet_id', 'fleet_domain', 'fleet_base', 'ha_url', 'ha_prefix', 'ha_ble', 'ha_grid', 'ha_pv', 'currency', 'ice_l100', 'fuel_type', 'fuel_price', 'fuel_country', 'link_tm', 'link_gf', 'acc_team', 'acc_aud', 'acc_email', 'roles')
+CFG_SECRETS = ('fleet_secret', 'pin', 'ha_token', 'notify_webhook', 'app_password', 'tessie_token', 'update_token', 'telegram_token')
+CFG_KEYS = CFG_SECRETS + ('telegram_chat', 'update_check', 'update_webhook', 'app_url', 'price_grid', 'fleet_id', 'fleet_domain', 'fleet_base', 'ha_url', 'ha_prefix', 'ha_ble', 'ha_grid', 'ha_pv', 'currency', 'ice_l100', 'fuel_type', 'fuel_price', 'fuel_country', 'link_tm', 'link_gf', 'acc_team', 'acc_aud', 'acc_email', 'roles')
 EU_BASE = 'https://fleet-api.prd.eu.vn.cloud.tesla.com'
 _tz = os.environ.get('TZ', '') or 'UTC'
 LOCAL_TZ = _tz if re.fullmatch(r'[A-Za-z0-9_+\-/]{1,40}', _tz) else 'UTC'      # zilele din statistici se grupeaza pe ora locala, nu UTC
@@ -1666,6 +1691,7 @@ def cfg_public():
         fleet=dict(id=g('fleet_id', 'FLEET_CLIENT_ID'), domain=g('fleet_domain', 'FLEET_DOMAIN'), base=g('fleet_base', 'FLEET_BASE', EU_BASE), secret_set=bool(FL['secret']), pin_set=bool(FL['pin'])),
         ha=dict(url=HA['url'], token_set=bool(HA['token']), prefix=HA['prefix'], ble=HA['ble'], grid=HA['grid'], pv=HA['pv']),
         notify=dict(webhook_set=bool(NHOOK)), tessie=dict(token_set=bool(cget('tessie_token', 'TESSIE_TOKEN'))),
+        telegram=dict(token_set=bool(cget('telegram_token', 'TELEGRAM_TOKEN')), chat=cget('telegram_chat', 'TELEGRAM_CHAT', '')),
         update=dict(check=update_cfg_on(), webhook=cget('update_webhook', 'UPDATE_WEBHOOK', ''), token_set=bool(cget('update_token', 'UPDATE_TOKEN', '')), private=APP_VERSION.endswith('-private')),
         display=dict(app_url=APPURL, price_grid=cget('price_grid', 'PRICE_GRID', ''), currency=CURRENCY, ice_l100=cget('ice_l100', 'ICE_L100', ''), fuel_type=fuel_conf()['type'], fuel_price=cget('fuel_price', 'FUEL_PRICE', ''), fuel_country=fuel_conf()['country'], teslamate=LINKS['teslamate'], grafana=LINKS['grafana']),
         access=dict(team=ACCESS['team'], aud=ACCESS['aud'], email=ACCESS['email'], roles=str(cget('roles', 'ROLES')), password_set=bool(AUTH['pw'])))
@@ -1706,6 +1732,10 @@ def cfg_update(b):
                 v = v.replace(',', '.')
             except ValueError:
                 errs.append('valoare invalidă pentru %s' % k)
+        if k == 'telegram_chat' and v and not re.fullmatch(r'-?\d{3,20}|@\w{4,40}', v):
+            errs.append('chat Telegram: număr (ex. 123456789 sau -100123…) sau @canal')
+        if k == 'telegram_token' and v and v != '__clear__' and not re.fullmatch(r'\d{6,12}:[\w-]{20,60}', v):
+            errs.append('token Telegram invalid (arată ca 123456789:AA…)')
         if k == 'update_check' and v not in ('', '0', '1'):
             errs.append('update_check invalid')
         if k == 'fuel_type' and v not in ('', 'euro95', 'diesel', 'manual'):
@@ -2212,7 +2242,9 @@ def notify(kind, title, msg, data=None, log=True):
         if data:
             payload['data'] = data
         threading.Thread(target=lambda: http(NHOOK, payload, timeout=10), daemon=True).start()
-    return bool(NHOOK)
+    for sink in list(NOTIFY_SINKS):
+        threading.Thread(target=sink, args=(kind, title, msg, data), daemon=True).start()
+    return bool(NHOOK) or bool(NOTIFY_SINKS)
 
 
 def _once(kind, secs=90):
@@ -2284,6 +2316,7 @@ def rule_log(msg, ok=True):
 
 def rule_exec(car, rule, name, arg=None):
     def go():
+        CTX.actor = 'rule:%s' % (rule.get('name') or rule.get('id') or rule.get('type'))
         try:
             r = run_command(car, name, arg)
             rule_log('%s: %s %s%s' % (rule.get('name') or rule['type'], name, 'OK' if r.get('ok') else 'EȘUAT', ' (BLE)' if r.get('via') == 'ble' else ''), bool(r.get('ok')))
@@ -2609,6 +2642,55 @@ class NotFound(Exception):
     pass
 
 
+# ---- extensii: modulele din features/ isi inregistreaza rute, hook-uri si sarcini de fundal
+ROUTES = {}                      # (metoda, cale) -> (functie, optiuni)
+PREFIX_ROUTES = []               # [(metoda, prefix, functie, optiuni)], cele mai lungi prefixe primele
+MQTT_HOOKS = []                  # fn(car, key, vechi, nou, cunoscut) - in thread-ul MQTT, trebuie sa fie rapide
+NOTIFY_SINKS = []                # fn(kind, title, msg, data) - receptori suplimentari de notificari (push, Telegram)
+AUDIT_HOOKS = []                 # fn(kind, **kw)
+BG_TASKS = []                    # sarcini de fundal pornite (supravegheat) la start
+PUBLIC_ROUTES = []               # fn(handler, cale, parametri) -> (cod, corp, content-type[, csp]) sau None - pe portul PUBLIC (fara autentificare: modulul isi face singur verificarile)
+CTX = threading.local()          # CTX.actor = cine a dat comanda (user:rol / rule:id / system)
+OWN = None                       # baza de date proprie (features.store.Store), setata de features.load()
+
+
+class Raw:
+    """Raspuns binar dintr-o ruta de modul: fie `body` (bytes), fie `path` (fisier trimis in bucati; sters dupa trimitere daca delete=True)."""
+    def __init__(self, body=None, path=None, ctype='application/octet-stream', headers=None, code=200, delete=False):
+        self.body, self.path, self.ctype, self.headers, self.code, self.delete = body, path, ctype, headers or {}, code, delete
+
+
+def route(method, path, pin=False, role='user', prefix=False):
+    """Inregistreaza o ruta: role = 'any' (orice utilizator autentificat), 'user' (nu viewer), 'family' (family+admin), 'admin'. pin=True cere PIN-ul (POST)."""
+    def deco(fn):
+        o = dict(pin=pin, role=role)
+        if prefix:
+            PREFIX_ROUTES.append((method, path, fn, o))
+            PREFIX_ROUTES.sort(key=lambda r: -len(r[1]))
+        else:
+            ROUTES[(method, path)] = (fn, o)
+        return fn
+    return deco
+
+
+def route_lookup(method, path):
+    r = ROUTES.get((method, path))
+    if r:
+        return r
+    for m, pre, fn, o in PREFIX_ROUTES:
+        if m == method and path.startswith(pre):
+            return fn, o
+    return None
+
+
+def audit(kind, **kw):
+    for fn in list(AUDIT_HOOKS):
+        try:
+            fn(kind, **kw)
+        except Exception as e:  # noqa
+            log('audit hook: %s' % e)
+
+
 DB_ROUTES = ('/api/drives', '/api/charges', '/api/overview', '/api/battery', '/api/sleep', '/api/activity', '/api/health_battery', '/api/caps', '/api/vdata')
 DB_PREFIXES = ('/api/drive/', '/api/drive_row/', '/api/trip/', '/api/charge/', '/api/charge_row/', '/api/charge_solar/')
 PINF = {}                       # ip -> [momente cu PIN gresit]
@@ -2626,6 +2708,43 @@ class H(BaseHTTPRequestHandler):
 
     def via_internet(self):
         return any(k in self.headers for k in ('Cf-Connecting-Ip', 'Cf-Ray', 'Cf-Visitor', 'X-Forwarded-For'))
+
+    def run_route(self, r, data):
+        fn, o = r
+        need = o['role']
+        if (need == 'admin' and self.role != 'admin') or (need == 'family' and self.role not in ('admin', 'family')) or (need == 'user' and self.role == 'viewer'):
+            return self.send_json(dict(ok=False, reason='Nu ai permisiunea pentru această acțiune (rol: %s).' % self.role), 403)
+        res = fn(self, data)
+        if isinstance(res, Raw):
+            return self.send_raw(res)
+        return self.send_json(dict(ok=True) if res is None else res)
+
+    def send_raw(self, r):
+        size = os.path.getsize(r.path) if r.path else len(r.body or b'')
+        try:
+            self.send_response(r.code)
+            self.send_header('Content-Type', r.ctype)
+            self.send_header('Content-Length', str(size))
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            for k, v in r.headers.items():
+                self.send_header(k, v)
+            self.end_headers()
+            if r.path:
+                with open(r.path, 'rb') as f:
+                    while True:
+                        chunk = f.read(1 << 16)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+            else:
+                self.wfile.write(r.body or b'')
+        finally:
+            if r.path and r.delete:
+                try:
+                    os.remove(r.path)
+                except OSError:
+                    pass
 
     def host_ok(self):
         """Din LAN (fara header-ele Cloudflare) accepta doar Host = IP, localhost, nume simplu/.local/.lan sau din ALLOWED_HOSTS / APP_URL: un domeniu strain care a fost rezolvat la IP-ul tau local (DNS rebinding) e refuzat."""
@@ -2805,6 +2924,9 @@ class H(BaseHTTPRequestHandler):
                 self.send_header('Location', login_url())
                 self.end_headers()
                 return
+            r = route_lookup('GET', p)
+            if r:
+                return self.run_route(r, a)
             if p.startswith('/api/'):
                 return self.send_json(self.api(p, a))
         except DBDown:
@@ -2851,6 +2973,9 @@ class H(BaseHTTPRequestHandler):
             body = json.loads(raw) if raw else {}
             if not isinstance(body, dict):
                 raise ValueError('se aștepta un obiect JSON')
+            r = route_lookup('POST', u.path)
+            if r and not r[1]['pin']:
+                return self.run_route(r, body)
             if u.path.startswith('/api/notify/') and self.role == 'viewer':
                 return self.send_json(dict(ok=False, reason='Rolul tău nu poate schimba notificările.'), 403)
             if u.path == '/api/notify/settings':
@@ -2876,6 +3001,8 @@ class H(BaseHTTPRequestHandler):
             pok, why, pcode = self.pin_check()
             if not pok:
                 return self.send_json(dict(ok=False, reason=why), pcode)
+            if r and r[1]['pin']:
+                return self.run_route(r, body)
             name = u.path.rsplit('/', 1)[1] if u.path.startswith('/api/cmd/') else ''
             if self.role != 'admin' and not (self.role == 'family' and name in FAMILY_OK):
                 return self.send_json(dict(ok=False, reason='Nu ai permisiunea pentru această acțiune (rol: %s).' % self.role), 403)
@@ -2917,7 +3044,11 @@ class H(BaseHTTPRequestHandler):
             if u.path == '/api/fleet/register':
                 return self.send_json(partner_register())
             if u.path.startswith('/api/cmd/'):
-                res = run_command(int(body.get('car', 1)), u.path.rsplit('/', 1)[1], body.get('arg'))
+                CTX.actor = 'user:%s' % self.role
+                try:
+                    res = run_command(int(body.get('car', 1)), u.path.rsplit('/', 1)[1], body.get('arg'))
+                finally:
+                    CTX.actor = 'system'
                 log('audit: cmd=%s rol=%s ip=%s ok=%s via=%s' % (u.path.rsplit('/', 1)[1], self.role, self.client_ip(), (res or {}).get('ok'), (res or {}).get('via', 'fleet')))
                 return self.send_json(res)
         except ValueError as e:
@@ -3088,14 +3219,14 @@ class PublicH(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    def out(self, code, body, ct='text/plain; charset=utf-8'):
+    def out(self, code, body, ct='text/plain; charset=utf-8', csp=None):
         b = body if isinstance(body, bytes) else body.encode()
         self.send_response(code)
         self.send_header('Content-Type', ct)
         self.send_header('Content-Length', str(len(b)))
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
-        self.send_header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'")
+        self.send_header('Content-Security-Policy', csp or "default-src 'none'; style-src 'unsafe-inline'")
         self.end_headers()
         self.wfile.write(b)
 
@@ -3114,6 +3245,14 @@ class PublicH(BaseHTTPRequestHandler):
                     '<body style="font-family:system-ui;background:#0b0d10;color:#eceff3;padding:40px;text-align:center">'
                     '<h2>%s %s</h2><p style="color:#8f99a4">Poti inchide pagina si reveni in aplicatie.</p>' % ('&#10003;' if ok else '&#9888;', msg))
             return self.out(200 if ok else 400, html, 'text/html; charset=utf-8')
+        for fn in list(PUBLIC_ROUTES):
+            try:
+                r = fn(self, u.path, {k: v[0] for k, v in parse_qs(u.query).items()})
+            except Exception as e:  # noqa
+                log('ruta publica: %s' % e)
+                return self.out(500, 'eroare')
+            if r:
+                return self.out(*r)
         return self.out(404, 'not found')
 
     def do_POST(self):
@@ -3130,6 +3269,9 @@ pf_session_load()
 
 
 THREADS = {}
+
+import features                                        # noqa: E402  (modulele isi inregistreaza rutele/hook-urile la incarcare)
+FEATURES = features.load(sys.modules[__name__])
 
 
 def supervise(fn):
@@ -3151,8 +3293,8 @@ def supervise(fn):
 
 
 if __name__ == '__main__':
-    log('pornit: demo=%s mqtt=%s ha=%s pin=%s parola=%s access=%s' % (DEMO_ONLY, bool(MQ['host']), bool(HA['url']), bool(FL['pin']), bool(AUTH['pw']), bool(ACCESS['team'])))
+    log('pornit: demo=%s mqtt=%s ha=%s pin=%s parola=%s access=%s module=%s' % (DEMO_ONLY, bool(MQ['host']), bool(HA['url']), bool(FL['pin']), bool(AUTH['pw']), bool(ACCESS['team']), ','.join(FEATURES)))
     if not DEMO_ONLY:
-        for fn in (mqtt_thread, rules_clock, pf_watch, la_loop, fuel_loop, update_loop, serve_public):
+        for fn in [mqtt_thread, rules_clock, pf_watch, la_loop, fuel_loop, update_loop, serve_public] + BG_TASKS:
             supervise(fn)
     ThreadingHTTPServer(('0.0.0.0', PORT), H).serve_forever()

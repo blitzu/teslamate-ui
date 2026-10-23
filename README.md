@@ -29,6 +29,14 @@ A mobile-first, [Tessie](https://tessie.com)-style web app (installable PWA) on 
 | **Stats** | Distance/day, consumption, cost, **comparison with a petrol/diesel car** (your l/100 km × the fuel price of each day, fetched and stored daily), range degradation, **battery health** (usable capacity from charges, charging-curve comparison, consumption vs temperature and speed), state history, software updates |
 | **Notifications** | Cable connected, charging complete, door/trunk opened (while locked, or left open > 5 min), software update, battery < 20 % while parked — to a webhook (e.g. Home Assistant → phone) plus an in-app history |
 | **Automations** | Open the gate on arrival at a geofence, set a charge limit when plugging in, pre-departure climate |
+| **Backup of TeslaMate data** | Local SQLite mirror of your drives, positions, charges and states (never deletes, daily snapshots, restore tool) - [docs/features.md](docs/features.md) |
+| **Alerts & sleep guard** | Charging stopped, plugged but not charging, low tyre pressure, rain with a window open, hot cabin, tyre leak; why the car stayed awake |
+| **Maintenance & tyres** | Service reminders (km/months, RCA/ITP/vignette presets), tyre sets with mileage and pressure history, software update tracker (Wh/km before/after) |
+| **Trips & reports** | Drives grouped into trips; weekly/monthly reports; "what would it have cost on the day-ahead market (PZU)" |
+| **Notifications everywhere** | Telegram bot and native Web Push (no Home Assistant needed, works on iPhone PWA) |
+| **In-car screen** | `/incar.html`: big display-only page for the car browser or a wall tablet |
+| **Live-location link** | Expiring public link with map and ETA, revocable, hides your home |
+| **Car handoff & zone rules** | Valet/Guest/speed limit with a timer and a report; speed/zone/schedule alerts |
 | **Sharing** | Roles for Cloudflare Access users: `admin`, `family` (everyday commands only), `viewer` (read-only) |
 | **PWA** | Add to Home Screen on iOS/Android; works as a standalone app |
 
@@ -108,6 +116,9 @@ Set `NOTIFY_WEBHOOK` — see **[docs/notifications.md](docs/notifications.md)** 
 | Open-Meteo (`api.open-meteo.com`, `archive-api.open-meteo.com`) | weather in the route replay | latitude/longitude rounded to 0.1° and the date | browser |
 | fuel-prices.eu | daily national fuel price for the ICE-car comparison | only the country name | server |
 | frankfurter.dev (ECB rates) | EUR → your currency | only the currency code | server |
+| energy-charts.info | day-ahead (PZU) prices for the PZU report | the dates needed | server |
+| Open-Meteo (server side) | rain-with-window alert | coordinates rounded to 0.1°, only while a window is open | server |
+| Telegram Bot API, browser push services (Google/Mozilla/Apple/Microsoft) | Telegram and Web Push notifications, only if you enable them | the notification text (push: encrypted) | server |
 | GitHub (`api.github.com`) | check for a new release, twice a day (can be switched off) | nothing about you or your car (an anonymous request) | server |
 | Tessie API (`api.tessie.com`) | one-off history import (only if you run it) | your Tessie token | server |
 | Cloudflare / your Home Assistant | only if you configure them | see the docs | server |
@@ -127,6 +138,7 @@ Leaflet and MapLibre GL JS are **bundled** (`static/vendor/`), not loaded from a
 * [docs/security.md](docs/security.md) — internet exposure, PIN, passwords, Cloudflare Access
 * [docs/home-assistant.md](docs/home-assistant.md) — BLE commands, energy source, automations
 * [docs/profiler.md](docs/profiler.md) - live telemetry profiler
+* [docs/features.md](docs/features.md) - backup, alerts, maintenance, reports/PZU, Telegram and push, in-car screen, live-location link, handoff, zone rules
 * [docs/updates.md](docs/updates.md) - versions, new-version notifications, updating and automatic updates
 * [CHANGELOG.md](CHANGELOG.md) - what changed in each version
 * [docs/costs.md](docs/costs.md) - editable charge costs, providers, ICE-car comparison and the daily fuel price

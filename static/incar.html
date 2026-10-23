@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0d10">
+<title>Tesla · ecran mașină</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<style>
+:root { --bg:#0b0d10; --card:#14181d; --tx:#e9edf1; --mu:#8a95a1; --mint:#6fd6b8; --gold:#e6b450; --red:#ef7a7a; --blue:#7aa8ff; --dim:1; }
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; background: var(--bg); color: var(--tx); font: 16px/1.25 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; overflow: hidden; -webkit-user-select: none; user-select: none; }
+body { display: grid; grid-template-rows: auto 1fr auto; gap: 1.2vmin; padding: 1.6vmin 2vmin; filter: brightness(var(--dim)); transition: filter .6s; }
+header { display: flex; justify-content: space-between; align-items: center; font-size: 2.6vmin; color: var(--mu); }
+header b { color: var(--tx); font-size: 3vmin; font-weight: 600; }
+main { display: grid; grid-template-columns: 1.25fr 1fr 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 1.4vmin; min-height: 0; }
+.t { background: var(--card); border-radius: 2.2vmin; padding: 2vmin 2.4vmin; display: flex; flex-direction: column; justify-content: center; min-height: 0; min-width: 0; }
+.t i { font-style: normal; color: var(--mu); font-size: 2.3vmin; text-transform: uppercase; letter-spacing: .08em; }
+.t b { font-size: 9vmin; font-weight: 700; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.t b small { font-size: 3.4vmin; font-weight: 500; color: var(--mu); margin-left: .6vmin; }
+.t span { color: var(--mu); font-size: 2.6vmin; margin-top: .6vmin; }
+.big { grid-row: span 2; align-items: center; text-align: center; }
+.big b { font-size: 24vmin; }
+.bar { width: 100%; height: 3vmin; background: #232a31; border-radius: 99px; overflow: hidden; margin: 1.6vmin 0 .4vmin; }
+.bar div { height: 100%; background: var(--mint); border-radius: 99px; transition: width .6s; }
+.wide { grid-column: span 2; }
+.tp { display: grid; grid-template-columns: repeat(4, 1fr); gap: .8vmin 3vmin; font-size: 4.4vmin; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 1vmin; }
+.tp small { color: var(--mu); font-weight: 400; font-size: 2.2vmin; }
+.ok { color: var(--mint); } .warn { color: var(--gold); } .bad { color: var(--red); } .info { color: var(--blue); }
+footer { display: flex; justify-content: space-between; gap: 2vmin; color: var(--mu); font-size: 2.2vmin; }
+button { all: unset; cursor: pointer; padding: .8vmin 2vmin; border-radius: 99px; background: var(--card); color: var(--tx); font-size: 2.3vmin; }
+.off { text-align: center; padding-top: 30vh; color: var(--mu); font-size: 4vmin; }
+@media (max-aspect-ratio: 1/1) { main { grid-template-columns: 1fr 1fr; grid-template-rows: 1.4fr 1fr 1fr 1fr 1fr; } .tp { grid-template-columns: repeat(2, 1fr); } .big { grid-column: span 2; grid-row: auto; } .big b { font-size: 20vmin; } .t b { font-size: 8vmin; } }
+</style>
+</head>
+<body>
+<header><span id="car">…</span><b id="clock"></b><span id="conn">●</span></header>
+<main id="main"><div class="off">…</div></main>
+<footer><span id="geo"></span><span><button id="b_dim">☾</button> <button id="b_full">⛶</button> <a id="b_back" style="color:var(--mu);text-decoration:none" href="./">←</a></span></footer>
+<script src="incar.js"></script>
+</body>
+</html>
