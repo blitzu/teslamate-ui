@@ -8,6 +8,18 @@ Each version below becomes the text of its GitHub release and is shown in the ap
 ### Fixes
 - **Live-location link: map tiles showed "Access blocked" (403).** The public page asked the browser to send no Referer, and OpenStreetMap's tile servers reject requests without one. The page now sends only its domain (never the path that contains the link's token).
 
+## 1.3.0 - unreleased
+
+### New features
+- **Pages and period filters for Drives and Charges.** Both lists show 50 items at a time (25/50/100/200) with a "load more" button, and can be limited to the last 30 or 90 days, this year, last year or a custom date range. Drives are paged on the server, so the page no longer loads every drive.
+- **Tags for drives and charges.** Add tags (for example "Greece trip") from a drive or charge page, or select several items in a list and tag them at once; filter both lists by tag.
+- **Journey overview map** (`#/journey`): a top view with the route, the charges and the stops between drives, for a whole trip (button on every drive), a date range, a few picked drives, everything with a tag, or the current period of the Drives list. It shows a summary (distance, driving time, energy, charging cost, stops) and the events in order.
+- **Saved places with a price per kWh.** On a charge page, save the place with a price: every charge there, old ones included, gets the cost kWh × price. Priority: manual cost, then the real home cost (Home Assistant), then the saved place, then the TeslaMate cost. Nothing is written to TeslaMate.
+- **Google Maps links:** open the location of a charge, and the start and arrival of a drive, in Google Maps.
+
+### Fixes
+- Dates now show the year when it is not the current one (a drive from 25 September 2023 no longer shows as "25 September"), in lists, details and the replay.
+
 ## 1.2.1 - 2026-10-23
 
 ### Fixes

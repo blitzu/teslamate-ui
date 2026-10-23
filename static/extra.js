@@ -331,7 +331,7 @@ async function startReplay(id) {
     const q = best, net = Math.max(0, q.used - q.regen);
     RP.dot = new ml.Marker({ element: Object.assign(document.createElement('div'), { className: 'rp-dot' }) }).setLngLat([q.lon, q.lat]).addTo(map2);
     RP.pop = new ml.Popup({ closeButton: true, closeOnClick: false, offset: 14, className: 'rp-pop', maxWidth: '230px' }).setLngLat([q.lon, q.lat])
-      .setHTML(`<div class="rp-pk"><b>${tfmt2(q.rt)}</b><small>${new Date(q.rt).toLocaleDateString(LOC(), { weekday: 'short', day: 'numeric', month: 'short' })}</small>
+      .setHTML(`<div class="rp-pk"><b>${tfmt2(q.rt)}</b><small>${fdate(new Date(q.rt), { weekday: 'short', day: 'numeric', month: 'short' })}</small>
         <div><span>${X('Viteză', 'Speed')}</span><b>${nf(q.v)} km/h</b></div><div><span>${X('Baterie', 'Battery')}</span><b>${nf(q.soc)}%</b></div>
         <div><span>${X('Altitudine', 'Elevation')}</span><b>${nf(q.ele)} m</b></div><div><span>${X('Distanță', 'Distance')}</span><b>${nf(q.dist, 1)} km</b></div>
         <div><span>${X('Consum net', 'Net used')}</span><b>${nf(net, 1)} kWh</b></div><a href="#" class="rp-go">▶ ${X('Redă de aici', 'Play from here')}</a></div>`).addTo(map2);
@@ -383,7 +383,7 @@ async function startReplay(id) {
     if ((RP.cb++ % 3) === 0 || force) {
       map2.setPaintProperty('done-l', 'line-gradient', GRAD(p.cd / T0.cdTotal));
       $('#rpt').textContent = tfmt2(p.rt);
-      $('#rpd').textContent = new Date(p.rt).toLocaleDateString(LOC(), { weekday: 'short', day: 'numeric', month: 'short' });
+      $('#rpd').textContent = fdate(new Date(p.rt), { weekday: 'short', day: 'numeric', month: 'short' });
       $('#rkm').innerHTML = nf(p.dist, 1) + '<small> km</small>';
       $('#rel').textContent = '▲ ' + nf(p.ele) + ' m';
       $('#rv').textContent = p.v > 1 ? nf(p.v) + ' km/h' : '';
@@ -419,7 +419,7 @@ async function startReplay(id) {
     if (RP.stage !== 'end') card(cx + 34 * k, [[nf(p.soc) + '%', '#fff'], [X('Net ', 'Net ') + nf(Math.max(0, p.used - p.regen), 1) + ' kWh', '#ff9a5c'], [X('Recup. ', 'Regen ') + nf(p.regen, 1), '#6fd6b8'], p.chg > 0 ? [X('Încărcat ', 'Charged ') + nf(p.chg, 1), '#7aa8ff'] : ['', '#fff']], X('Baterie', 'Battery'));
     // ceas + vreme
     c.textAlign = 'center'; c.textBaseline = 'top'; c.font = `800 ${46 * k}px system-ui`; c.lineWidth = 6 * k; c.strokeStyle = '#fffd'; c.fillStyle = '#0b0d10'; const t1s = tfmt2(p.rt); c.strokeText(t1s, W / 2, 14 * k); c.fillText(t1s, W / 2, 14 * k);
-    c.font = `800 ${13 * k}px system-ui`; const d1s = new Date(p.rt).toLocaleDateString(LOC(), { weekday: 'short', day: 'numeric', month: 'short' }).toUpperCase(); c.strokeText(d1s, W / 2, 64 * k); c.fillText(d1s, W / 2, 64 * k); c.textAlign = 'left';
+    c.font = `800 ${13 * k}px system-ui`; const d1s = fdate(new Date(p.rt), { weekday: 'short', day: 'numeric', month: 'short' }).toUpperCase(); c.strokeText(d1s, W / 2, 64 * k); c.fillText(d1s, W / 2, 64 * k); c.textAlign = 'left';
     const w = wxAt(RP.wx[p.si], p.rt); if (w) { const [ic, tx] = WX(w.c, w.day); rrect(c, W - 150 * k, 12 * k, 138 * k, 54 * k, 14 * k); c.fillStyle = '#0b0d10e6'; c.fill(); c.fillStyle = '#fff'; c.textBaseline = 'top'; c.font = `800 ${16 * k}px system-ui`; c.fillText(ic + ' ' + nf(w.t) + '°C', W - 140 * k, 18 * k); c.fillStyle = '#aab3bd'; c.font = `700 ${10.5 * k}px system-ui`; c.fillText(tx + ' · ' + X('estimat', 'est.'), W - 140 * k, 40 * k); c.fillText('Open-Meteo', W - 140 * k, 53 * k); }
   }
   async function startRecord() {
@@ -467,7 +467,7 @@ async function pageSleep() {
   const ticks = [0, 12, 24, 36, 48].map((h) => { const ms = t0 + h * 3600e3; return `<text x="${x(ms)}" y="${H - 2}" text-anchor="middle">${new Date(ms).toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' })}</text>`; }).join('');
   const tl = `<svg viewBox="0 0 ${W} ${H}">${rects}${ticks}</svg><div class="legend"><span><i style="background:#7aa8ff"></i>${X('Doarme', 'Asleep')}</span><span><i style="background:#d9ba80"></i>${X('Trează', 'Awake')}</span></div>`;
   const hint = z.short_wakes >= 4 ? `<div class="card hint"><b>${X('Tipar de treziri scurte', 'Short-wake pattern')}</b><p>${X(`${z.short_wakes} treziri de ~${z.short_med} min în ${z.days} zile (între 8 și 16 min). Treziri periodice regulate arată de obicei un client care „bătătorește" mașina (BLE, telemetrie, o aplicație sau un accesoriu) — nu mașina singură.`, `${z.short_wakes} wakes of ~${z.short_med} min in ${z.days} days (8–16 min). Regular periodic wakes usually mean a client polling the car (BLE, telemetry, an app or an accessory) rather than the car itself.`)}</p></div>` : '';
-  const idle = z.idle.map((i) => `<div class="item" style="cursor:default"><div class="t"><span>${esc(i.place || '—')}</span></div><div class="m"><span>${new Date(T(i.start)).toLocaleDateString(LOC(), { day: 'numeric', month: 'short' })} ${tm(i.start)} → ${tm(i.end)}</span></div>
+  const idle = z.idle.map((i) => `<div class="item" style="cursor:default"><div class="t"><span>${esc(i.place || '—')}</span></div><div class="m"><span>${fdate(new Date(T(i.start)), { day: 'numeric', month: 'short' })} ${tm(i.start)} → ${tm(i.end)}</span></div>
     <div class="m"><span><b>${hm(i.hours * 60)}</b></span><span>${X('somn ', 'sleep ')}<b>${i.pct_sleep}%</b></span><span><b>${i.drop > 0 ? '−' : '+'}${nf(Math.abs(i.drop))}%</b></span><span>${i.kwh != null ? '<b>' + nf(i.kwh, 1) + '</b> kWh' : ''}</span><span>${nf(i.per_h * 100 / 100, 2)} %/h</span></div></div>`).join('') || `<div class="mut" style="font-size:13px;padding:8px 0">${X('Nicio perioadă în repaus în acest interval.', 'No idle periods in this range.')}</div>`;
   return `<div class="top"><h1>${X('Staționări', 'Parked')}</h1><small>${X('offline din TeslaMate = adormită', 'TeslaMate offline = asleep')}</small></div>
   <div class="seg">${[3, 7, 14, 30].map((n) => `<button data-sd="${n}" class="${n === sleepDays ? 'on' : ''}">${n} ${X('zile', 'days')}</button>`).join('')}</div>
@@ -1051,40 +1051,41 @@ async function pinPost(path, body) {
 function chCost(c) {
   const cu = esc(CU()), tmc = c.cost != null ? nf(c.cost, 2) : '—';
   if (c.cost_manual != null) return `<span title="${X('Cost introdus manual · TeslaMate: ', 'Manually entered cost · TeslaMate: ')}${tmc}"><b>${nf(c.cost_manual, 2)}</b> ${cu} <small style="color:var(--mut)">(${X('manual', 'manual')})</small></span>`;
+  if (c.cost_manual == null && c.cost_real == null && c.cost_place != null) return `<span title="${X('Preț salvat pentru ', 'Saved price for ')}${esc(c.place_name)}: ${nf(c.place_price, 3)} ${cu}/kWh · TeslaMate: ${tmc}"><b>${nf(c.cost_place, 2)}</b> ${cu} <small style="color:var(--mut)">(${nf(c.place_price, 2)}/kWh)</small></span>`;
   if (c.cost_real != null) return `<span title="${X('Cost real estimat (doar energia din rețea) · TeslaMate: ', 'Estimated real cost (grid energy only) · TeslaMate: ')}${tmc}"><b>${nf(c.cost_real, 2)}</b> ${cu} <small style="color:var(--mut)">(TM ${tmc})</small></span>`;
   return c.cost != null ? `<span><b>${nf(c.cost, 2)}</b> ${cu}</span>` : '';
 }
-async function fetchAll(kind) {
+async function fetchAll(kind, qs = '') {
   let all = [], off = 0;
   for (;;) {
-    const r = await api('/api/' + kind + '?car=' + car + '&limit=200&offset=' + off);
+    const r = await api('/api/' + kind + '?car=' + car + '&limit=200&offset=' + off + qs);
     all = all.concat(r);
     if (r.length < 200 || all.length >= 1000) break;
     off += 200;
   }
   return all;
 }
-const fetchCharges = () => fetchAll('charges');
+const fetchCharges = () => fetchAll('charges', lfQuery('charges'));
 async function pageCharges() {
+  await lfLoadTags();
   chRows = await fetchCharges();
   const head = `<div class="top"><h1>${tr('Încărcări')}</h1></div>`;
-  if (!chRows.length) return `${head}<div class="empty">${tr('Nimic înregistrat încă.')}</div>${chargeCtlShell()}`;
+  if (!chRows.length) return `${head}<div id="chfilt">${lfBar('charges')}</div><div class="empty">${X('Nimic în perioada aleasă.', 'Nothing in the chosen period.')}</div>${chargeCtlShell()}`;
   if (chF.p !== null && !chRows.some((r) => (r.provider || '') === chF.p)) chF.p = null;
   return `${head}<div class="links" style="margin:0 2px"><a href="#" id="goctl">${X('Control încărcare ↓', 'Charging control ↓')}</a></div><div id="chfilt"></div><div id="chlist"></div>${chargeCtlShell()}`;
 }
 function chFiltered() {
-  const since = chF.d ? Date.now() - chF.d * 864e5 : 0;
-  return chRows.filter((r) => (!since || +T(r.start_date) >= since) && (chF.p === null || (r.provider || '') === chF.p));
+  return chRows.filter((r) => chF.p === null || (r.provider || '') === chF.p);
 }
 function drawChargeList() {
   const fb = $('#chfilt'), lb = $('#chlist'); if (!fb || !lb) return;
-  const cu = CU(), sinceAll = chF.d ? Date.now() - chF.d * 864e5 : 0;
-  const inPeriod = chRows.filter((r) => !sinceAll || +T(r.start_date) >= sinceAll);
+  const cu = CU();
+  const inPeriod = chRows;
   const by = {};                                                  // furnizor -> { n, kwh }
   inPeriod.forEach((r) => { const k = r.provider || ''; const x = by[k] = by[k] || { n: 0, kwh: 0 }; x.n++; x.kwh += r.charge_energy_added || 0; });
   chKeys = Object.keys(by).sort((a, b) => by[b].kwh - by[a].kwh);
   const nm = (k) => k || X('Nespecificat', 'Unspecified');
-  fb.innerHTML = `<div class="seg" style="margin-top:12px">${[[0, X('Tot', 'All')], [30, X('30 zile', '30 days')], [90, X('90 zile', '90 days')], [365, X('1 an', '1 year')]].map(([n, l]) => `<button data-cd="${n}" class="${n === chF.d ? 'on' : ''}">${l}</button>`).join('')}</div>
+  fb.innerHTML = lfBar('charges') + `
   <div class="pchips"><button class="pchip ${chF.p === null ? 'on' : ''}" data-cp="-1">${X('Toți furnizorii', 'All providers')} <small>${inPeriod.length}</small></button>${chKeys.map((k, i) => `<button class="pchip ${chF.p === k ? 'on' : ''}" data-cp="${i}">${esc(nm(k))} <small>${by[k].n}</small></button>`).join('')}</div>`;
   const rows = chFiltered();
   const kwh = rows.reduce((s, x) => s + (x.charge_energy_added || 0), 0), cost = rows.reduce((s, x) => s + (x.cost_eff || 0), 0);
@@ -1093,14 +1094,16 @@ function drawChargeList() {
   let html = `<h2>${chF.p === null ? X('Total', 'Total') : esc(nm(chF.p))}</h2><div class="grid">${stat(X('Sesiuni', 'Sessions'), nf(rows.length))}${stat(X('Energie încărcată', 'Energy charged'), nf(kwh, 1), 'kWh')}${stat(X('Cost total', 'Total cost'), nf(cost, 2), cu)}${stat(X('Cost mediu', 'Average cost'), kwhC > 0 ? nf(cost / kwhC, 2) : '—', cu + '/kWh')}</div>`;
   if (nocost) html += `<p class="note" style="margin:8px 2px 0">${nocost} ${X('sesiuni fără cost înregistrat (nu intră în total). Poți introduce costul din pagina fiecărei încărcări.', 'sessions without a recorded cost (not in the total). You can enter the cost on each charge’s page.')}</p>`;
   if (!rows.length) html += `<div class="empty">${X('Nicio încărcare pentru filtrul ales.', 'No charges for this filter.')}</div>`;
-  const agg = {};
-  rows.forEach((r) => { const k = dayKey(r.start_date); (agg[k] = agg[k] || []).push(r); });
+  const agg = {}, nShow = lfGet('charges').n, shown = rows.slice(0, nShow);
+  shown.forEach((r) => { const k = dayKey(r.start_date); (agg[k] = agg[k] || []).push(r); });
   Object.keys(agg).sort().reverse().forEach((k) => {
     const g = agg[k], dk = g.reduce((s, x) => s + (x.charge_energy_added || 0), 0), dc = g.reduce((s, x) => s + (x.cost_eff || 0), 0);
     html += `<div class="day"><span>${dayLabel(k)}</span><span>+${nf(dk, 1)} kWh${dc ? ' · ' + nf(dc, 2) + ' ' + cu : ''}</span></div>` + g.map(chargeItem).join('');
   });
-  lb.innerHTML = html;
-  fb.querySelectorAll('[data-cd]').forEach((b) => b.onclick = () => { chF.d = +b.dataset.cd; drawChargeList(); });
+  if (rows.length > shown.length) html += `<div class="links" style="margin:14px 2px"><a href="#" data-lfmore="${nShow}">${X('Afișează încă ', 'Show ')}${Math.min(nShow, rows.length - shown.length)}${X('', ' more')} <small>(${shown.length}/${rows.length})</small></a></div>`;
+  lb.innerHTML = lfSelBar('charges') + html;
+  lfBind('charges', () => render());
+  lfSelBind('charges');
   fb.querySelectorAll('[data-cp]').forEach((b) => b.onclick = () => { const i = +b.dataset.cp; chF.p = i < 0 ? null : chKeys[i]; drawChargeList(); });
 }
 async function afterChargeEdit() {

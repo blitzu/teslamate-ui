@@ -23,6 +23,14 @@ The **sleep guard** attributes each awake period to Sentry, a command (app/rule/
 - **Tyres by set:** summer/winter sets, mounted dates, per-set mileage, pressure history normalised to 20 °C and slow-leak detection (needs TPMS data in TeslaMate positions).
 - **Software:** every update with date, version, Wh/km 30 days before/after, and release notes when the car is awake (Fleet API, read only).
 
+## Lists, tags, journey map and saved prices (v1.3)
+
+- **Drives and Charges lists** show 50 items at a time (25/50/100/200, "load more") and can be limited to the last 30/90 days, this year, last year or a custom range; both also filter by tag. Dates show the year when it is not the current one.
+- **Tags** (stored in the app database): add them on a drive or charge page, or press *Select* in a list, pick several items and tag them in one go.
+- **Journey overview** (`#/journey/...`): a top-view map with the route, the charges and the stops between drives. Open it from the *Map* button of any drive (the whole trip), from the Drives list (the current period or filter), from a selection of drives, or by tag/date range on the page itself. Charges are included when they fall between the first departure and the last arrival (or carry the tag); a stop is a pause of at least 5 minutes between two drives that is not a charge. At most 300 drives per map.
+- **Saved places with a price per kWh:** on a charge page, save the place with a name, radius and price. Every charge inside the radius, old ones included, gets the cost kWh × price. Priority: manual cost, real home cost (Home Assistant), saved place, TeslaMate cost. Nothing is written to TeslaMate.
+- **Google Maps links** for the location of a charge and for the start and arrival of a drive.
+
 ## Trips (`#/trips`)
 
 Drives grouped into trips by the gap between them (1–12 h, configurable), with distance, energy, charging stops and cost, and the same map as the drive page.

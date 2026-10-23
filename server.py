@@ -170,7 +170,8 @@ def cars():
 DRIVE_SQL = f"""select d.id, d.start_date, d.end_date, d.distance, d.duration_min, d.speed_max, d.power_max, d.start_km, d.end_km,
         d.outside_temp_avg, d.inside_temp_avg, d.ascent, d.descent,
         (d.start_ideal_range_km - d.end_ideal_range_km) * c.efficiency as kwh,
-        {NAME_A} as start_name, {NAME_B} as end_name, sp.battery_level as start_soc, ep.battery_level as end_soc
+        {NAME_A} as start_name, {NAME_B} as end_name, sp.battery_level as start_soc, ep.battery_level as end_soc,
+        sp.latitude as start_lat, sp.longitude as start_lon, ep.latitude as end_lat, ep.longitude as end_lon
       from drives d join cars c on c.id=d.car_id
       left join geofences g on g.id=d.start_geofence_id left join addresses a on a.id=d.start_address_id
       left join geofences g2 on g2.id=d.end_geofence_id left join addresses a2 on a2.id=d.end_address_id
@@ -178,8 +179,35 @@ DRIVE_SQL = f"""select d.id, d.start_date, d.end_date, d.distance, d.duration_mi
       where d.car_id=%s and d.end_date is not null"""
 
 
-def drives(car, limit, offset):
-    return q(DRIVE_SQL + " order by d.start_date desc limit %s offset %s", (car, limit, offset))
+def _dtparam(s):
+    """Data/ora din parametrul unei cereri (ISO, UTC); None daca lipseste sau e gresita."""
+    try:
+        return dt.datetime.fromisoformat(str(s).replace('Z', '')).replace(tzinfo=None) if s else None
+    except ValueError:
+        return None
+
+
+def list_filters(a, kind):
+    """(de la, pana la, id-uri) din ?from=&to=&tag= ; id-uri None = fara filtru pe tag."""
+    tag = str(a.get('tag') or '').strip()
+    ids = None
+    if tag:
+        ids = TAGS.ids(kind, tag) if TAGS else []
+    return _dtparam(a.get('from')), _dtparam(a.get('to')), ids
+
+
+def drives(car, limit, offset, lo=None, hi=None, ids=None):
+    sql, par = DRIVE_SQL, [car]
+    if lo:
+        sql += ' and d.start_date >= %s'
+        par.append(lo)
+    if hi:
+        sql += ' and d.start_date < %s'
+        par.append(hi)
+    if ids is not None:
+        sql += ' and d.id = any(%s)'
+        par.append(list(ids))
+    return q(sql + " order by d.start_date desc limit %s offset %s", tuple(par) + (limit, offset))
 
 
 def drives_by_ids(car, ids):
@@ -331,7 +359,13 @@ def decorate(rows):
         r['cost_manual'] = e.get('cost')
         r['provider_set'] = bool(e.get('provider'))
         r['provider'] = e.get('provider') or provider_auto(r.get('name'))
-        r['cost_eff'] = e['cost'] if e.get('cost') is not None else (r['cost_real'] if r.get('cost_real') is not None else r.get('cost'))
+        r['cost_place'] = r['place_name'] = r['place_price'] = None
+        if PLACES and r.get('lat') is not None and r.get('lon') is not None:         # loc salvat cu pret pe kWh: kWh x pret (acelasi kWh ca la TeslaMate: consumati din retea, altfel adaugati)
+            pl = PLACES.match(r['lat'], r['lon'])
+            kwh = r.get('charge_energy_used') or r.get('charge_energy_added')
+            if pl and kwh:
+                r['cost_place'], r['place_name'], r['place_price'] = round(float(kwh) * pl['price'], 2), pl['name'], pl['price']
+        r['cost_eff'] = e['cost'] if e.get('cost') is not None else (r['cost_real'] if r.get('cost_real') is not None else (r['cost_place'] if r['cost_place'] is not None else r.get('cost')))
     return rows
 
 
@@ -597,8 +631,8 @@ def ice_calc(by_day, ev_kwh, ev_cost, kwh_charged, l100=None, book=None, manual=
                 prices=[dict(day=d, price=p) for d, p in book if not by_day or d >= by_day[0]['day']][-200:])
 
 
-def charges(car, limit, offset, cid=None):
-    rows = _charges_rows(car, limit, offset, cid)
+def charges(car, limit, offset, cid=None, lo=None, hi=None, ids=None):
+    rows = _charges_rows(car, limit, offset, cid, lo, hi, ids)
     if ha_ok() and HA['grid']:
         budget = 20                                   # max. interogari HA noi per cerere; restul se completeaza la urmatoarea deschidere a paginii
         for r in rows:
@@ -612,14 +646,25 @@ def charges(car, limit, offset, cid=None):
     return decorate(rows)
 
 
-def _charges_rows(car, limit, offset, cid=None):
+def _charges_rows(car, limit, offset, cid=None, lo=None, hi=None, ids=None):
+    extra, par = '', []
+    if lo:
+        extra += ' and cp.start_date >= %s'
+        par.append(lo)
+    if hi:
+        extra += ' and cp.start_date < %s'
+        par.append(hi)
+    if ids is not None:
+        extra += ' and cp.id = any(%s)'
+        par.append(list(ids))
     return q(f"""select cp.id, cp.start_date, cp.end_date, cp.charge_energy_added, cp.charge_energy_used, cp.duration_min, cp.cost, g.cost_per_unit as tariff,
+        coalesce(pp.latitude, a.latitude) as lat, coalesce(pp.longitude, a.longitude) as lon,
         cp.start_battery_level as start_soc, cp.end_battery_level as end_soc, cp.outside_temp_avg,
         (select max(charger_power) from charges ch where ch.charging_process_id=cp.id) as power_max,
         coalesce((select bool_or(fast_charger_present) from charges ch where ch.charging_process_id=cp.id), false) as dc,
         {NAME_A} as name
-      from charging_processes cp left join geofences g on g.id=cp.geofence_id left join addresses a on a.id=cp.address_id
-      where cp.car_id=%s and cp.end_date is not null {'and cp.id=%s' if cid else ''} order by cp.start_date desc limit %s offset %s""", (car,) + ((cid,) if cid else ()) + (limit, offset))
+      from charging_processes cp left join geofences g on g.id=cp.geofence_id left join addresses a on a.id=cp.address_id left join positions pp on pp.id=cp.position_id
+      where cp.car_id=%s and cp.end_date is not null {'and cp.id=%s' if cid else ''}{extra} order by cp.start_date desc limit %s offset %s""", (car,) + ((cid,) if cid else ()) + tuple(par) + (limit, offset))
 
 
 def charge_points(cid):
@@ -2706,6 +2751,8 @@ BG_TASKS = []                    # sarcini de fundal pornite (supravegheat) la s
 PUBLIC_ROUTES = []               # fn(handler, cale, parametri) -> (cod, corp, content-type[, csp]) sau None - pe portul PUBLIC (fara autentificare: modulul isi face singur verificarile)
 CTX = threading.local()          # CTX.actor = cine a dat comanda (user:rol / rule:id / system)
 OWN = None                       # baza de date proprie (features.store.Store), setata de features.load()
+PLACES = None                    # features.places: match(lat, lon) -> loc salvat cu pret pe kWh
+TAGS = None                      # features.tags: ids(kind, nume) si attach(kind, randuri) pentru filtrarea/afisarea tag-urilor
 
 
 class Raw:
@@ -3120,7 +3167,11 @@ class H(BaseHTTPRequestHandler):
         car = int(a.get('car', 1))
         lim, off = min(int(a.get('limit', 40)), 200), int(a.get('offset', 0))
         if p == '/api/drives':
-            return DEMO['drives'][off:off + lim] if demo else drives(car, lim, off)
+            if demo:
+                return DEMO['drives'][off:off + lim]
+            lo, hi, ids = list_filters(a, 'drive')
+            rows = drives(car, lim, off, lo, hi, ids)
+            return TAGS.attach('drive', rows) if TAGS else rows
         if p.startswith('/api/drive/'):
             did = int(p.rsplit('/', 1)[1])
             return dict(points=demo_points(did) if demo else drive_points(did), events=dict(hard_accel=2, hard_brake=1, regen_kwh=0.9, score=89) if demo else drive_events(did))
@@ -3128,18 +3179,26 @@ class H(BaseHTTPRequestHandler):
             did = int(p.rsplit('/', 1)[1])
             return demo_trip(did) if demo else trip(car, did)
         if p == '/api/charges':
-            return decorate([dict(x) for x in DEMO['charges'][off:off + lim]]) if demo else charges(car, lim, off)
+            if demo:
+                return decorate([dict(x) for x in DEMO['charges'][off:off + lim]])
+            lo, hi, ids = list_filters(a, 'charge')
+            rows = charges(car, lim, off, None, lo, hi, ids)
+            return TAGS.attach('charge', rows) if TAGS else rows
         if p.startswith('/api/charge_row/'):
             cid = int(p.rsplit('/', 1)[1])
             rows = decorate([dict(x) for x in DEMO['charges'] if x['id'] == cid]) if demo else charges(car, 1, 0, cid)
             if not rows:
                 raise NotFound()
+            if TAGS and not demo:
+                TAGS.attach('charge', rows)
             return rows[0]
         if p.startswith('/api/drive_row/'):
             did = int(p.rsplit('/', 1)[1])
             rows = [x for x in DEMO['drives'] if x['id'] == did] if demo else drives_by_ids(car, [did])
             if not rows:
                 raise NotFound()
+            if TAGS and not demo:
+                TAGS.attach('drive', rows)
             return rows[0]
         if p.startswith('/api/charge/'):
             cid = int(p.rsplit('/', 1)[1])

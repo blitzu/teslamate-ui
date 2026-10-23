@@ -2,7 +2,7 @@
 NAVI.trips = 'M2 12l5-5 4 4 7-7 4 4-11 11-4-4-5 5z';
 EXTRA_MENU.push(['trips', 'Călătorii', 'Trips', 'trips']);
 let trDays = 90, trTrips = [];
-const trDate = (s) => new Date(s + 'Z').toLocaleDateString(LOC(), { weekday: 'short', day: 'numeric', month: 'short' });
+const trDate = (s) => fdate(new Date(s + 'Z'), { weekday: 'short', day: 'numeric', month: 'short' });
 const trTime = (s) => new Date(s + 'Z').toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' });
 
 PAGES.trips = {

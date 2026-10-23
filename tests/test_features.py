@@ -821,5 +821,77 @@ class DriveScoreTests(unittest.TestCase):
         self.assertEqual(S.drive_score(1, 1, None), 92)
 
 
+from features import tags as TG  # noqa: E402
+
+
+class TagsAndJourneyTests(unittest.TestCase):
+    def drive(self, i, a, b, km=10, sl=(44.0, 26.0), el=(44.1, 26.1)):
+        return dict(id=i, start_date=a, end_date=b, distance=km, kwh=km * 0.15, duration_min=30, start_name='A', end_name='B' + str(i), start_lat=sl[0], start_lon=sl[1], end_lat=el[0], end_lon=el[1])
+
+    def test_build_breaks_and_charges(self):
+        ds = [self.drive(1, '2026-10-01T08:00:00', '2026-10-01T09:00:00'), self.drive(2, '2026-10-01T09:20:00', '2026-10-01T10:00:00'),
+              self.drive(3, '2026-10-01T10:02:00', '2026-10-01T11:00:00'), self.drive(4, '2026-10-01T13:00:00', '2026-10-01T14:00:00'), self.drive(5, '2026-10-01T15:30:00', '2026-10-01T16:00:00')]
+        chs = [dict(id=7, start_date='2026-10-01T09:05:00', end_date='2026-10-01T09:18:00', charge_energy_added=15.0, cost_eff=30.0),
+               dict(id=8, start_date='2026-10-01T11:30:00', end_date='2026-10-01T12:30:00', charge_energy_added=20.0, cost_eff=None),
+               dict(id=9, start_date='2026-10-05T11:30:00', end_date='2026-10-05T12:30:00', charge_energy_added=9.0, cost_eff=1.0)]
+        keep, stops, summ = TG.build(ds, chs)
+        self.assertEqual([c['id'] for c in keep], [7, 8])                      # incarcarea din alta zi nu intra
+        # 1->2 are o incarcare, 2->3 e prea scurta (2 min), 3->4 are o incarcare: doar pauza 4->5 e o oprire
+        self.assertEqual([(s['min'], s['name']) for s in stops], [(90, 'B4')])
+        self.assertEqual((summ['drives'], summ['km'], summ['charges'], summ['charged_kwh'], summ['cost']), (5, 50, 2, 35.0, 30.0))
+        k2, _, s2 = TG.build(ds, chs, tagged_charge_ids={9})
+        self.assertEqual([c['id'] for c in k2], [7, 8, 9])
+
+    def test_tags_set_filter_and_cleanup(self):
+        S.OWN.run('delete from tag_links')
+        S.OWN.run('delete from tags')
+        fn, _ = S.route_lookup('POST', '/api/tags/set')
+        fn(None, dict(kind='drive', ids=[1, 2, 3], add=['Vacanta <b>Grecia', 'x']))
+        self.assertEqual(sorted(S.TAGS.ids('drive', 'vacanta bgrecia')), [1, 2, 3])        # fara semne speciale si fara deosebire intre litere mari/mici
+        rows = S.TAGS.attach('drive', [dict(id=1), dict(id=9)])
+        self.assertEqual(rows[0]['tags'], ['Vacanta bGrecia', 'x'])
+        self.assertEqual(rows[1]['tags'], [])
+        fn(None, dict(kind='drive', ids=[1, 2, 3], remove=['x']))
+        self.assertEqual([t['name'] for t in S.route_lookup('GET', '/api/tags')[0](None, {})['tags']], ['Vacanta bGrecia'])      # "x" nu mai e folosit: dispare
+        with self.assertRaises(ValueError):
+            fn(None, dict(kind='altceva', ids=[1]))
+        with self.assertRaises(ValueError):
+            fn(None, dict(kind='drive', ids=[]))
+
+    def test_thin_keeps_last_point(self):
+        pts = list(range(1000))
+        out = TG.thin(pts, 100)
+        self.assertLessEqual(len(out), 101)
+        self.assertEqual(out[-1], 999)
+
+
+from features import places as PL  # noqa: E402
+
+
+class PlacesTests(unittest.TestCase):
+    def test_nearest_respects_radius(self):
+        ps = [dict(name='A', lat=44.0, lon=26.0, radius=150, price=2.0), dict(name='B', lat=44.0005, lon=26.0, radius=500, price=3.0)]
+        self.assertEqual(PL.nearest(ps, 44.0001, 26.0)['name'], 'A')                 # ambele contin punctul: cel mai apropiat
+        self.assertEqual(PL.nearest(ps, 44.0004, 26.0)['name'], 'B')
+        self.assertIsNone(PL.nearest(ps, 45.0, 26.0))
+
+    def test_clean_validates(self):
+        self.assertEqual(PL.clean(dict(name=' Ionity <b>', lat='44.1', lon='26,1'.replace(',', '.'), price='2,3', radius='10'))['radius'], 30)   # raza minima 30 m
+        for bad in (dict(name='', lat=1, lon=1, price=1), dict(name='x', lat=99, lon=1, price=1), dict(name='x', lat=1, lon=1, price=99), dict(name='x', lat='a', lon=1, price=1)):
+            with self.assertRaises(ValueError):
+                PL.clean(bad)
+
+    def test_place_price_priority_in_cost_eff(self):
+        S.OWN.run('delete from places')
+        fn, _ = S.route_lookup('POST', '/api/places/save')
+        fn(None, dict(name='Ionity Test', lat=44.0, lon=26.0, price='2,5', radius=200))
+        row = lambda **k: dict(dict(id=987654, lat=44.0001, lon=26.0, charge_energy_added=10.0, charge_energy_used=12.0, cost=5.0, cost_real=None), **k)
+        r = S.decorate([row()])[0]
+        self.assertEqual((r['cost_place'], r['cost_eff'], r['place_name']), (30.0, 30.0, 'Ionity Test'))      # 12 kWh x 2,5; bate costul TeslaMate
+        self.assertEqual(S.decorate([row(cost_real=4.0)])[0]['cost_eff'], 4.0)                                # costul real are prioritate
+        self.assertEqual(S.decorate([row(lat=46.0)])[0]['cost_eff'], 5.0)                                     # in afara razei: costul TeslaMate
+        self.assertEqual(S.decorate([row(charge_energy_used=None)])[0]['cost_eff'], 25.0)                     # fara kWh consumati: cei adaugati
+
+
 if __name__ == '__main__':
     unittest.main()

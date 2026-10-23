@@ -69,10 +69,11 @@ const T = (s) => s instanceof Date ? s : new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(s)
 const hm = (min) => { min = Math.round(min || 0); return min >= 60 ? Math.floor(min / 60) + ' h ' + String(min % 60).padStart(2, '0') + ' min' : min + ' min'; };
 const tm = (s) => T(s).toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' });
 const dayKey = (s) => { const d = T(s); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+const fdate = (d, o) => { d = d instanceof Date ? d : new Date(d); return d.toLocaleDateString(LOC(), Object.assign({}, o, d.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {})); };   // anul apare cand nu e cel curent
 const dayLabel = (k) => {
   const d = new Date(k + 'T00:00:00'), t = new Date(); t.setHours(0, 0, 0, 0);
   const diff = Math.round((t - d) / 864e5);
-  return diff === 0 ? 'Azi' : diff === 1 ? 'Ieri' : d.toLocaleDateString(LOC(), { weekday: 'long', day: 'numeric', month: 'long' });
+  return diff === 0 ? 'Azi' : diff === 1 ? 'Ieri' : fdate(d, { weekday: 'long', day: 'numeric', month: 'long' });
 };
 const ago = (s) => {
   const m = Math.max(0, Math.round((Date.now() - T(s).getTime()) / 60000));
@@ -244,20 +245,26 @@ async function afterCar() {
   } catch (e) { /* ignore */ }
 }
 
+const tagChips = (t) => (t || []).map((x) => `<span class="tg">${esc(x)}</span>`).join('');
 function driveItem(d) {
   const wh = d.distance > 0 && d.kwh != null ? d.kwh * 1000 / d.distance : null;
-  return `<a class="item" href="#/drive/${d.id}"><div class="t"><span>${esc(d.start_name)}</span><span class="arr">→</span><span>${esc(d.end_name)}</span></div>
+  return `<a class="item" data-id="${d.id}" href="#/drive/${d.id}"><div class="t"><span>${esc(d.start_name)}</span><span class="arr">→</span><span>${esc(d.end_name)}</span>${tagChips(d.tags)}</div>
   <div class="m"><span><b>${nf(d.distance, 1)}</b> km</span><span><b>${hm(d.duration_min)}</b></span><span><b>${nf(d.kwh, 1)}</b> kWh</span><span><b>${nf(wh)}</b> Wh/km</span><span>${tm(d.start_date)}–${tm(d.end_date)}</span><span class="soc">${nf(d.start_soc)}% → ${nf(d.end_soc)}%</span></div></a>`;
 }
 function chargeItem(c) {
-  return `<a class="item" href="#/charge/${c.id}"><div class="t"><span>${esc(c.name)}</span><span class="badge ${c.dc ? 'dc' : 'ac'}">${c.dc ? 'DC' : 'AC'}</span>${c.provider && c.provider !== c.name ? `<span class="prov">${esc(c.provider)}</span>` : ''}</div>
+  return `<a class="item" data-id="${c.id}" href="#/charge/${c.id}"><div class="t"><span>${esc(c.name)}</span><span class="badge ${c.dc ? 'dc' : 'ac'}">${c.dc ? 'DC' : 'AC'}</span>${c.provider && c.provider !== c.name ? `<span class="prov">${esc(c.provider)}</span>` : ''}${tagChips(c.tags)}</div>
   <div class="m"><span><b>+${nf(c.charge_energy_added, 1)}</b> kWh</span><span><b>${hm(c.duration_min)}</b></span><span>max <b>${nf(c.power_max)}</b> kW</span>${chCost(c)}<span>${tm(c.start_date)}–${tm(c.end_date)}</span><span class="soc">${nf(c.start_soc)}% → ${nf(c.end_soc)}%</span></div></a>`;
 }
 
 async function pageList(kind) {
-  const rows = await fetchAll(kind);
+  await lfLoadTags();
+  const f = lfGet(kind);
+  const rows = await api('/api/' + kind + '?car=' + car + '&limit=' + (f.n + 1) + lfQuery(kind));
+  const more = rows.length > f.n;
+  if (more) rows.pop();
   const ctl = kind === 'charges' ? chargeCtlShell() : '';
-  if (!rows.length) return `<div class="top"><h1>${kind === 'drives' ? 'Curse' : 'Încărcări'}</h1></div>${ctl}<div class="empty">Nimic înregistrat încă.</div>`;
+  const title = kind === 'drives' ? 'Curse' : 'Încărcări', bar = lfBar(kind);
+  if (!rows.length) return `<div class="top"><h1>${title}</h1></div>${bar}${ctl}<div class="empty">${X('Nimic în perioada aleasă.', 'Nothing in the chosen period.')}</div>`;
   let last = '', html = '', agg = {};
   rows.forEach((r) => { const k = dayKey(r.start_date); (agg[k] = agg[k] || []).push(r); });
   Object.keys(agg).sort().reverse().forEach((k) => {
@@ -265,22 +272,31 @@ async function pageList(kind) {
     const sum = kind === 'drives' ? nf(g.reduce((s, x) => s + (x.distance || 0), 0), 1) + ' km' : '+' + nf(g.reduce((s, x) => s + (x.charge_energy_added || 0), 0), 1) + ' kWh';
     html += `<div class="day"><span>${dayLabel(k)}</span><span>${sum}</span></div>` + g.map(kind === 'drives' ? driveItem : chargeItem).join('');
   });
-  return `<div class="top"><h1>${kind === 'drives' ? 'Curse' : 'Încărcări'}</h1></div>${ctl}` + html;
+  const km = rows.reduce((s, x) => s + (x.distance || 0), 0);
+  const sub = `<small>${rows.length}${more ? '+' : ''} ${X('curse', 'drives')} · ${nf(km, 0)} km${more ? ' · ' + X('primele ', 'first ') + f.n : ''}</small>`;
+  return `<div class="top"><h1>${title}</h1>${sub}</div>${bar}${lfSelBar(kind)}${ctl}` + html + (more ? `<div class="links" style="margin:14px 2px"><a href="#" data-lfmore="${f.n}">${X('Încarcă încă ', 'Load ')}${f.n}${X('', ' more')}</a></div>` : '');
 }
+function afterList(kind) { lfBind(kind, () => render()); lfSelBind(kind); }
 
 function sec(title, inner) { return `<h2>${title}</h2><div class="card chart">${String(inner).replace('<svg ', `<svg role="img" aria-label="${esc(String(title).replace(/<[^>]*>/g, ''))}" `)}</div>`; }
 
+const gmUrl = (lat, lon) => (lat != null && lon != null) ? 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(lat + ',' + lon) : '';
+const gmLink = (lat, lon, label) => gmUrl(lat, lon) ? `<a href="${gmUrl(lat, lon)}" target="_blank" rel="noopener noreferrer">📍 ${label}</a>` : '';
+
 async function pageDrive(id) {
+  await lfLoadTags();
   const d = await api('/api/drive_row/' + id + '?car=' + car);
   const dd = await api('/api/drive/' + id), pts = dd.points;
   const wh = d && d.distance > 0 && d.kwh != null ? d.kwh * 1000 / d.distance : null;
   const t = (p) => +T(p[0]);
   const html = `<a class="back" href="#/drives">‹ Curse</a>
-  <div class="top"><h1 style="font-size:21px">${esc(tr(d?.start_name))} → ${esc(tr(d?.end_name))}</h1><small>${d ? T(d.start_date).toLocaleDateString(LOC(), { weekday: 'long', day: 'numeric', month: 'long' }) + ' · ' + tm(d.start_date) + '–' + tm(d.end_date) : ''}</small></div>
+  <div class="top"><h1 style="font-size:21px">${esc(tr(d?.start_name))} → ${esc(tr(d?.end_name))}</h1><small>${d ? fdate(T(d.start_date), { weekday: 'long', day: 'numeric', month: 'long' }) + ' · ' + tm(d.start_date) + '–' + tm(d.end_date) : ''}</small></div>
   <a class="play" href="#/trip/${id}"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>${X('Reluare traseu', 'Replay route')}</a>
+  <div class="links" style="margin:8px 2px"><a href="#/journey/trip:${id}">🗺 ${X('Hartă: traseu, încărcări și opriri', 'Map: route, charges and stops')}</a>${gmLink(d?.start_lat, d?.start_lon, X('Plecare în Google Maps', 'Start in Google Maps'))}${gmLink(d?.end_lat, d?.end_lon, X('Sosire în Google Maps', 'Arrival in Google Maps'))}</div>
   <div class="map big" id="dmap"></div>
   <h2>Rezumat</h2><div class="grid g3">${stat('Distanță', nf(d?.distance, 1), 'km')}${stat('Durată', hm(d?.duration_min))}${stat('Consum', nf(d?.kwh, 1), 'kWh')}${stat('Eficiență', nf(wh), 'Wh/km')}${stat('Viteză max', nf(d?.speed_max), 'km/h')}${stat('Putere max', nf(d?.power_max), 'kW')}${stat('Baterie', nf(d?.start_soc) + '→' + nf(d?.end_soc), '%')}${stat('Temp. ext.', nf(d?.outside_temp_avg, 1), '°C')}${stat('Urcare', nf(d?.ascent), 'm')}</div>
   ${driveEvents(dd.events)}
+  ${tagsCard('drive', +id, d?.tags)}
   <div class="toast" aria-live="polite" id="dtip">${X('Atinge un grafic ca să vezi punctul pe hartă.', 'Touch a chart to see the point on the map.')}</div>
   ${sec('Viteză (km/h)', line(pts.map((p) => [t(p), p[3]]), { color: '#7aa8ff', fx: (x) => new Date(x).toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' }) }))}
   ${sec('Putere (kW)', line(pts.map((p) => [t(p), p[4]]), { color: '#d9ba80', fx: (x) => new Date(x).toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' }) }))}
@@ -298,18 +314,23 @@ async function pageDrive(id) {
     map.fitBounds(pts.map((p) => [p[1], p[2]]), { padding: [24, 24] });
     driveHover(pts, map);
   }, 0);
+  setTimeout(() => tagsBind('drive', +id), 0);
   return html;
 }
 
 async function pageCharge(id) {
+  await lfLoadTags();
   const c = await api('/api/charge_row/' + id + '?car=' + car);
   window.__chrow = c;
   const pts = (await api('/api/charge/' + id)).points, t = (p) => +T(p[0]);
   const fx = (x) => new Date(x).toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' });
   return `<a class="back" href="#/charges">‹ Încărcări</a>
-  <div class="top row"><div><h1 style="font-size:21px">${esc(c?.name)}</h1><small>${c ? T(c.start_date).toLocaleDateString(LOC(), { weekday: 'long', day: 'numeric', month: 'long' }) + ' · ' + tm(c.start_date) + '–' + tm(c.end_date) : ''}</small></div><div class="sp"></div><span class="badge ${c?.dc ? 'dc' : 'ac'}">${c?.dc ? 'DC' : 'AC'}</span></div>
+  <div class="top row"><div><h1 style="font-size:21px">${esc(c?.name)}</h1><small>${c ? fdate(T(c.start_date), { weekday: 'long', day: 'numeric', month: 'long' }) + ' · ' + tm(c.start_date) + '–' + tm(c.end_date) : ''}</small></div><div class="sp"></div><span class="badge ${c?.dc ? 'dc' : 'ac'}">${c?.dc ? 'DC' : 'AC'}</span></div>
+  ${gmUrl(c?.lat, c?.lon) ? `<div class="links" style="margin:8px 2px">${gmLink(c.lat, c.lon, X('Deschide în Google Maps', 'Open in Google Maps'))}</div>` : ''}
   <h2>Rezumat</h2><div class="grid g3">${stat('Adăugat', nf(c?.charge_energy_added, 1), 'kWh')}${stat('Durată', hm(c?.duration_min))}${stat('Putere max', nf(c?.power_max), 'kW')}${stat('Baterie', nf(c?.start_soc) + '→' + nf(c?.end_soc), '%')}${stat('Consumat din rețea', nf(c?.charge_energy_used, 1), 'kWh')}${stat('Cost', (c?.cost_eff ?? c?.cost) != null ? nf(c.cost_eff ?? c.cost, 2) : '—', CU())}${c?.cost_manual != null ? stat('Cost TeslaMate', c.cost ? nf(c.cost, 2) : '—', CU()) : ''}</div>
   <div id="chedit"></div>
+  ${tagsCard('charge', +id, c?.tags)}
+  <div id="chplace"></div>
   <div id="chsolar"></div>
   ${sec('Putere de încărcare (kW)', line(pts.map((p) => [t(p), p[1]]), { color: '#d9ba80', fx }))}
   ${sec('Nivel baterie (%)', line(pts.map((p) => [t(p), p[2]]), { color: '#6fd6b8', fx, min: 0, max: 100 }))}
@@ -498,6 +519,7 @@ async function render() {
   if (p === 'car') afterCar();
   if (p === 'climate') afterClimate();
   if (p === 'charges') afterCharges();
+  if (p === 'drives') afterList('drives');
   if (p === 'trip') startReplay(arg);
   if (p === 'sleep' || p === 'parked') afterSleep();
   if (p === 'activity' || p === 'stats') afterActivity();
@@ -507,7 +529,7 @@ async function render() {
   if (p === 'auto') afterAuto();
   if (p === 'settings') afterSettings();
   if (PAGES[p] && PAGES[p].after) PAGES[p].after(arg);
-  if (p === 'charge') { afterChargeSolar(arg); afterChargeEdit(); }
+  if (p === 'charge') { afterChargeSolar(arg); afterChargeEdit(); afterChargePlace(); }
   const back = ['drive', 'charge', 'trip'].includes(prevRoute) && ['drives', 'charges', 'activity'].includes(p) && SCROLL[p] != null;
   if (p === 'car') scrollTo(0, y); else if (seq === renderSeq && !window.__keep) scrollTo(0, back ? SCROLL[p] : 0);
 }
