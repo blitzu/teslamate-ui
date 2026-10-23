@@ -508,7 +508,7 @@ function driveEvents(ev) {
   if (!ev) return '';
   const cls = ev.score >= 85 ? 'ok' : ev.score >= 65 ? 'warn' : 'bad';
   return `<h2>${X('Stil de condus', 'Driving style')}</h2><div class="grid g3"><div class="st"><i>${X('Scor', 'Score')}</i><b><span class="pill ${cls}" style="font-size:19px">${ev.score}</span></b></div>${stat(X('Frânări bruște', 'Hard braking'), nf(ev.hard_brake))}${stat(X('Accelerări bruște', 'Hard accel.'), nf(ev.hard_accel))}${stat(X('Recuperat', 'Regenerated'), nf(ev.regen_kwh, 1), 'kWh')}</div>
-  <p class="note" style="margin:6px 4px">${X('Scor = 100 − 5 × frânări bruște − 3 × accelerări bruște (peste ~2,5 m/s²). Indicativ, calculat din punctele GPS.', 'Score = 100 − 5 × hard braking − 3 × hard acceleration (above ~2.5 m/s²). Indicative, computed from GPS samples.')}</p>`;
+  <p class="note" style="margin:6px 4px">${X('Scor = 100 − 5 × frânări bruște − 3 × accelerări bruște (peste ~3 m/s², măsurate pe 1,5 s); la cursele de peste 30 km penalizarea e micșorată proporțional. Indicativ, calculat din punctele GPS.', 'Score = 100 − 5 × hard braking − 3 × hard acceleration (above ~3 m/s², measured over 1.5 s); drives longer than 30 km get the penalty scaled down. Indicative, computed from GPS samples.')}</p>`;
 }
 function driveHover(pts, lmap) {
   if (!pts || pts.length < 3 || !window.L || !lmap) return;

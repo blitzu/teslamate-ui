@@ -848,24 +848,59 @@ def battery_health(car):
                 curves=curves, by_temp=f(bt), by_speed=f(bs))
 
 
-def drive_events(did):
-    """Evenimente din puncte brute: franari/accelerari bruste (>= ~2,5 m/s2), energie recuperata, scor simplu de conducere."""
-    rows = q("select date, speed, power from positions where drive_id=%s and speed is not null order by date", (did,))
+HARD_WIN, HARD_BRAKE, HARD_ACCEL = 1.5, 3.0, 3.5     # fereastra (s) si pragurile (m/s2) pentru franare/accelerare brusca
+SCORE_REF_KM = 30                                    # cursele mai lungi de atat au penalizarea micsorata proportional
+
+
+def hard_events(pts, win=HARD_WIN, brake=HARD_BRAKE, accel=HARD_ACCEL):
+    """pts = [(secunde, km/h)]. Numara EPISOADE de franare/accelerare brusca, cu acceleratia masurata pe o fereastra de ~1,5 s: viteza vine in km/h intregi
+    si punctele pot fi la 0,25 s, iar intre doua puncte vecine o treapta de 1-2 km/h ar parea 1-2 m/s2 (zgomot de cuantizare)."""
+    n, k = len(pts), 0
     acc = brk = 0
+    in_acc = in_brk = False
+    for i in range(n):
+        k = max(k, i)
+        while k < n and pts[k][0] - pts[i][0] < win:
+            k += 1
+        if k >= n:
+            break
+        dtt = pts[k][0] - pts[i][0]
+        if dtt > 6:
+            continue                                     # gol in date: nu estimam
+        g = (pts[k][1] - pts[i][1]) / 3.6 / dtt
+        if g > accel:
+            if not in_acc:
+                acc, in_acc = acc + 1, True
+        elif g < accel * 0.5:
+            in_acc = False
+        if g < -brake:
+            if not in_brk:
+                brk, in_brk = brk + 1, True
+        elif g > -brake * 0.5:
+            in_brk = False
+    return acc, brk
+
+
+def drive_score(acc, brk, km):
+    """100 - (5 x franari + 3 x accelerari), cu penalizarea scazuta proportional pentru cursele mai lungi de 30 km."""
+    scale = SCORE_REF_KM / max(float(km or 0), SCORE_REF_KM)
+    return max(0, round(100 - (5 * brk + 3 * acc) * scale))
+
+
+def drive_events(did):
+    """Evenimente din puncte brute: franari/accelerari bruste, energie recuperata, scor de conducere."""
+    rows = q("select date, speed, power from positions where drive_id=%s and speed is not null order by date", (did,))
     regen = 0.0
+    pts = []
+    for r in rows:
+        pts.append((_dtp(r['date']).timestamp(), r['speed']))
     for a, b in zip(rows, rows[1:]):
         dtt = (_dtp(b['date']) - _dtp(a['date'])).total_seconds()
-        if dtt <= 0 or dtt > 6:
-            continue
-        g = (b['speed'] - a['speed']) / 3.6 / dtt          # m/s2
-        if g > 2.5:
-            acc += 1
-        elif g < -2.5:
-            brk += 1
-        if b['power'] is not None and b['power'] < 0:
+        if 0 < dtt <= 6 and b['power'] is not None and b['power'] < 0:
             regen += -b['power'] * dtt / 3600
-    score = max(0, 100 - 5 * brk - 3 * acc)
-    return dict(hard_accel=acc, hard_brake=brk, regen_kwh=round(regen, 2), score=score)
+    acc, brk = hard_events(pts)
+    d = q("select distance from drives where id=%s", (did,))
+    return dict(hard_accel=acc, hard_brake=brk, regen_kwh=round(regen, 2), score=drive_score(acc, brk, d[0]['distance'] if d else 0))
 
 
 def overview(car, days):

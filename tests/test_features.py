@@ -793,5 +793,28 @@ class ImporterGapTests(unittest.TestCase):
         self.assertEqual((led['drives'], led['positions'], led['tessie_drives']), ([1], [10, 11], ['a']))
 
 
+class DriveScoreTests(unittest.TestCase):
+    def test_quantisation_noise_is_not_a_hard_event(self):
+        pts = [(i * 0.25, 50 + (i % 2) * 3) for i in range(400)]            # 50/53 km/h alternand la 4 Hz: pe un pas ar parea 3,3 m/s2
+        self.assertEqual(S.hard_events(pts), (0, 0))
+
+    def test_real_braking_and_launch_count_once_each(self):
+        pts = [(i * 0.25, 60) for i in range(8)]
+        pts += [(2 + (j + 1) * 0.25, max(0, 60 - 5 * (j + 1))) for j in range(12)]       # 60 -> 0 km/h in 3 s = 5,6 m/s2
+        pts += [(5 + (j + 1) * 0.25, min(50, 4 * (j + 1))) for j in range(16)]           # 0 -> 50 km/h in 3 s = 4,6 m/s2
+        pts += [(9 + i * 0.25, 50) for i in range(8)]
+        self.assertEqual(S.hard_events(pts), (1, 1))
+
+    def test_gaps_in_data_are_not_guessed(self):
+        self.assertEqual(S.hard_events([(0, 100), (10, 0), (20, 100), (30, 0)]), (0, 0))      # puncte la 10 s: nu estimam
+
+    def test_score_is_scaled_for_long_drives(self):
+        self.assertEqual(S.drive_score(0, 0, 5), 100)
+        self.assertEqual(S.drive_score(2, 2, 10), 84)                          # 100 - (10 + 6)
+        self.assertEqual(S.drive_score(2, 2, 60), 92)                          # penalizarea la jumatate
+        self.assertEqual(S.drive_score(40, 40, 20), 0)
+        self.assertEqual(S.drive_score(1, 1, None), 92)
+
+
 if __name__ == '__main__':
     unittest.main()
