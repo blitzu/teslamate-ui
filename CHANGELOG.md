@@ -15,6 +15,7 @@ Each version below becomes the text of its GitHub release and is shown in the ap
 - **Tags for drives and charges.** Add tags (for example "Greece trip") from a drive or charge page, or select several items in a list and tag them at once; filter both lists by tag.
 - **Journey overview map** (`#/journey`): a top view with the route, the charges and the stops between drives, for a whole trip (button on every drive), a date range, a few picked drives, everything with a tag, or the current period of the Drives list. It shows a summary (distance, driving time, energy, charging cost, stops) and the events in order.
 - **Saved places with a price per kWh.** On a charge page, save the place with a price: every charge there, old ones included, gets the cost kWh × price. Priority: manual cost, then the real home cost (Home Assistant), then the saved place, then the TeslaMate cost. Nothing is written to TeslaMate.
+- **Route replay: top view and north-up lock.** Two new buttons next to the zoom controls switch the replay between the tilted 3D view and a flat top view (3D/2D), and lock the map with north always up (N), which also disables rotating the map by hand. Your choice is remembered.
 - **Google Maps links:** open the location of a charge, and the start and arrival of a drive, in Google Maps.
 
 ### Fixes

@@ -246,7 +246,7 @@ async function startReplay(id) {
   const root = document.createElement('div'); root.id = 'rp';
   root.innerHTML = `<div id="rpmap"></div><div class="rp-top"><button class="rp-btn" id="rpx" aria-label="close">✕</button><div class="rp-clock"><b id="rpt">--:--</b><small id="rpd"></small></div><div class="rp-wx" id="rpw"></div></div>
   <div class="rp-intro" id="rpi"><div class="rp-card"><small>${X('Traseu', 'Route')}</small><h2 id="rpit">…</h2><p id="rpid"></p><span class="rp-load" id="rpl">${X('Se încarcă harta…', 'Loading map…')}</span></div></div>
-  <div class="rp-zoom"><button class="rp-btn" id="rpzi" aria-label="zoom in">＋</button><button class="rp-btn" id="rpzo" aria-label="zoom out">−</button><button class="rp-btn fo" id="rpfo" aria-label="follow">◎</button></div>
+  <div class="rp-zoom"><button class="rp-btn" id="rpzi" aria-label="zoom in">＋</button><button class="rp-btn" id="rpzo" aria-label="zoom out">−</button><button class="rp-btn fo" id="rpfo" aria-label="follow">◎</button><button class="rp-btn vw" id="rptop" aria-label="top view" title="${X('Vedere de sus / înclinată', 'Top view / tilted')}">3D</button><button class="rp-btn vw" id="rpnorth" aria-label="north up" title="${X('Nord mereu în sus', 'North always up')}">N</button></div>
   <div class="rp-ctl"><button class="rp-btn" id="rpp" aria-label="play">❚❚</button><input type="range" id="rps" min="0" max="1000" value="0"><button class="rp-btn" id="rpr" aria-label="record" title="Video">⏺</button><button class="rp-btn wide" id="rpv">1×</button></div>
   <div class="rp-end" id="rpe"></div>`;
   document.body.appendChild(root);
@@ -270,7 +270,8 @@ async function startReplay(id) {
   // zoom de baza: ~230 px/s deplasare pe ecran indiferent cat de lunga e calatoria (nivelul de zoom coboara pe trasee lungi)
   const vg = T0.km / Math.max(T0.end - T0.stops.reduce((s, x) => s + (x.pt1 - x.pt0), 0), 1);
   const zb = Math.max(11.8, Math.min(16.2, Math.log2(156543 * Math.cos(tl[0].lat * Math.PI / 180) * 190 / Math.max(vg * 1000, 1))));
-  RP = { root, map: map2, tl, T0, ph: 0, end: T0.end, playing: false, speed: 1, stage: 'intro', last: 0, cb: 0, hd: tl[0].hd, chd: tl[0].hd, zb, z: zb, wx: {}, stopEls: [], follow: true, zoff: 0, zo: 0, freeze: 0, raf: 0, id, t0, t1 };
+  const VW = (() => { try { return JSON.parse(localStorage.getItem('rp_view') || '{}'); } catch (e) { return {}; } })();
+  RP = { top: !!VW.top, north: !!VW.north, root, map: map2, tl, T0, ph: 0, end: T0.end, playing: false, speed: 1, stage: 'intro', last: 0, cb: 0, hd: tl[0].hd, chd: tl[0].hd, zb, z: zb, wx: {}, stopEls: [], follow: true, zoff: 0, zo: 0, freeze: 0, raf: 0, id, t0, t1 };
   const bounds = new ml.LngLatBounds(); T0.coords.forEach((c) => bounds.extend(c));
   const cw = innerWidth < 520 ? 104 : 136;
   map2.once('load', () => {
@@ -309,16 +310,35 @@ async function startReplay(id) {
   function flyStart() {
     if (!RP || RP.stage !== 'intro') return;
     clearTimeout(RP.introT); RP.stage = 'fly'; root.querySelector('#rpi').classList.remove('show');
-    map2.setPadding({ top: Math.round(innerHeight * .3), bottom: 0, left: 0, right: 0 });
-    map2.flyTo({ center: [tl[0].lon, tl[0].lat], zoom: RP.zb, pitch: RP.rec ? 50 : 58, bearing: tl[0].hd, duration: 2800, essential: true, curve: 1.2 });
+    map2.setPadding(padV());
+    map2.flyTo({ center: [tl[0].lon, tl[0].lat], zoom: RP.zb, pitch: pitchV(), bearing: bearV(tl[0].hd), duration: 2800, essential: true, curve: 1.2 });
     map2.once('moveend', () => { if (RP) { RP.stage = 'play'; RP.playing = true; RP.last = performance.now(); RP.z = RP.zb; RP.chd = tl[0].hd; setPlayBtn(); } });
   }
   const clearPop = () => { if (RP.pop) { RP.pop.remove(); RP.pop = null; } if (RP.dot) { RP.dot.remove(); RP.dot = null; } };
   function setFollow() {
     RP.follow = true; root.querySelector('#rpfo').classList.remove('show'); RP.freeze = performance.now() + 700;
-    const p = atPh(tl, RP.ph); map2.easeTo({ center: [p.lon, p.lat], zoom: RP.z, bearing: RP.chd, pitch: RP.rec ? 50 : 58, duration: 650 });
+    const p = atPh(tl, RP.ph); map2.easeTo({ center: [p.lon, p.lat], zoom: RP.z, bearing: bearV(RP.chd), pitch: pitchV(), duration: 650 });
   }
   root.querySelector('#rpfo').onclick = setFollow;
+  const pitchV = () => (RP.top ? 0 : RP.rec ? 50 : 58), bearV = (hd) => (RP.north ? 0 : hd);
+  const padV = () => ({ top: RP.top ? 0 : Math.round(innerHeight * .3), bottom: 0, left: 0, right: 0 });
+  function applyView(animate) {
+    const bt = root.querySelector('#rptop'), bn = root.querySelector('#rpnorth');
+    bt.textContent = RP.top ? '2D' : '3D'; bt.classList.toggle('on', RP.top); bn.classList.toggle('on', RP.north);
+    map2.setMaxPitch(RP.top ? 0 : 70);
+    if (RP.north) { map2.dragRotate.disable(); map2.touchZoomRotate.disableRotation(); } else { map2.dragRotate.enable(); map2.touchZoomRotate.enableRotation(); }
+    try { localStorage.setItem('rp_view', JSON.stringify({ top: RP.top, north: RP.north })); } catch (e) { /* ignore */ }
+    if (RP.stage === 'play' || RP.stage === 'fly') map2.setPadding(padV());
+    if (animate && (RP.stage === 'play' || RP.stage === 'end')) {
+      const o = { duration: 600 };
+      if (RP.stage === 'play' && RP.follow) { const p = atPh(tl, RP.ph); Object.assign(o, { center: [p.lon, p.lat], pitch: pitchV(), bearing: bearV(RP.chd) }); RP.freeze = performance.now() + 700; }
+      else Object.assign(o, { pitch: RP.top ? 0 : map2.getPitch(), bearing: RP.north ? 0 : map2.getBearing() });
+      map2.easeTo(o);
+    }
+  }
+  root.querySelector('#rptop').onclick = () => { RP.top = !RP.top; applyView(true); };
+  root.querySelector('#rpnorth').onclick = () => { RP.north = !RP.north; applyView(true); };
+  applyView(false);
   const zoomBy = (d) => { if (RP.stage === 'play' && RP.follow) RP.zoff = Math.max(-4, Math.min(3.5, RP.zoff + d)); else map2.easeTo({ zoom: map2.getZoom() + d, duration: 250 }); };
   root.querySelector('#rpzi').onclick = () => zoomBy(.7);
   root.querySelector('#rpzo').onclick = () => zoomBy(-.7);
@@ -351,7 +371,7 @@ async function startReplay(id) {
   function restart() {
     clearPop(); root.querySelector('#rpe').classList.remove('show'); RP.follow = true; root.querySelector('#rpfo').classList.remove('show'); showCards(true); RP.ph = 0; RP.stage = 'play'; RP.playing = true; RP.last = performance.now(); root.querySelector('#rpe').classList.remove('show');
     map2.setPadding({ top: Math.round(innerHeight * .3), bottom: 0, left: 0, right: 0 });
-    map2.jumpTo({ center: [tl[0].lon, tl[0].lat], zoom: RP.zb, pitch: RP.rec ? 50 : 58, bearing: tl[0].hd }); RP.chd = tl[0].hd; setPlayBtn();
+    map2.jumpTo({ center: [tl[0].lon, tl[0].lat], zoom: RP.zb, pitch: pitchV(), bearing: bearV(tl[0].hd) }); RP.chd = tl[0].hd; setPlayBtn();
   }
   function finish() {
     RP.stage = 'end'; RP.playing = false; setPlayBtn(); showCards(false); stopRecord();
@@ -378,7 +398,7 @@ async function startReplay(id) {
     RP.zo += (RP.zoff - RP.zo) * kd(.25);
     if (RP.stage === 'play' && RP.follow && performance.now() > RP.freeze) {
       RP.z += (RP.zb - Math.max(-1.2, Math.min(1.3, .6 * Math.log2(Math.max(p.v, 10) / T0.vAvg))) - RP.z) * kd(1.2);
-      map2.jumpTo({ center: [p.lon, p.lat], bearing: RP.chd, pitch: RP.rec ? 50 : 58, zoom: RP.z + RP.zo + (RP.rec ? .45 : 0) });
+      map2.jumpTo({ center: [p.lon, p.lat], bearing: bearV(RP.chd), pitch: pitchV(), zoom: RP.z + RP.zo + (RP.rec ? .45 : 0) });
     }
     if ((RP.cb++ % 3) === 0 || force) {
       map2.setPaintProperty('done-l', 'line-gradient', GRAD(p.cd / T0.cdTotal));
