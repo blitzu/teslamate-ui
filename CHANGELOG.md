@@ -6,8 +6,12 @@ Each version below becomes the text of its GitHub release and is shown in the ap
 ## 1.4.0 - unreleased
 
 ### New features
-- **Built-in updater (no Watchtower needed).** An optional `updater` container (`docker compose --profile updater up -d updater`) powers the **Update now** button and, if you want, updates the app by itself at an interval (for example once a day). It only runs `docker compose pull` and `up -d` for the services you list, behind a bearer token, publishes no port to the host and is a single small readable file. Setup is a few lines in `.env`; see `docs/updates.md`. The release workflow now also publishes its image (`ghcr.io/blitzu/teslamate-ui-updater`).
-- **"Update now" follows the update:** after you press it the page shows that the new version is being downloaded, waits for the app to restart with the new version and reloads itself.
+- **One-click updates, nothing to configure.** The stack now includes a tiny `updater` container. When a new version exists, **Settings → Version & updates** shows what changed and an **Update now** button: it downloads the new images, restarts the app (about a minute) and the page waits for the new version and reloads itself. The updater finds its project by itself, creates its own token in `./data/updater.token` (the app reads it from there), publishes no port and only runs `docker compose pull` and `up -d` for the app's own services. Nothing is updated unless you press the button; `UPDATER_AUTO_HOURS=24` in `.env` turns on an optional daily automatic update. It needs the Docker socket, which is root-equivalent on the host, so `docs/updates.md` explains how to remove it if you prefer to update by hand. Whatever updater you already set up (for example Watchtower) keeps priority.
+- **"Check now"** stays one click away in the same section and always looks for a new version.
+- The release workflow also publishes the updater image (`ghcr.io/blitzu/teslamate-ui-updater`).
+
+### Upgrading from an older version
+- You need one manual update to get the updater: `git pull && docker compose up -d --build`. After that, updates are one click.
 
 ## 1.3.0 - 2026-10-23
 

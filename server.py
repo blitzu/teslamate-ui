@@ -484,12 +484,30 @@ def update_loop():
         time.sleep(12 * 3600)
 
 
-def update_apply():
-    """Cere actualizarea unui updater extern (ex. Watchtower HTTP API): aplicatia nu are acces la Docker si nu isi poate inlocui singura containerul."""
+UPD_TOKEN_FILE = DATA_DIR + '/updater.token'
+UPD_DEFAULT_URL = 'http://updater:8080/update'
+
+
+def updater_conn():
+    """(adresa, token) al updater-ului: cel setat de utilizator (ex. Watchtower); altfel updater-ul inclus in stack, gasit prin fisierul de token pe care si-l creeaza singur."""
     url = str(cget('update_webhook', 'UPDATE_WEBHOOK', ''))
     tok = str(cget('update_token', 'UPDATE_TOKEN', ''))
+    if not url and not tok:
+        try:
+            with open(UPD_TOKEN_FILE) as f:
+                t = f.read().strip()
+            if t:
+                return UPD_DEFAULT_URL, t
+        except OSError:
+            pass
+    return url, tok
+
+
+def update_apply():
+    """Cere actualizarea unui updater extern (ex. Watchtower HTTP API): aplicatia nu are acces la Docker si nu isi poate inlocui singura containerul."""
+    url, tok = updater_conn()
     if not url:
-        return dict(ok=False, reason='Nu e configurat niciun webhook de actualizare (Setări → Actualizări).')
+        return dict(ok=False, reason='Nu e configurat niciun updater (Setări → Actualizări).')
     try:
         c, r = http(url, None, headers=({'Authorization': 'Bearer ' + tok} if tok else {}), method='POST', timeout=300)
     except Exception as e:  # noqa
@@ -514,7 +532,7 @@ def version_info():
     with ULOCK:
         u = dict(UPD)
     return dict(version=APP_VERSION, commit=BUILD_COMMIT, repo=UPDATE_REPO, check=update_cfg_on(), private=APP_VERSION.endswith('-private'), latest=u['latest'], newer=update_newer(),
-                url=u['url'], notes=u['notes'], published=u['published'], checked=u['checked'], error=u['error'], can_apply=bool(cget('update_webhook', 'UPDATE_WEBHOOK', '')))
+                url=u['url'], notes=u['notes'], published=u['published'], checked=u['checked'], error=u['error'], can_apply=bool(updater_conn()[0]), builtin_updater=updater_conn()[0] == UPD_DEFAULT_URL)
 
 
 _BUILD = [0.0, '']

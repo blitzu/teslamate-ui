@@ -72,11 +72,9 @@ services:
     command: ["-tls-key", "/fleet/tls-key.pem", "-cert", "/fleet/tls-cert.pem", "-key-file", "/fleet/private-key.pem", "-host", "0.0.0.0", "-port", "4443"]
 
   updater:
-    # Optional built-in updater for the "Update now" button and/or automatic updates (no Watchtower needed). See docs/updates.md.
-    #   1) in .env:  UPDATER_TOKEN=<16+ random characters>   PROJECT_DIR=<absolute path of this folder>   UPDATE_WEBHOOK=http://updater:8080/update   UPDATE_TOKEN=<same token>
-    #   2) docker compose --profile updater up -d updater
-    # It mounts the Docker socket (root-equivalent on the host) but only runs `docker compose pull/up` for the services listed in UPDATER_SERVICES, and publishes no port.
-    profiles: ["updater"]
+    # Built-in updater: powers the "Update now" button in Settings (nothing to configure). It only runs `docker compose pull/up` for the app's own services,
+    # publishes no port, and creates its own token in ./data/updater.token. It needs the Docker socket (root-equivalent on the host): see docs/updates.md,
+    # including how to remove it if you prefer to update by hand.
     build:
       context: .
       dockerfile: Dockerfile.updater
@@ -86,21 +84,18 @@ services:
     security_opt:
       - no-new-privileges:true
     cap_drop: [ALL]
-    cap_add: [DAC_READ_SEARCH]       # read .env and the env files whatever their owner
+    cap_add: [CHOWN, DAC_OVERRIDE]   # write its token into ./data (owned by the app user) and read the compose files
     mem_limit: 128m
     pids_limit: 64
     logging:
       driver: json-file
       options: {max-size: "10m", max-file: "3"}
     environment:
-      UPDATER_TOKEN: ${UPDATER_TOKEN:-}          # the updater refuses to start without it (min. 16 characters)
-      PROJECT_DIR: ${PROJECT_DIR:-/opt/teslamate-ui}
-      UPDATER_SERVICES: ${UPDATER_SERVICES:-ui proxy}
-      UPDATER_AUTO_HOURS: ${UPDATER_AUTO_HOURS:-0}   # 0 = only when you press the button; e.g. 24 = update by itself once a day
-    working_dir: ${PROJECT_DIR:-/opt/teslamate-ui}
+      UPDATER_AUTO_HOURS: ${UPDATER_AUTO_HOURS:-0}   # 0 = only when you press the button (default); e.g. 24 = also update by itself once a day
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${PROJECT_DIR:-/opt/teslamate-ui}:${PROJECT_DIR:-/opt/teslamate-ui}   # same path as on the host: compose resolves ./data etc. from it
+      - ./data:/data
+
 
   demo:
     # Optional public demo with fictional data: docker compose --profile demo up -d demo

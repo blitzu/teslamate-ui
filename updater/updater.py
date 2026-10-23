@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
-"""Updater minimal pentru aplicatie: la un POST autentificat trage imaginile noi ale serviciilor aplicatiei si le reporneste cu `docker compose`.
-Nu are alta functie: nu atinge alte containere, nu expune niciun port pe gazda (aplicatia il apeleaza prin reteaua Docker), cere un token de minim 16 caractere.
+"""Updater inclus in stack, fara configurare: la un POST autentificat trage imaginile noi ale serviciilor aplicatiei si le reporneste cu `docker compose`.
+Nu are alta functie: nu atinge alte containere, nu expune niciun port pe gazda (aplicatia il apeleaza prin reteaua Docker).
+
+Fara setari manuale:
+  * folderul proiectului si numele proiectului le afla singur, din etichetele pe care compose le pune pe propriul container;
+  * comenzile compose le ruleaza intr-un container ajutator (aceeasi imagine, cu folderul proiectului montat la aceeasi cale ca pe gazda);
+  * tokenul si-l genereaza la prima pornire in /data/updater.token, de unde il citeste aplicatia (acelasi folder ./data).
 
   POST /update   (Authorization: Bearer <token>)  porneste actualizarea in fundal; 202 daca a pornit, 409 daca ruleaza deja, 429 daca s-a rulat acum cateva secunde
   GET  /status   (Authorization: Bearer <token>)  starea ultimei rulari (si coada jurnalului)
   GET  /health   fara autentificare, doar "ok"
 
-Variabile: UPDATER_TOKEN (obligatoriu), PROJECT_DIR (folderul proiectului compose, montat la ACEEASI cale ca pe gazda), UPDATER_SERVICES (implicit "ui proxy"),
-UPDATER_AUTO_HOURS (0 = doar la cerere; altfel actualizeaza singur la acest interval, minim 1 h), UPDATER_PORT (implicit 8080)."""
+Setari optionale (variabile): UPDATER_SERVICES (implicit "ui proxy"), UPDATER_AUTO_HOURS (0 = doar la cerere; altfel actualizeaza singur la acest interval, minim 1 h),
+UPDATER_TOKEN (in loc de fisier), APP_UID (proprietarul fisierului de token, implicit 10001), UPDATER_PORT (implicit 8080)."""
 import hmac
 import json
 import os
 import re
+import secrets
+import socket
 import subprocess
 import sys
 import threading
@@ -20,6 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MIN_GAP = 30                         # secunde intre doua rulari
 CMD_TIMEOUT = 900                    # o descarcare lenta poate dura minute
+TOKEN_FILE = os.environ.get('UPDATER_TOKEN_FILE', '/data/updater.token')
 
 
 def services(raw):
@@ -32,15 +40,59 @@ def authorized(header, token):
     return len(token) >= 16 and h.startswith('Bearer ') and hmac.compare_digest(h[7:].strip().encode(), token.encode())
 
 
+def load_token(path=TOKEN_FILE, uid=None):
+    """Tokenul din UPDATER_TOKEN sau din fisier; daca nu exista, il genereaza (mod 600, al utilizatorului aplicatiei, ca sa-l poata citi aplicatia)."""
+    t = os.environ.get('UPDATER_TOKEN', '').strip()
+    if len(t) >= 16:
+        return t
+    try:
+        with open(path) as f:
+            t = f.read().strip()
+        if len(t) >= 16:
+            return t
+    except OSError:
+        pass
+    t = secrets.token_urlsafe(24)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as f:
+        f.write(t + '\n')
+    try:
+        u = int(uid if uid is not None else os.environ.get('APP_UID', '10001'))
+        os.chown(path, u, u)
+    except (OSError, ValueError, AttributeError):
+        os.chmod(path, 0o644)                                        # fara drept de chown: citibil de aplicatie, in folderul ei de date
+    return t
+
+
+def self_info(inspect_json):
+    """(folder proiect, nume proiect, fisiere compose, imagine) din rezultatul `docker inspect` al propriului container."""
+    d = inspect_json[0] if isinstance(inspect_json, list) else inspect_json
+    lab = (d.get('Config') or {}).get('Labels') or {}
+    wd = lab.get('com.docker.compose.project.working_dir')
+    if not wd:
+        raise RuntimeError('containerul nu a fost pornit cu docker compose (lipsesc etichetele compose)')
+    files = [f for f in str(lab.get('com.docker.compose.project.config_files') or '').split(',') if f]
+    return wd, lab.get('com.docker.compose.project') or os.path.basename(wd.rstrip('/')), files, (d.get('Config') or {}).get('Image') or d.get('Image')
+
+
 class Updater:
-    def __init__(self, token, svcs, project_dir, runner=None):
-        self.token, self.svcs, self.dir = token, svcs, project_dir
+    def __init__(self, token, svcs, runner=None):
+        self.token, self.svcs = token, svcs
         self.runner = runner or self.docker
         self.lock = threading.Lock()
         self.state = dict(running=False, started=0, finished=0, success=None, log='')
 
     def docker(self, args):
-        r = subprocess.run(['docker', 'compose'] + args, cwd=self.dir, capture_output=True, text=True, timeout=CMD_TIMEOUT)
+        """Ruleaza `docker compose <args>` pentru proiectul in care ruleaza acest container, intr-un container ajutator."""
+        me = subprocess.run(['docker', 'inspect', socket.gethostname()], capture_output=True, text=True, timeout=30)
+        if me.returncode != 0:
+            return me.returncode, me.stderr
+        wd, project, files, image = self_info(json.loads(me.stdout))
+        cmd = ['docker', 'run', '--rm', '--entrypoint', 'docker', '--cap-drop', 'ALL', '--cap-add', 'DAC_READ_SEARCH', '--security-opt', 'no-new-privileges:true',
+               '-v', '/var/run/docker.sock:/var/run/docker.sock', '-v', '%s:%s' % (wd, wd), '-w', wd, image, 'compose', '-p', project, '--project-directory', wd]
+        for f in files:
+            cmd += ['-f', f]
+        r = subprocess.run(cmd + args, capture_output=True, text=True, timeout=CMD_TIMEOUT)
         return r.returncode, (r.stdout + r.stderr)
 
     def work(self):
@@ -111,16 +163,19 @@ def make_handler(up):
 
 
 def main():
-    token = os.environ.get('UPDATER_TOKEN', '')
-    if len(token) < 16:
-        sys.exit('UPDATER_TOKEN lipseste sau are sub 16 caractere (setează-l in .env).')
-    pdir = os.environ.get('PROJECT_DIR', '/project')
-    if not os.path.isfile(os.path.join(pdir, 'docker-compose.yml')) and not os.path.isfile(os.path.join(pdir, 'compose.yaml')):
-        sys.exit('PROJECT_DIR=%s nu contine docker-compose.yml: monteaza folderul proiectului la aceeasi cale ca pe gazda.' % pdir)
     svcs = services(os.environ.get('UPDATER_SERVICES'))
     if not svcs:
         sys.exit('UPDATER_SERVICES gol sau invalid.')
-    up = Updater(token, svcs, pdir)
+    try:
+        token = load_token()
+    except OSError as e:
+        sys.exit('Nu pot crea tokenul in %s (%s). Monteaza folderul ./data la /data.' % (TOKEN_FILE, e))
+    try:                                                                                       # esueaza devreme, cu un mesaj clar, daca nu ruleaza sub compose
+        me = subprocess.run(['docker', 'inspect', socket.gethostname()], capture_output=True, text=True, timeout=30)
+        wd, project, _, image = self_info(json.loads(me.stdout))
+    except Exception as e:  # noqa
+        sys.exit('Nu pot afla proiectul compose: %s. Ai montat /var/run/docker.sock?' % e)
+    up = Updater(token, svcs)
     try:
         hours = float(os.environ.get('UPDATER_AUTO_HOURS', '0') or 0)
     except ValueError:
@@ -134,7 +189,7 @@ def main():
                 up.start()
                 time.sleep(hours * 3600)
         threading.Thread(target=loop, daemon=True).start()
-    print('updater pornit: servicii=%s auto=%sh' % (' '.join(svcs), hours or 'off'), flush=True)
+    print('updater pornit: proiect=%s folder=%s servicii=%s auto=%sh' % (project, wd, ' '.join(svcs), hours or 'off'), flush=True)
     ThreadingHTTPServer(('0.0.0.0', int(os.environ.get('UPDATER_PORT', '8080'))), make_handler(up)).serve_forever()
 
 

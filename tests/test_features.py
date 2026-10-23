@@ -893,5 +893,27 @@ class PlacesTests(unittest.TestCase):
         self.assertEqual(S.decorate([row(charge_energy_used=None)])[0]['cost_eff'], 25.0)                     # fara kWh consumati: cei adaugati
 
 
+class UpdaterConnTests(unittest.TestCase):
+    def test_builtin_updater_is_found_through_its_token_file_and_user_config_wins(self):
+        import tempfile
+        old = (S.UPD_TOKEN_FILE, dict(S.CFG))
+        try:
+            S.CFG.pop('update_webhook', None)
+            S.CFG.pop('update_token', None)
+            os.environ.pop('UPDATE_WEBHOOK', None)
+            os.environ.pop('UPDATE_TOKEN', None)
+            S.UPD_TOKEN_FILE = os.path.join(tempfile.mkdtemp(), 'missing.token')
+            self.assertEqual(S.updater_conn(), ('', ''))                                                # fara updater
+            S.UPD_TOKEN_FILE = os.path.join(tempfile.mkdtemp(), 'updater.token')
+            open(S.UPD_TOKEN_FILE, 'w').write('tok-from-file-1234' + chr(10))
+            self.assertEqual(S.updater_conn(), (S.UPD_DEFAULT_URL, 'tok-from-file-1234'))             # gasit singur, fara setari
+            S.CFG.update(update_webhook='http://watchtower:8080/v1/update', update_token='mine')
+            self.assertEqual(S.updater_conn(), ('http://watchtower:8080/v1/update', 'mine'))           # ce a setat utilizatorul are prioritate
+        finally:
+            S.UPD_TOKEN_FILE = old[0]
+            S.CFG.clear()
+            S.CFG.update(old[1])
+
+
 if __name__ == '__main__':
     unittest.main()

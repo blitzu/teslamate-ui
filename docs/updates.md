@@ -23,33 +23,26 @@ Pin a version with `APP_TAG=1.0.0` in `.env` (default `latest`); roll back by se
 
 **From source.** `git pull && docker compose up -d --build`.
 
-## Built-in updater (no Watchtower)
+## Built-in updater (nothing to configure)
 
-A tiny optional container, `updater`, gives the **Update now** button (and optional daily automatic updates) without any third-party tool. It exposes no port to the host: the app reaches it over the compose network. It only ever runs `docker compose pull` and `docker compose up -d` for the services in `UPDATER_SERVICES` (default `ui proxy`), after checking a bearer token, one run at a time.
+From v1.4.0 the stack includes a tiny `updater` container. It gives you the **Update now** button in **Settings → Version & updates** with no settings at all:
 
-Set it up once, in `.env` (generate the token with `openssl rand -hex 16`):
+1. A new version appears (the app checks GitHub twice a day, or press **Check now** any time).
+2. **Settings → Version & updates** shows what changed. Press **Update now** and confirm.
+3. The updater pulls the new images and restarts the app (about a minute). The page waits for the new version and reloads itself.
 
-```bash
-UPDATER_TOKEN=<16+ random characters>
-PROJECT_DIR=/absolute/path/of/this/folder     # setup.sh writes it for new installs; check with `pwd`
-UPDATE_WEBHOOK=http://updater:8080/update
-UPDATE_TOKEN=<the same token>
-# UPDATER_AUTO_HOURS=24                          # optional: also update by itself once a day
-```
+Nothing is updated unless you press the button (set `UPDATER_AUTO_HOURS=24` in `.env` if you *do* want a daily automatic update).
 
-```bash
-docker compose --profile updater up -d updater
-```
+**If you are on an older version (before v1.4.0)** you need to do one manual update to get the updater: `git pull && docker compose up -d --build` (source install), or `docker compose pull && docker compose up -d` if you use the published images and have fetched the new `docker-compose.yml`. After that, every update is one click.
 
-Then **Settings → Version & updates** shows the **Update now** button when a new version exists; pressing it pulls the new images and restarts the app (about a minute). `GET http://updater:8080/status` (same token) shows the log of the last run.
+**How it works, and what you should know**
 
-**What you should know**
-
-* It mounts the Docker socket, which is root-equivalent on the host. That is unavoidable for any updater (Watchtower does the same); this one is a single small file you can read ([`updater/updater.py`](../updater/updater.py)) and it only acts on the services you name. Do not publish its port and keep the token secret.
-* For installs from published images (`docker compose pull`). If you build from source, update with `git pull && docker compose up -d --build`.
-* The project folder is mounted **at the same path as on the host**, because compose resolves `./data`, `./fleet` and the env files relative to it; that is why `PROJECT_DIR` must be the real absolute path.
-* The updater itself is not restarted by its own run; update it from the host when a release changes it: `docker compose --profile updater pull updater && docker compose --profile updater up -d updater`.
-* Rolling back: set `APP_TAG=<previous version>` in `.env` and press the button (or run `docker compose up -d`).
+* It finds its own project folder and name from the labels compose puts on its container, creates a random token in `./data/updater.token` on first start (the app reads it from the same folder), and runs `docker compose pull` + `up -d` for the services `ui` and `proxy` only, in a short-lived helper container. Nothing to configure, no port published: the app reaches it over the compose network and it only accepts requests with the token.
+* It needs the **Docker socket**, which is root-equivalent on the host. That is unavoidable for any updater (Watchtower does the same). The code is one small file you can read ([`updater/updater.py`](../updater/updater.py)). **If you prefer not to have it:** remove the `updater` block from `docker-compose.yml` (or run `docker compose rm -sf updater` and never start it) and update by hand; the app keeps telling you when a version is available.
+* It replaces the app's images with the published ones (`docker compose pull`). If you changed the source locally, update with `git pull && docker compose up -d --build` instead. Changes to `docker-compose.yml` itself are not applied by the updater; when a release needs one, the CHANGELOG says so.
+* Already using Watchtower or another updater? Whatever you set in Settings (or `UPDATE_WEBHOOK` / `UPDATE_TOKEN`) takes priority over the built-in one.
+* Rolling back: set `APP_TAG=<previous version>` in `.env` and press **Update now** (or run `docker compose up -d`).
+* `GET http://updater:8080/status` with the token (from `./data/updater.token`) shows the log of the last run; `docker logs tessie-updater` shows its start-up messages.
 
 ## Automatic updates
 

@@ -9,7 +9,6 @@ mkdir -p fleet data
 if [ ! -f .env ]; then
   cp .env.example .env
   chmod 600 .env
-  echo "PROJECT_DIR=$(pwd)" >> .env          # used by the optional updater (docs/updates.md)
   echo "Created .env - edit it now (database password, MQTT host, TeslaMate network)."
 fi
 if [ ! -f fleet/private-key.pem ]; then
