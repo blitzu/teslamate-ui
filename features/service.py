@@ -81,6 +81,17 @@ def init(S):
     def day(x):
         return dt.date.fromisoformat(str(x)).isoformat() if x else None
 
+    def odometer_at(d, car=1):
+        """Odometrul masinii dimineata in ziua d (ultima valoare inregistrata inaintea ei, ora locala) sau None daca TeslaMate nu are date atunci."""
+        try:
+            import zoneinfo
+            tz = zoneinfo.ZoneInfo(S.LOCAL_TZ)
+        except Exception:  # noqa
+            tz = dt.timezone.utc
+        start = dt.datetime(d.year, d.month, d.day, tzinfo=tz).astimezone(dt.timezone.utc).replace(tzinfo=None)
+        r = S.q('select odometer from positions where car_id=%s and odometer is not null and date < %s order by date desc limit 1', (car, start))
+        return float(r[0]['odometer']) if r else None
+
     # ------------------------------------------------------------- intretinere
     @S.route('GET', '/api/service')
     def overview(h, a):
@@ -166,6 +177,44 @@ def init(S):
             out.append(s)
         return out
 
+    def km_for(d, override, what):
+        """Kilometrajul la data d: cel dat de utilizator, altfel din TeslaMate; eroare clara daca nu se poate afla."""
+        if override not in (None, ''):
+            return num(override)
+        v = odometer_at(d)
+        if v is None:
+            raise ValueError('Nu am date despre odometru la %s (%s). Introdu kilometrajul de atunci manual.' % (d.isoformat(), what))
+        return round(v)
+
+    def apply_dates(sid, b):
+        """Pune datele montarii/demontarii unui set si calculeaza kilometrajul din odometrul masinii; un set montat fara data de demontare e cel activ (cel activ de pana atunci se demonteaza la aceeasi data)."""
+        today = dt.date.today()
+        md = dt.date.fromisoformat(day(b.get('mounted_date'))) if b.get('mounted_date') else None
+        rd = dt.date.fromisoformat(day(b.get('removed_date'))) if b.get('removed_date') else None
+        if rd and not md:
+            raise ValueError('Data demontării cere și data montării.')
+        if (md and md > today) or (rd and rd > today):
+            raise ValueError('Datele nu pot fi în viitor.')
+        if md and rd and rd < md:
+            raise ValueError('Demontarea nu poate fi înaintea montării.')
+        if not md:
+            if sid:
+                S.OWN.run('update tire_sets set mounted_date=null, mounted_km=null, removed_date=null, removed_km=null where id=?', (sid,))
+            return
+        mkm = km_for(md, b.get('km_start'), 'montare')
+        rkm = km_for(rd, b.get('km_end'), 'demontare') if rd else None
+        if rkm is not None and rkm < mkm:
+            raise ValueError('Kilometrajul la demontare e mai mic decât la montare.')
+        if not sid:
+            return
+        if not rd:                                               # fara demontare: se opreste cand incepe urmatorul set (cel montat mai tarziu), daca exista
+            nxt = S.OWN.one('select mounted_date, mounted_km from tire_sets where mounted_date > ? and id != ? order by mounted_date limit 1', (md.isoformat(), sid))
+            if nxt:
+                rd, rkm = dt.date.fromisoformat(nxt['mounted_date']), nxt['mounted_km']
+        if not rd:
+            S.OWN.run('update tire_sets set removed_date=?, removed_km=? where mounted_date is not null and removed_date is null and id != ? and mounted_date <= ?', (md.isoformat(), mkm, sid, md.isoformat()))
+        S.OWN.run('update tire_sets set mounted_date=?, mounted_km=?, removed_date=?, removed_km=? where id=?', (md.isoformat(), mkm, rd.isoformat() if rd else None, rkm, sid))
+
     @S.route('GET', '/api/tires')
     def tires(h, a):
         return dict(odometer=odometer(), sets=sets_with_km(odometer()))
@@ -176,7 +225,13 @@ def init(S):
         odo = odometer()
         if act == 'delete':
             S.OWN.run('delete from tire_sets where id=?', (int(b['id']),))
-        elif act == 'mount':                                         # monteaza setul si demonteaza automat pe cel activ
+        elif act == 'mount' and b.get('date'):                       # montat la o data din trecut: kilometrajul vine din odometrul de atunci
+            apply_dates(int(b['id']), dict(mounted_date=b.get('date'), km_start=b.get('km_start')))
+        elif act == 'dates':                                         # seteaza/corecteaza datele unui set; kilometrajul se recalculeaza
+            if not S.OWN.one('select 1 x from tire_sets where id=?', (int(b['id']),)):
+                raise S.NotFound()
+            apply_dates(int(b['id']), b)
+        elif act == 'mount':                                         # monteaza setul acum si demonteaza automat pe cel activ
             today = dt.date.today().isoformat()
             S.OWN.run('update tire_sets set removed_date=?, removed_km=? where mounted_date is not null and removed_date is null and id != ?', (today, odo, int(b['id'])))
             S.OWN.run('update tire_sets set mounted_date=?, mounted_km=?, removed_date=null, removed_km=null where id=?', (today, odo, int(b['id'])))
@@ -186,7 +241,11 @@ def init(S):
             name = str(b.get('name') or '').strip()[:60]
             if not name:
                 raise ValueError('nume lipsa')
+            if b.get('mounted_date') or b.get('removed_date'):       # valideaza datele INAINTE de a crea setul
+                apply_dates(0, b)
             S.OWN.run('insert into tire_sets(name, kind, brand, size, notes) values(?,?,?,?,?)', (name, str(b.get('kind') or '')[:20], str(b.get('brand') or '')[:60], str(b.get('size') or '')[:30], str(b.get('notes') or '')[:200]))
+            if b.get('mounted_date'):
+                apply_dates(S.OWN.one('select max(id) m from tire_sets')['m'], b)
         return dict(ok=True)
 
     @S.route('POST', '/api/tires/check', pin=True, role='family')

@@ -973,5 +973,68 @@ class ChargingStatsTests(unittest.TestCase):
         self.assertEqual((r['kinds']['dc']['n'], r['dc_share'], r['kinds']['ac']['avg_kw']), (0, None, None))
 
 
+class TyreDatesTests(unittest.TestCase):
+    def setUp(self):
+        S.OWN.run('delete from tire_checks')
+        S.OWN.run('delete from tire_sets')
+        self.orig_q = S.q
+        recs = [(dt.datetime(2025, 1, 1), 1000.0), (dt.datetime(2025, 6, 1), 5000.0), (dt.datetime(2025, 10, 1), 9000.0)]
+
+        def fake(sql, params=()):
+            if 'max(odometer)' in sql:
+                return [dict(o=12000.0)]
+            before = [o for d, o in recs if d < params[1]]
+            return [dict(odometer=before[-1])] if before else []
+        S.q = fake
+        self.set = S.route_lookup('POST', '/api/tires/set')[0]
+        self.tires = S.route_lookup('GET', '/api/tires')[0]
+
+    def tearDown(self):
+        S.q = self.orig_q
+
+    def rows(self):
+        return {r['name']: r for r in S.OWN.rows('select * from tire_sets')}
+
+    def test_past_set_gets_its_km_from_the_odometer(self):
+        self.set(None, dict(action='add', name='Vara 2025', mounted_date='2025-06-02', removed_date='2025-10-02'))
+        a = self.rows()['Vara 2025']
+        self.assertEqual((a['mounted_km'], a['removed_km']), (5000.0, 9000.0))                        # odometrul de dimineata in acele zile
+        self.assertEqual([x['km'] for x in self.tires(None, {})['sets']], [4000])
+
+    def test_new_active_set_unmounts_the_previous_one_at_the_same_date(self):
+        self.set(None, dict(action='add', name='Iarna', mounted_date='2025-06-02'))
+        self.set(None, dict(action='add', name='Vara', mounted_date='2025-10-02'))
+        r = self.rows()
+        self.assertEqual((r['Iarna']['removed_date'], r['Iarna']['removed_km'], r['Vara']['removed_date']), ('2025-10-02', 9000.0, None))
+        km = {s['name']: s['km'] for s in self.tires(None, {})['sets']}
+        self.assertEqual((km['Iarna'], km['Vara']), (4000, 3000))                                      # Vara: 12000 acum - 9000
+
+    def test_a_set_mounted_in_the_past_ends_where_the_next_one_starts(self):
+        self.set(None, dict(action='add', name='Nou', mounted_date='2025-10-02'))
+        self.set(None, dict(action='add', name='Vechi', mounted_date='2025-06-02'))                    # fara demontare, dar "Nou" a inceput la 2 oct
+        r = self.rows()
+        self.assertEqual((r['Vechi']['removed_date'], r['Vechi']['removed_km'], r['Nou']['removed_date']), ('2025-10-02', 9000.0, None))
+        self.assertEqual(sum(1 for x in self.tires(None, {})['sets'] if x['active']), 1)               # un singur set activ
+
+    def test_edit_dates_and_manual_override_and_validation(self):
+        self.set(None, dict(action='add', name='X'))
+        sid = self.rows()['X']['id']
+        with self.assertRaises(ValueError):
+            self.set(None, dict(action='dates', id=sid, mounted_date='2024-01-01'))                  # TeslaMate nu are date atunci: cere km manual
+        self.set(None, dict(action='dates', id=sid, mounted_date='2024-01-01', km_start='300', removed_date='2025-06-02'))
+        x = self.rows()['X']
+        self.assertEqual((x['mounted_km'], x['removed_km']), (300.0, 5000.0))
+        for bad in (dict(mounted_date='2025-06-02', removed_date='2025-01-02'), dict(removed_date='2025-06-02'), dict(mounted_date='2099-01-01')):
+            with self.assertRaises(ValueError):
+                self.set(None, dict(action='dates', id=sid, **bad))
+        self.set(None, dict(action='dates', id=sid))                                                  # fara date: setul revine in depozit
+        self.assertIsNone(self.rows()['X']['mounted_date'])
+
+    def test_failed_add_creates_nothing(self):
+        with self.assertRaises(ValueError):
+            self.set(None, dict(action='add', name='Prea vechi', mounted_date='2020-01-01'))
+        self.assertEqual(self.rows(), {})
+
+
 if __name__ == '__main__':
     unittest.main()
