@@ -1,10 +1,10 @@
 # Import your history from Tessie into TeslaMate
 
-Brings your older drives (with GPS paths), charges, places and costs from Tessie into your TeslaMate database, so Drives/Charges/Activity/Statistics start from your first Tessie day.
+Brings your drives (with GPS paths), charges, places and costs from Tessie into your TeslaMate database, so Drives/Charges/Activity/Statistics contain everything Tessie has and TeslaMate is missing.
 
 **Safety model**
 
-* It only imports data **older than the first TeslaMate record** (no duplicates) and skips anything that overlaps an existing drive/charge.
+* It never imports a drive or charge that **overlaps one already in TeslaMate** (a few seconds of tolerance, because the two services do not start and stop on the same second), so running it again, or on data you partly have on both sides, does not create duplicates.
 * Everything runs in **one transaction**; the *Test (no writes)* button executes the whole import and rolls it back.
 * It never changes or deletes existing rows. A ledger (`./data/import_tessie.json`) lists every inserted id, so **Undo import** removes exactly what was added.
 * Still, make a backup first: `docker exec <teslamate-database-container> pg_dump -U teslamate teslamate | gzip > teslamate-backup.sql.gz`.
@@ -13,9 +13,9 @@ Brings your older drives (with GPS paths), charges, places and costs from Tessie
 
 1. In Tessie get your API access token (see <https://developer.tessie.com>).
 2. In the app: **⚙ Settings → Import from Tessie** → paste the token → *Save*.
-3. **Check** shows what would be imported (counts, km, kWh, period).
+3. Pick **What to import**: *Everything missing from TeslaMate* (default: before, between and after your TeslaMate data, e.g. when TeslaMate was down for a while or you used both apps in turns) or *Only what is older than the first TeslaMate record* (the conservative mode). **Check** shows what would be imported (counts, km, kWh, period, how many items are before/between/after your TeslaMate data and how many TeslaMate already has).
 4. **Test (no writes)** runs everything without saving; **Import** writes it (after a confirmation). A progress bar shows the status; it can take a few minutes for long histories.
-5. **Undo import** reverts it.
+5. You can run the import again later (for example after using Tessie for another week); the ledger accumulates. **Undo import** removes everything the app imported, in all runs.
 
 ## What is imported (and what is not)
 

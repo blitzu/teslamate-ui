@@ -3,6 +3,13 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.2.0 - unreleased
+
+### New features
+- **Import from Tessie: everything that is missing.** The import now brings every Tessie drive and charge that does not overlap one already in TeslaMate, before, between and after your TeslaMate data (the previous behaviour, only older than the first TeslaMate record, is still available as an option). Overlaps are detected with a few seconds of tolerance, so partly duplicated histories do not create duplicates.
+- The check shows how many items fall before, between and after your TeslaMate data, and how many TeslaMate already has.
+- The import can be run repeatedly; the ledger accumulates and "Undo import" removes everything the app imported.
+
 ## 1.1.0 - 2026-10-23
 
 ### New features

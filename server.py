@@ -2169,10 +2169,11 @@ def imp_action(car, body):
     vin = vin_for(car)
     if not vin:
         return dict(ok=False, reason='Nu există VIN în TeslaMate.')
+    mode = 'older' if body.get('mode') == 'older' else 'gaps'
     if act == 'preview':
         cn = imp_conn()
         try:
-            r = importer.preview(cn, token, vin, car)
+            r = importer.preview(cn, token, vin, car, mode=mode)
         except importer.TessieError as e:
             return dict(ok=False, reason=str(e))
         finally:
@@ -2182,8 +2183,6 @@ def imp_action(car, body):
     if act in ('dry', 'run'):
         if act == 'run' and not body.get('confirm'):
             return dict(ok=False, reason='Confirmă importul.')
-        if act == 'run' and os.path.isfile(importer.LEDGER):
-            return dict(ok=False, reason='Există deja un import neanulat. Anulează-l mai întâi (sau păstrează-l).')
         with ILOCK:
             if IMP['running']:
                 return dict(ok=False, reason='Un import rulează deja.')
@@ -2193,7 +2192,7 @@ def imp_action(car, body):
             cn = None
             try:
                 cn = imp_conn()
-                IMP['result'] = importer.run(cn, token, vin, car, IMP, dry_run=(act == 'dry'))
+                IMP['result'] = importer.run(cn, token, vin, car, IMP, dry_run=(act == 'dry'), mode=mode)
             except Exception as e:  # noqa
                 if cn:
                     cn.rollback()

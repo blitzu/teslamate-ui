@@ -729,5 +729,69 @@ class BuildIdTests(unittest.TestCase):
         self.assertEqual(S.app_brief()['build'], a)
 
 
+import importer as IM  # noqa: E402
+
+
+class ImporterGapTests(unittest.TestCase):
+    def item(self, a, b):
+        return dict(started_at=a, ended_at=b)
+
+    def test_select_gaps_vs_older(self):
+        items = [self.item(100, 200), self.item(1000, 1100), self.item(5000, 5100), self.item(6000, None), self.item(300, 250)]
+        none = lambda x: False
+        self.assertEqual([x['started_at'] for x in IM.select(items, none, 'gaps', 1000)], [100, 1000, 5000])      # tot ce se termina valid
+        self.assertEqual([x['started_at'] for x in IM.select(items, none, 'older', 1000)], [100])
+        dup = lambda x: x['started_at'] == 1000
+        self.assertEqual([x['started_at'] for x in IM.select(items, dup, 'gaps', 1000)], [100, 5000])            # cele care exista deja in TeslaMate sunt sarite
+
+    def test_where_buckets(self):
+        items = [self.item(50, 60), self.item(150, 160), self.item(900, 910)]
+        self.assertEqual(IM.where(items, 100, 500), dict(before=1, between=1, after=1))
+        self.assertEqual(IM.where(items, None, None), dict(before=0, between=3, after=0))
+
+    def test_overlap_tolerates_a_few_seconds(self):
+        seen = []
+
+        class Cur:
+            def execute(self, sql, params):
+                seen.append(params)
+
+            def fetchone(self):
+                return None
+        a, b = IM.utc(1_000_000), IM.utc(1_000_600)
+        IM.overlaps(Cur(), 1, a, b, 'drives')
+        car, hi, lo = seen[0]
+        self.assertEqual((hi - b).total_seconds(), -IM.TOL)                    # intervalul cautat e micsorat cu 30 s la fiecare capat
+        self.assertEqual((lo - a).total_seconds(), IM.TOL)
+        short = IM.shrink(IM.utc(0), IM.utc(8))
+        self.assertEqual((short[1] - short[0]).total_seconds(), 4)             # cursa foarte scurta: doar un sfert din durata la fiecare capat
+
+    def test_ledger_is_merged_on_a_second_run(self):
+        import tempfile
+        IM.LEDGER = os.path.join(tempfile.mkdtemp(), 'l.json')
+        json_ = __import__('json')
+        json_.dump(dict(drives=[1], positions=[10, 11], charging=[], addresses=[], tessie_drives=['a'], tessie_charges=[], at=1.0), open(IM.LEDGER, 'w'))
+
+        class Cur:
+            def __init__(self): self.q = None
+            def execute(self, sql, params=None): self.q = sql
+            def fetchone(self): return (50000.0,) if 'efficiency' in (self.q or '') else (None,)
+            def fetchall(self): return []
+            def close(self): pass
+
+        class Conn:
+            def cursor(self): return Cur()
+            def commit(self): pass
+            def rollback(self): pass
+        orig_plan = IM.plan
+        IM.plan = lambda cur, token, vin, car, mode, cutoff=None: (0, [], [], [], [])
+        try:
+            IM.run(Conn(), 't', 'v', 1, {}, mode='gaps')
+        finally:
+            IM.plan = orig_plan
+        led = json_.load(open(IM.LEDGER))
+        self.assertEqual((led['drives'], led['positions'], led['tessie_drives']), ([1], [10, 11], ['a']))
+
+
 if __name__ == '__main__':
     unittest.main()

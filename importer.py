@@ -1,6 +1,7 @@
 """Import istoric din Tessie (API oficial, tokenul utilizatorului) in baza de date TeslaMate: curse (cu traseu GPS), incarcari, adrese, geofence-uri.
 
-Principii: (1) doar date MAI VECHI decat prima inregistrare TeslaMate (fara duplicate), (2) o singura tranzactie (dry-run = ROLLBACK),
+Principii: (1) fara duplicate: se aduce doar ce NU se suprapune cu o cursa/incarcare existenta in TeslaMate (modul "gaps": tot ce lipseste, oricand; modul "older": doar ce e mai vechi
+decat prima inregistrare), (2) o singura tranzactie (dry-run = ROLLBACK),
 (3) ledger cu id-urile inserate => importul se poate ANULA complet, (4) niciun rand existent nu e modificat sau sters.
 """
 import json, math, os, time, zlib, datetime as dt
@@ -125,9 +126,50 @@ class Ctx:
         return round(float(soc) * self.r100 / 100.0, 2)
 
 
+TOL = 30      # secunde: TeslaMate si Tessie nu pornesc/opresc la aceeasi secunda; o suprapunere mai mica de atat nu inseamna aceeasi cursa
+
+
+def shrink(a, b):
+    """Intervalul Tessie micsorat cu toleranta (pentru curse foarte scurte, cu un sfert din durata)."""
+    t = min(TOL, max(0.0, (b - a).total_seconds() / 4.0))
+    return a + dt.timedelta(seconds=t), b - dt.timedelta(seconds=t)
+
+
 def overlaps(cur, car, a, b, table):
+    a, b = shrink(a, b)
     cur.execute('select 1 from %s where car_id=%%s and start_date < %%s and coalesce(end_date, start_date) > %%s limit 1' % table, (car, b, a))
     return cur.fetchone() is not None
+
+
+def select(items, exists, mode, cut):
+    """Ce se importa. items = liste Tessie; exists(item) -> se suprapune cu ceva din TeslaMate?; mode 'gaps' = tot ce lipseste, 'older' = doar ce e mai vechi decat cut."""
+    out = []
+    for x in items:
+        if not x.get('ended_at') or x['ended_at'] < x['started_at']:
+            continue                                   # in curs sau invalid
+        if mode == 'older' and x['started_at'] >= cut:
+            continue
+        if not exists(x):
+            out.append(x)
+    return out
+
+
+def bounds(cur, car):
+    """(prima, ultima) inregistrare TeslaMate, ca timestamp UNIX."""
+    cur.execute("""select min(d), max(e) from (select min(start_date) d, max(coalesce(end_date, start_date)) e from drives where car_id=%s union all
+        select min(start_date), max(coalesce(end_date, start_date)) from charging_processes where car_id=%s union all select min(date), max(date) from positions where car_id=%s) x""", (car, car, car))
+    r = cur.fetchone()
+    f = lambda v: v.replace(tzinfo=dt.timezone.utc).timestamp() if v else None
+    return (f(r[0]), f(r[1])) if r else (None, None)
+
+
+def where(items, first, last):
+    """Cate dintre elemente sunt inainte de prima inregistrare TeslaMate, intre ele, sau dupa ultima."""
+    n = dict(before=0, between=0, after=0)
+    for x in items:
+        k = 'before' if first and x['started_at'] < first else ('after' if last and x['started_at'] > last else 'between')
+        n[k] += 1
+    return n
 
 
 def cutoff_ts(cur, car):
@@ -137,16 +179,24 @@ def cutoff_ts(cur, car):
     return r[0].replace(tzinfo=dt.timezone.utc).timestamp() if r and r[0] else time.time()
 
 
-def preview(conn, token, vin, car, cutoff=None):
-    cur = conn.cursor()
+def plan(cur, token, vin, car, mode, cutoff=None):
+    """Listele Tessie si ce din ele se importa."""
     cut = cutoff or cutoff_ts(cur, car)
-    drives, charges = fetch_lists(token, vin, cut)
-    nd = [d for d in drives if d['started_at'] < cut and not overlaps(cur, car, utc(d['started_at']), utc(d['ended_at']), 'drives')]
-    nc = [c for c in charges if c['started_at'] < cut and not overlaps(cur, car, utc(c['started_at']), utc(c['ended_at']), 'charging_processes')]
+    drives, charges = fetch_lists(token, vin, cut if mode == 'older' else time.time() + 86400)
+    nd = select(drives, lambda d: overlaps(cur, car, utc(d['started_at']), utc(d['ended_at']), 'drives'), mode, cut)
+    nc = select(charges, lambda c: overlaps(cur, car, utc(c['started_at']), utc(c['ended_at']), 'charging_processes'), mode, cut)
+    return cut, drives, charges, nd, nc
+
+
+def preview(conn, token, vin, car, cutoff=None, mode='gaps'):
+    cur = conn.cursor()
+    cut, drives, charges, nd, nc = plan(cur, token, vin, car, mode, cutoff)
+    first_tm, last_tm = bounds(cur, car)
     cur.close()
     first = min([x['started_at'] for x in nd + nc], default=None)
     last = max([x['started_at'] for x in nd + nc], default=None)
-    return dict(ok=True, cutoff=cut, tessie_drives=len(drives), tessie_charges=len(charges), to_import_drives=len(nd), to_import_charges=len(nc),
+    return dict(ok=True, mode=mode, cutoff=cut, teslamate_first=first_tm, teslamate_last=last_tm, tessie_drives=len(drives), tessie_charges=len(charges), to_import_drives=len(nd), to_import_charges=len(nc),
+                already_in_teslamate=dict(drives=len(drives) - len(nd), charges=len(charges) - len(nc)), drives_where=where(nd, first_tm, last_tm), charges_where=where(nc, first_tm, last_tm),
                 first=first, last=last, km=round(sum(d.get('odometer_distance') or 0 for d in nd), 1), kwh=round(sum(c.get('energy_added') or 0 for c in nc), 1))
 
 
@@ -226,14 +276,11 @@ def import_charge(ctx, c):
     ctx.ledger['tessie_charges'].append(c['id'])
 
 
-def run(conn, token, vin, car, progress, cutoff=None, dry_run=False):
-    """Importa tot ce e mai vechi decat prima inregistrare TeslaMate. progress = dict mutabil citit de UI."""
+def run(conn, token, vin, car, progress, cutoff=None, dry_run=False, mode='gaps'):
+    """Importa din Tessie ce lipseste din TeslaMate (mode 'gaps') sau doar ce e mai vechi decat prima inregistrare ('older'). progress = dict mutabil citit de UI."""
     cur = conn.cursor()
-    cut = cutoff or cutoff_ts(cur, car)
     progress.update(phase='Citesc listele din Tessie…', done=0, total=0)
-    drives, charges = fetch_lists(token, vin, cut)
-    drives = [d for d in drives if d['started_at'] < cut and not overlaps(cur, car, utc(d['started_at']), utc(d['ended_at']), 'drives')]
-    charges = [c for c in charges if c['started_at'] < cut and not overlaps(cur, car, utc(c['started_at']), utc(c['ended_at']), 'charging_processes')]
+    cut, _, _, drives, charges = plan(cur, token, vin, car, mode, cutoff)
     ctx = Ctx(cur, car)
     progress.update(total=len(drives) + len(charges))
     npts = 0
@@ -244,11 +291,17 @@ def run(conn, token, vin, car, progress, cutoff=None, dry_run=False):
     for i, c in enumerate(charges):
         progress.update(phase='Încărcări %d/%d' % (i + 1, len(charges)), done=len(drives) + i)
         import_charge(ctx, c)
-    res = dict(drives=len(drives), charges=len(charges), positions=npts, addresses=len(ctx.ledger['addresses']), dry_run=dry_run)
+    res = dict(drives=len(drives), charges=len(charges), positions=npts, addresses=len(ctx.ledger['addresses']), dry_run=dry_run, mode=mode)
     if dry_run:
         conn.rollback()
     else:
         ctx.ledger['at'] = time.time()
+        if os.path.isfile(LEDGER):                     # import repetat: jurnalul se completeaza, iar "Anuleaza" scoate tot ce a adus aplicatia
+            with open(LEDGER) as lf:
+                old = json.load(lf)
+            for k, v in old.items():
+                if isinstance(v, list):
+                    ctx.ledger[k] = list(v) + ctx.ledger.get(k, [])
         pend = LEDGER + '.pending'                     # jurnalul se scrie INAINTE de commit: daca procesul cade intre ele, undo-ul il gaseste tot
         with open(pend, 'w') as lf:
             json.dump(ctx.ledger, lf)
