@@ -3,7 +3,7 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
-## 1.5.1 - unreleased
+## 1.5.1 - 2026-10-23
 
 ### New features
 - **Tyre sets mounted in the past.** Choose the date a set was mounted (and removed) when you add it, or press **Set dates** on an existing set: the km it covered are calculated automatically from the car odometer on the morning of those days (TeslaMate history). For dates before the TeslaMate records you can type the km by hand. A set mounted without a removal date is the active one: the previously active set is removed on the same date, and a set mounted in the past ends where the next one starts. The tyre page now also shows the odometer at mounting and removal.
