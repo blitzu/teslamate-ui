@@ -2,6 +2,7 @@
 """Reface datele TeslaMate dintr-o copie de siguranta a aplicatiei (teslamate_backup.db, SQLite) intr-o baza Postgres TeslaMate.
 
   python3 tools/restore_backup.py /cale/teslamate_backup.db --dsn "postgresql://teslamate:PAROLA@localhost:5432/teslamate" [--dry-run]
+  (sau, ca parola sa nu apara in `ps`: export TESLAMATE_DSN="postgresql://..." si fara --dsn)
 
 * Porneste TeslaMate o data pe baza noua (ca sa-si creeze schema), apoi OPRESTE-l si ruleaza scriptul.
 * Insereaza cu `ON CONFLICT (id) DO NOTHING`: randurile care exista deja nu sunt atinse, deci scriptul se poate rula si peste o baza partiala.
@@ -11,6 +12,7 @@
 """
 import argparse
 import json
+import os
 import sqlite3
 import sys
 
@@ -34,7 +36,7 @@ def cast(v, pgtype):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('backup')
-    ap.add_argument('--dsn', required=True)
+    ap.add_argument('--dsn', default=os.environ.get('TESLAMATE_DSN'), help='sau variabila TESLAMATE_DSN')
     ap.add_argument('--tables', help='lista separata prin virgula (implicit toate)')
     ap.add_argument('--dry-run', action='store_true', help='doar numara, nu scrie nimic')
     a = ap.parse_args()
@@ -42,6 +44,8 @@ def main():
     import psycopg2.extras
     src = sqlite3.connect('file:%s?mode=ro' % a.backup, uri=True)
     src.row_factory = sqlite3.Row
+    if not a.dsn:
+        ap.error('lipseste --dsn (sau variabila TESLAMATE_DSN)')
     pg = psycopg2.connect(a.dsn)
     cur = pg.cursor()
     try:

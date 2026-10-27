@@ -70,4 +70,4 @@ Already running Watchtower (or another updater)? Just keep the two labels the pr
 
 1. Put the new number in `VERSION` and add a `## X.Y.Z - YYYY-MM-DD` section at the top of `CHANGELOG.md` (the text under it becomes the release notes).
 2. Commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
-3. The *Release* workflow checks that the tag matches `VERSION` and `CHANGELOG.md`, runs the tests, publishes the images to GHCR and creates the GitHub release. The first time, make the two packages public (GitHub → your profile → Packages → package settings → *Change visibility*) so that others can pull them without logging in.
+3. The *Release* workflow checks that the tag matches `VERSION` and `CHANGELOG.md`, runs the tests, publishes the images to GHCR and creates the GitHub release. The first time, make the three packages (app, signing proxy, updater) public (GitHub → your profile → Packages → package settings → *Change visibility*) so that others can pull them without logging in.

@@ -9,7 +9,7 @@ Settings → *TeslaMate data backup*. The app keeps a local SQLite copy (`data/t
 - Synced every 10 minutes; positions and charges are append-only, other tables are upserted. **Nothing is ever deleted from the copy**, even if it disappears from TeslaMate.
 - A daily snapshot is kept in `data/backups/` (last 7).
 - Download the copy or the app database from the same section (PIN required).
-- Restore into a fresh TeslaMate database: start TeslaMate once on it (so it creates the schema), stop it, then `python3 tools/restore_backup.py <backup.db> --dsn postgresql://… [--dry-run]`. Rows that already exist are left alone (`ON CONFLICT DO NOTHING`); it needs a superuser to switch off foreign-key checks while inserting. After a restore you reconnect your Tesla account in TeslaMate (tokens are not copied).
+- Restore into a fresh TeslaMate database: start TeslaMate once on it (so it creates the schema), stop it, then `python3 tools/restore_backup.py <backup.db> --dsn postgresql://… [--dry-run]`. Rows that already exist are left alone (`ON CONFLICT DO NOTHING`), except `settings` and `car_settings` (language, units, base URL), which are updated; pass the connection string in `TESLAMATE_DSN` to keep the password out of `ps`; it needs a superuser to switch off foreign-key checks while inserting. After a restore you reconnect your Tesla account in TeslaMate (tokens are not copied).
 
 ## Alerts and sleep guard (`#/alerts`)
 

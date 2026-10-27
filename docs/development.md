@@ -9,7 +9,12 @@ static/app.js        core SPA: router, Car/Drives/Charges/Stats pages, command t
 static/extra.js      Climate page, charging control, notifications card, 3D route replay (MapLibre)
 static/app.css       all styles
 static/car-default.svg, icon*.png, manifest.webmanifest   assets / PWA
-Dockerfile, Dockerfile.proxy, docker-compose.yml, setup.sh, scripts/
+features/            optional modules (alerts, service, reports, backup, share...): each has init(S)
+updater/             the "Update now" helper container
+importer.py          Tessie gap import
+tools/               restore_backup.py, telemetry forwarder
+tests/               unit and HTTP tests: `python -m unittest discover -s tests`
+Dockerfile, Dockerfile.proxy, Dockerfile.updater, docker-compose.yml, setup.sh, scripts/
 ```
 
 No build step: plain JS/CSS served as-is.

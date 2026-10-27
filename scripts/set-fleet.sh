@@ -7,7 +7,8 @@ cd "$(dirname "$0")/.."
 read -r -p "Client ID (from developer.tesla.com): " CID
 read -r -s -p "Client Secret (hidden): " SEC; echo
 read -r -p "Public domain (e.g. tesla.example.com): " DOM
-read -r -s -p "PIN required for commands in the app (hidden): " PIN; echo
+read -r -s -p "PIN required for commands in the app, min. 6 characters (hidden): " PIN; echo
+[ "${#PIN}" -ge 6 ] || { echo "PIN too short (min. 6 characters)."; exit 1; }
 echo "Region: 1) Europe/Middle East/Africa   2) North America/Asia-Pacific"
 read -r -p "Choose [1/2]: " REG
 case "$REG" in
