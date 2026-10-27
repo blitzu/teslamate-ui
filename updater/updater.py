@@ -12,7 +12,10 @@ Fara setari manuale:
   GET  /health   fara autentificare, doar "ok"
 
 Setari optionale (variabile): UPDATER_SERVICES (implicit "ui proxy"), UPDATER_AUTO_HOURS (0 = doar la cerere; altfel actualizeaza singur la acest interval, minim 1 h),
-UPDATER_TOKEN (in loc de fisier), APP_UID (proprietarul fisierului de token, implicit 10001), UPDATER_PORT (implicit 8080)."""
+UPDATER_SELF (implicit 1: la sfarsit isi actualizeaza si propria imagine, ca ultim pas; 0 = nu), UPDATER_TOKEN (in loc de fisier), APP_UID (proprietarul fisierului de token,
+implicit 10001), UPDATER_PORT (implicit 8080).
+
+Containerul ruleaza cu sistemul de fisiere doar-citire: scrie numai in /data (token si ultima stare) si in /tmp (tmpfs)."""
 import hmac
 import json
 import os
@@ -28,6 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 MIN_GAP = 30                         # secunde intre doua rulari
 CMD_TIMEOUT = 900                    # o descarcare lenta poate dura minute
 TOKEN_FILE = os.environ.get('UPDATER_TOKEN_FILE', '/data/updater.token')
+STATE_FILE = os.environ.get('UPDATER_STATE_FILE', '/data/updater.state.json')
 
 
 def services(raw):
@@ -75,12 +79,49 @@ def self_info(inspect_json):
     return wd, lab.get('com.docker.compose.project') or os.path.basename(wd.rstrip('/')), files, (d.get('Config') or {}).get('Image') or d.get('Image')
 
 
+def self_service(inspect_json):
+    """Numele serviciului compose al acestui container (eticheta com.docker.compose.service), sau None."""
+    d = inspect_json[0] if isinstance(inspect_json, list) else inspect_json
+    s = ((d.get('Config') or {}).get('Labels') or {}).get('com.docker.compose.service') or ''
+    return s if re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,39}', s) else None
+
+
 class Updater:
-    def __init__(self, token, svcs, runner=None):
-        self.token, self.svcs = token, svcs
+    def __init__(self, token, svcs, runner=None, selfsvc=None, state_file=None):
+        self.token, self.svcs, self.selfsvc = token, svcs, selfsvc
         self.runner = runner or self.docker
         self.lock = threading.Lock()
+        self.state_file = state_file
         self.state = dict(running=False, started=0, finished=0, success=None, log='')
+        self.load_state()
+
+    def load_state(self):
+        """Ultima stare, ca sa nu se piarda cand propriul container e repornit de actualizare."""
+        if not self.state_file:
+            return
+        try:
+            with open(self.state_file) as f:
+                s = json.load(f)
+        except (OSError, ValueError, TypeError):
+            return
+        if not isinstance(s, dict):
+            return
+        if s.get('running'):                                          # procesul a fost oprit in timpul rularii: de obicei chiar pasul "updater-ul isi actualizeaza imaginea"
+            via_self = bool(s.get('self_step'))
+            s.update(finished=time.time(), success=True if via_self else None,
+                     log=(str(s.get('log') or '') + '\n' + ('updater repornit cu imaginea noua.' if via_self else 'rularea a fost intrerupta (containerul a fost oprit).'))[-4000:])
+        self.state.update({k: s[k] for k in ('started', 'finished', 'success', 'log') if k in s}, running=False)
+
+    def save_state(self, **extra):
+        if not self.state_file:
+            return
+        try:
+            tmp = self.state_file + '.tmp'
+            with open(tmp, 'w') as f:
+                json.dump(dict(self.state, **extra), f)
+            os.replace(tmp, self.state_file)
+        except OSError:
+            pass
 
     def docker(self, args):
         """Ruleaza `docker compose <args>` pentru proiectul in care ruleaza acest container, intr-un container ajutator."""
@@ -102,18 +143,33 @@ class Updater:
 
     def work(self):
         log, ok = [], True
+        steps = [['pull'] + self.svcs, ['up', '-d', '--no-build'] + self.svcs]                # fara --remove-orphans: nu se atinge nimic din afara serviciilor date
+        own = self.selfsvc if (self.selfsvc and self.selfsvc not in self.svcs) else None
         try:
-            for args in (['pull'] + self.svcs, ['up', '-d', '--no-build'] + self.svcs):       # fara --remove-orphans: nu se atinge nimic din afara serviciilor date
+            for args in steps:
                 code, out = self.runner(args)
                 log.append('$ docker compose %s\n%s' % (' '.join(args), out.strip()))
                 if code != 0:
                     ok = False
                     break
+            if ok and own:
+                # Ultimul pas: propria imagine. Se trage mai intai; recrearea o face containerul ajutator (independent), deci continua chiar daca acest proces e oprit de ea.
+                code, out = self.runner(['pull', own])
+                log.append('$ docker compose pull %s\n%s' % (own, out.strip()))
+                if code == 0:
+                    with self.lock:
+                        self.state.update(log='\n'.join(log)[-4000:])
+                    self.save_state(self_step=True)                    # daca procesul e oprit aici, noua instanta stie ca s-a repornit din actualizare
+                    code, out = self.runner(['up', '-d', '--no-build', '--no-deps', own])
+                    log.append('$ docker compose up -d --no-deps %s\n%s' % (own, out.strip()))
+                if code != 0:
+                    log.append('(actualizarea imaginii updater-ului a esuat; aplicatia a fost actualizata)')
         except Exception as e:  # noqa
             ok = False
             log.append('eroare: %s' % e)
         with self.lock:
             self.state.update(running=False, finished=time.time(), success=ok, log='\n'.join(log)[-4000:])
+            self.save_state()                                          # sub lacat: cine vede "nu mai ruleaza" gaseste si fisierul scris
 
     def start(self, now=None):
         """(cod HTTP, mesaj). Porneste o rulare in fundal daca se poate."""
@@ -124,6 +180,7 @@ class Updater:
             if now - self.state['finished'] < MIN_GAP:
                 return 429, 'prea devreme, asteapta cateva secunde'
             self.state.update(running=True, started=now, success=None)
+        self.save_state()
         threading.Thread(target=self.work, daemon=True).start()
         return 202, 'pornit'
 
@@ -178,10 +235,12 @@ def main():
         sys.exit('Nu pot crea tokenul in %s (%s). Monteaza folderul ./data la /data.' % (TOKEN_FILE, e))
     try:                                                                                       # esueaza devreme, cu un mesaj clar, daca nu ruleaza sub compose
         me = subprocess.run(['docker', 'inspect', socket.gethostname()], capture_output=True, text=True, timeout=30)
-        wd, project, _, image = self_info(json.loads(me.stdout))
+        info = json.loads(me.stdout)
+        wd, project, _, image = self_info(info)
     except Exception as e:  # noqa
         sys.exit('Nu pot afla proiectul compose: %s. Ai montat /var/run/docker.sock?' % e)
-    up = Updater(token, svcs)
+    own = self_service(info) if os.environ.get('UPDATER_SELF', '1').strip().lower() not in ('0', 'false', 'no', 'off') else None
+    up = Updater(token, svcs, selfsvc=own, state_file=STATE_FILE)
     try:
         hours = float(os.environ.get('UPDATER_AUTO_HOURS', '0') or 0)
     except ValueError:
@@ -195,7 +254,7 @@ def main():
                 up.start()
                 time.sleep(hours * 3600)
         threading.Thread(target=loop, daemon=True).start()
-    print('updater pornit: proiect=%s folder=%s servicii=%s auto=%sh' % (project, wd, ' '.join(svcs), hours or 'off'), flush=True)
+    print('updater pornit: proiect=%s folder=%s servicii=%s actualizare-proprie=%s auto=%sh' % (project, wd, ' '.join(svcs), own or 'nu', hours or 'off'), flush=True)
     ThreadingHTTPServer(('0.0.0.0', int(os.environ.get('UPDATER_PORT', '8080'))), make_handler(up)).serve_forever()
 
 

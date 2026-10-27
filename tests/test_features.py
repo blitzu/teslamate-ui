@@ -15,12 +15,14 @@ os.environ.setdefault('DATA_DIR', TMP)
 os.environ.setdefault('DEMO_ONLY', '1')
 sys.path.insert(0, ROOT)
 import server as S  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from isolation import Isolated  # noqa: E402
 REAL_NOTIFY = S.notify                                                 # alte teste il inlocuiesc; cele pentru receptori au nevoie de cel adevarat
 from features.store import Store  # noqa: E402
 from features import backup as BK  # noqa: E402
 
 
-class StoreTests(unittest.TestCase):
+class StoreTests(Isolated):
     def test_migrate_is_incremental_and_kv(self):
         st = Store(os.path.join(tempfile.mkdtemp(), 'x.db'))
         st.migrate('m', ['create table a (id integer primary key, v text)'])
@@ -43,7 +45,7 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(st.rows('select * from t'), [])
 
 
-class RegistryTests(unittest.TestCase):
+class RegistryTests(Isolated):
     def test_route_lookup_exact_and_prefix(self):
         @S.route('GET', '/api/test-exact')
         def a(h, d):
@@ -89,7 +91,7 @@ class FakeSource:
             yield out[i:i + 2]
 
 
-class BackupTests(unittest.TestCase):
+class BackupTests(Isolated):
     def setUp(self):
         d = tempfile.mkdtemp()
         self.B = BK.Backup(S, path=os.path.join(d, 'bk.db'), snapdir=os.path.join(d, 'snaps'))
@@ -172,7 +174,7 @@ from features import alerts as AL  # noqa: E402
 from features import sleepguard as SG  # noqa: E402
 
 
-class AlertsTests(unittest.TestCase):
+class AlertsTests(Isolated):
     def setUp(self):
         S.OWN.kv_set('alerts_cfg', {})
         S.OWN.run('delete from alerts_log')
@@ -308,7 +310,7 @@ class AlertsTests(unittest.TestCase):
         self.assertNotIn(1, self.E.rain_alerted)
 
 
-class SleepGuardTests(unittest.TestCase):
+class SleepGuardTests(Isolated):
     H = 3600
 
     def test_interval_helpers(self):
@@ -350,7 +352,7 @@ from features import trips as TR  # noqa: E402
 from features import software as SW  # noqa: E402
 
 
-class ServiceTests(unittest.TestCase):
+class ServiceTests(Isolated):
     def test_add_months_clamps_end_of_month(self):
         self.assertEqual(SV.add_months(dt.date(2026, 1, 31), 1), dt.date(2026, 2, 28))
         self.assertEqual(SV.add_months(dt.date(2026, 11, 15), 3), dt.date(2027, 2, 15))
@@ -399,7 +401,7 @@ class ServiceTests(unittest.TestCase):
             fn(None, dict(name=''))
 
 
-class TripsTests(unittest.TestCase):
+class TripsTests(Isolated):
     def drives(self):
         d = lambda i, a, b, km, n1, n2: dict(id=i, start_date=a, end_date=b, distance=km, duration_min=30, kwh=km * 0.15, start_name=n1, end_name=n2, speed_max=100 + i)
         return [d(1, '2026-10-01T08:00:00', '2026-10-01T09:00:00', 60, 'Acasa', 'Pitesti'), d(2, '2026-10-01T09:50:00', '2026-10-01T11:00:00', 80, 'Pitesti', 'Sibiu'),
@@ -418,7 +420,7 @@ class TripsTests(unittest.TestCase):
         self.assertEqual(t[0]['start'] > t[1]['start'], True)                      # cele mai noi primele
 
 
-class SoftwareTests(unittest.TestCase):
+class SoftwareTests(Isolated):
     def test_wh_km_needs_enough_distance(self):
         self.assertIsNone(SW.wh_km([dict(distance=10, kwh=2.0)]))
         self.assertEqual(SW.wh_km([dict(distance=100, kwh=15.0), dict(distance=50, kwh=None)]), 150)
@@ -427,7 +429,7 @@ class SoftwareTests(unittest.TestCase):
 from features import pzu as PZ  # noqa: E402
 
 
-class ReportsTests(unittest.TestCase):
+class ReportsTests(Isolated):
     def test_periods(self):
         per = S.REPORTS['period']
         self.assertEqual(per('week', dt.date(2026, 10, 21)), (dt.date(2026, 10, 12), dt.date(2026, 10, 19)))          # luni..luni, saptamana trecuta
@@ -450,7 +452,7 @@ class ReportsTests(unittest.TestCase):
         self.assertIn('Nicio cursă', S.REPORTS['text']('week', empty, None, None)[1])
 
 
-class TelegramTests(unittest.TestCase):
+class TelegramTests(Isolated):
     def setUp(self):
         self.calls = []
         self.orig, self.orig_notify = S.http, S.notify
@@ -490,7 +492,7 @@ class TelegramTests(unittest.TestCase):
         self.assertFalse(S.TELEGRAM_SEND('x')['ok'])
 
 
-class PzuTests(unittest.TestCase):
+class PzuTests(Isolated):
     def test_slot_energy_integrates_across_slot_edges(self):
         e = PZ.slot_energy([(t, 7.2) for t in range(0, 5400, 300)] + [(5400, 0), (99999, 0)])
         self.assertEqual(sorted(e), [0, 900, 1800, 2700, 3600, 4500])
@@ -515,7 +517,7 @@ class PzuTests(unittest.TestCase):
 from features import push as PU  # noqa: E402
 
 
-class PushTests(unittest.TestCase):
+class PushTests(Isolated):
     UA = 'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4'
     AUTH = 'BTBZMqHH6r4Tts7J_aSIgg'
 
@@ -608,7 +610,7 @@ class PushTests(unittest.TestCase):
             urllib.request.urlopen = real
 
 
-class NotificationClearTests(unittest.TestCase):
+class NotificationClearTests(Isolated):
     def setUp(self):
         self.calls = []
         self.orig = (S.http, S.NHOOK, S.notify, dict(S.LA))
@@ -669,11 +671,174 @@ class NotificationClearTests(unittest.TestCase):
         S.la_sync(1)
         self.assertEqual(self.clears(), [])                                                 # a doua oara nu mai trimite nimic
 
+    def test_new_live_card_from_nothing_is_preceded_by_a_clear_of_a_stale_one(self):
+        S.LA_CLEAR_GAP = 0
+        S.LA.update(kind=None, soc=None)
+        S.LIVE[1] = dict(battery_level=80, shift_state='P', plugged_in=False, locked=True, frunk_open=True)
+        S.la_sync(1)
+        time.sleep(0.3)
+        seq = [('clear' if c.get('clear') else c.get('data', {}).get('tag')) for c in self.calls if c and (c.get('clear') or c.get('kind') == 'live')]
+        self.assertEqual(seq, ['clear', 'tesla_status'])                                    # intai inchide, apoi porneste
+        self.calls.clear()
+        S.LIVE[1]['battery_level'] = 70
+        S.la_sync(1)
+        time.sleep(0.3)
+        self.assertEqual([c for c in self.calls if c and c.get('clear')], [])               # actualizarea unui card activ nu mai inchide nimic
+
+
+class AlertResolveTests(Isolated):
+    def setUp(self):
+        S.OWN.kv_set('alerts_cfg', {})
+        S.OWN.run('delete from alerts_log')
+        S.OWN.run('delete from cmd_log')
+        self.sent, self.cleared = [], []
+        S.notify = lambda kind, title, msg, data=None, log=True: self.sent.append((kind, title, data))
+        S.notify_clear = lambda tag, kind='clear': self.cleared.append(tag)
+        S.LIVE.clear()
+        self.E = AL.Engine(S)
+
+    def test_alert_is_tagged_and_cleared_when_the_cause_is_gone(self):
+        S.LIVE[1] = dict(battery_level=50, tpms_pressure_fl=1.9, tpms_pressure_fr=2.8, tpms_pressure_rl=2.8, tpms_pressure_rr=2.8)
+        now = time.time()
+        self.E.tick(now)
+        self.assertEqual([s[2]['tag'] for s in self.sent if s[0] == 'alert'], ['tesla_alert_tpms_low'])
+        self.cleared.clear()
+        self.E.tick(now + 60)
+        self.assertNotIn('tesla_alert_tpms_low', self.cleared)                              # inca scazuta: nu se sterge
+        S.LIVE[1]['tpms_pressure_fl'] = 2.8
+        self.E.tick(now + 120)
+        self.assertIn('tesla_alert_tpms_low', self.cleared)
+        self.cleared.clear()
+        self.E.tick(now + 180)
+        self.assertNotIn('tesla_alert_tpms_low', self.cleared)                              # o singura stergere
+
+    def test_rain_and_charge_alerts_clear_on_events(self):
+        S.LIVE[1] = dict(battery_level=50, charge_limit_soc=90)
+        self.E.fired.clear()
+        self.E.active.update({('rain_window', 1), ('charge_stopped', 1), ('plugged_not_charging', 1), ('not_plugged_night', 1)})
+        self.E.swept.update(self.E.active)
+        self.E.on_mqtt(1, 'windows_open', True, False, True)
+        self.E.on_mqtt(1, 'charging_state', 'Stopped', 'Charging', True)
+        self.E.on_mqtt(1, 'plugged_in', False, True, True)
+        self.assertEqual(sorted(self.cleared), ['tesla_alert_charge_stopped', 'tesla_alert_not_plugged_night', 'tesla_alert_plugged_not_charging', 'tesla_alert_rain_window'])
+
+    def test_stale_alert_from_before_a_restart_is_swept_once(self):
+        S.LIVE[1] = dict(battery_level=50)
+        self.E.tick(time.time())
+        self.assertIn('tesla_alert_tpms_low', self.cleared)                                 # nimic activ in aceasta rulare, dar poate ramasese ceva pe telefon
+        self.cleared.clear()
+        self.E.tick(time.time() + 60)
+        self.assertEqual(self.cleared, [])
+
+
+class AwayOnlyTests(Isolated):
+    def setUp(self):
+        self.calls = []
+        S.NHOOK = 'http://hook.test/x'
+        S.http = lambda url, data=None, **k: (self.calls.append(data) or (200, {}))
+        S.nset_save(dict(S.NDEFAULT, away_only=True))
+        S.LIVE.clear()
+
+    def tearDown(self):
+        S.nset_save(dict(S.NDEFAULT))
+
+    def sent(self):
+        time.sleep(0.3)
+        return [c for c in self.calls if c and not c.get('clear')]
+
+    def test_door_and_plugged_are_muted_at_home_but_not_away(self):
+        S.LIVE[1] = dict(geofence='Acasa', battery_level=50)
+        S.notify('door', 'Deschis', 'frunk')
+        S.notify('plugged', 'Cablu', 'x')
+        S.notify('alert', 'Alerta', 'x')
+        self.assertEqual([c['kind'] for c in self.sent()], ['alert'])                       # alertele nu depind de locatie
+        self.calls.clear()
+        S.LIVE[1]['geofence'] = None
+        S.notify('door', 'Deschis', 'frunk')
+        self.assertEqual([c['kind'] for c in self.sent()], ['door'])
+
+    def test_live_cards_open_and_plugged_are_not_built_at_home(self):
+        S.LIVE[1] = dict(geofence='Acasa', battery_level=50, shift_state='P', locked=True, frunk_open=True)
+        self.assertIsNone(S.la_payload(1))
+        S.LIVE[1]['geofence'] = None
+        self.assertEqual(S.la_payload(1)[0], 'open')
+
+
+class BleStateTests(Isolated):
+    def setUp(self):
+        S.HA.update(url='http://ha.test', token='t', ble=True, prefix='tesla_ble')
+        S.BLE_SEEN.clear()
+        S.LIVE.clear()
+        S.LIVE[1] = dict(frunk_open=False, trunk_open=False, locked=True, battery_level=80)
+        self.ha = {'cover.tesla_ble_frunk': dict(state='closed', last_changed='t0'), 'cover.tesla_ble_trunk': dict(state='closed', last_changed='t0'),
+                   'lock.tesla_ble_doors': dict(state='locked', last_changed='t0')}
+        S.ha_state = lambda eid: self.ha.get(eid)
+        self.applied = []
+        S.live_apply = lambda car, key, val: (self.applied.append((key, val)), S.LIVE[car].__setitem__(key, val))
+
+    def test_frunk_opened_while_the_car_sleeps_reaches_the_live_state(self):
+        self.assertEqual(S.ble_state_sync(), 0)                                             # prima citire: la fel ca MQTT -> nimic de aplicat
+        self.ha['cover.tesla_ble_frunk'] = dict(state='open', last_changed='t1')
+        self.assertEqual(S.ble_state_sync(), 1)
+        self.assertEqual(self.applied, [('frunk_open', True)])
+        self.assertEqual(S.ble_state_sync(), 0)                                             # nicio schimbare noua
+        self.ha['cover.tesla_ble_frunk'] = dict(state='closed', last_changed='t2')
+        S.ble_state_sync()
+        self.assertEqual(self.applied[-1], ('frunk_open', False))
+
+    def test_first_read_corrects_a_stale_retained_value_and_ignores_transitional_states(self):
+        self.ha['lock.tesla_ble_doors'] = dict(state='unlocked', last_changed='t0')
+        self.ha['cover.tesla_ble_trunk'] = dict(state='opening', last_changed='t0')
+        self.ha['cover.tesla_ble_frunk'] = dict(state='unavailable', last_changed='t0')
+        self.assertEqual(S.ble_state_sync(), 1)
+        self.assertEqual(self.applied, [('locked', False)])
+
+    def test_nothing_without_ble_or_without_a_known_car(self):
+        S.HA['ble'] = False
+        self.assertEqual(S.ble_state_sync(), 0)
+        S.HA['ble'] = True
+        S.LIVE.clear()
+        self.assertEqual(S.ble_state_sync(), 0)
+
+
+class TelemetryLiveTests(Isolated):
+    def setUp(self):
+        S.LIVE.clear()
+        S.LIVE[1] = dict(locked=True, doors_open=False, frunk_open=False, trunk_open=False, windows_open=False)
+        S.TEL_VIN_CAR.clear()
+        S.TEL_WINDOWS.clear()
+        S.vin_for = lambda car: 'VIN123'
+        self.applied = []
+        S.live_apply = lambda car, key, val: (self.applied.append((key, val)), S.LIVE[car].__setitem__(key, val))
+
+    def test_doors_frunk_trunk_and_lock_from_the_car(self):
+        S.pf_ingest([dict(data=dict(Vin='VIN123', DoorState=dict(doorValue=dict(DriverFront=False, DriverRear=False, PassengerFront=False, PassengerRear=False, TrunkFront=True, TrunkRear=False)), Locked=dict(booleanValue=True)))])
+        self.assertIn(('frunk_open', True), self.applied)
+        self.assertIn(('doors_open', False), self.applied)
+        self.assertIn(('trunk_open', False), self.applied)
+        self.assertIn(('locked', True), self.applied)
+        self.applied.clear()
+        S.pf_ingest([dict(data=dict(Vin='VIN123', DoorState=dict(doorValue=dict(driverFront=True, trunkFront=False)), Locked=dict(booleanValue=False)))])
+        self.assertEqual(sorted(self.applied), [('doors_open', True), ('frunk_open', False), ('locked', False)])
+
+    def test_windows_need_all_four_and_any_open_means_open(self):
+        S.pf_ingest([dict(data=dict(Vin='VIN123', FdWindow=dict(windowState='WindowStateClosed'), FpWindow=dict(windowState='WindowStateClosed')))])
+        self.assertEqual(self.applied, [])                                                  # inca nu stim toate cele 4
+        S.pf_ingest([dict(data=dict(Vin='VIN123', RdWindow='WindowStateClosed', RpWindow='WindowStatePartiallyOpen'))])
+        self.assertEqual(self.applied[-1], ('windows_open', True))
+        S.pf_ingest([dict(data=dict(Vin='VIN123', RpWindow='WindowStateClosed'))])
+        self.assertEqual(self.applied[-1], ('windows_open', False))
+
+    def test_unknown_car_or_vin_is_ignored(self):
+        S.vin_for = lambda car: 'ALT'
+        S.pf_ingest([dict(data=dict(Vin='VIN123', Locked=False))])
+        self.assertEqual(self.applied, [])
+
 
 from features import share as SHR  # noqa: E402
 
 
-class ShareTests(unittest.TestCase):
+class ShareTests(Isolated):
     def sh(self, **k):
         return dict(dict(label='Andrei', expires=time.time() + 3600, hide_home=1, show_dest=1), **k)
 
@@ -738,7 +903,7 @@ class ShareTests(unittest.TestCase):
 from features import handoff as HO  # noqa: E402
 
 
-class HandoffTests(unittest.TestCase):
+class HandoffTests(Isolated):
     def setUp(self):
         S.OWN.run('delete from handoffs')
         self.cmds, self.orig_run, self.orig_q, self.orig_notify = [], S.run_command, S.q, S.notify
@@ -810,7 +975,7 @@ class HandoffTests(unittest.TestCase):
 from features import zones as ZN  # noqa: E402
 
 
-class ZonesTests(unittest.TestCase):
+class ZonesTests(Isolated):
     def test_in_window_wraps_midnight(self):
         self.assertTrue(ZN.in_window('23:30', '23:00-06:00'))
         self.assertTrue(ZN.in_window('02:00', '23:00-06:00'))
@@ -866,7 +1031,7 @@ class ZonesTests(unittest.TestCase):
             S.OWN.run('delete from handoffs')
 
 
-class BuildIdTests(unittest.TestCase):
+class BuildIdTests(Isolated):
     def test_build_id_is_stable_and_in_the_state(self):
         a = S.static_build()
         self.assertEqual(len(a), 10)
@@ -877,7 +1042,7 @@ class BuildIdTests(unittest.TestCase):
 import importer as IM  # noqa: E402
 
 
-class ImporterGapTests(unittest.TestCase):
+class ImporterGapTests(Isolated):
     def item(self, a, b):
         return dict(started_at=a, ended_at=b)
 
@@ -938,7 +1103,7 @@ class ImporterGapTests(unittest.TestCase):
         self.assertEqual((led['drives'], led['positions'], led['tessie_drives']), ([1], [10, 11], ['a']))
 
 
-class DriveScoreTests(unittest.TestCase):
+class DriveScoreTests(Isolated):
     def test_quantisation_noise_is_not_a_hard_event(self):
         pts = [(i * 0.25, 50 + (i % 2) * 3) for i in range(400)]            # 50/53 km/h alternand la 4 Hz: pe un pas ar parea 3,3 m/s2
         self.assertEqual(S.hard_events(pts), (0, 0))
@@ -964,7 +1129,7 @@ class DriveScoreTests(unittest.TestCase):
 from features import tags as TG  # noqa: E402
 
 
-class TagsAndJourneyTests(unittest.TestCase):
+class TagsAndJourneyTests(Isolated):
     def drive(self, i, a, b, km=10, sl=(44.0, 26.0), el=(44.1, 26.1)):
         return dict(id=i, start_date=a, end_date=b, distance=km, kwh=km * 0.15, duration_min=30, start_name='A', end_name='B' + str(i), start_lat=sl[0], start_lon=sl[1], end_lat=el[0], end_lon=el[1])
 
@@ -1008,7 +1173,7 @@ class TagsAndJourneyTests(unittest.TestCase):
 from features import places as PL  # noqa: E402
 
 
-class PlacesTests(unittest.TestCase):
+class PlacesTests(Isolated):
     def test_nearest_respects_radius(self):
         ps = [dict(name='A', lat=44.0, lon=26.0, radius=150, price=2.0), dict(name='B', lat=44.0005, lon=26.0, radius=500, price=3.0)]
         self.assertEqual(PL.nearest(ps, 44.0001, 26.0)['name'], 'A')                 # ambele contin punctul: cel mai apropiat
@@ -1033,7 +1198,7 @@ class PlacesTests(unittest.TestCase):
         self.assertEqual(S.decorate([row(charge_energy_used=None)])[0]['cost_eff'], 25.0)                     # fara kWh consumati: cei adaugati
 
 
-class UpdaterConnTests(unittest.TestCase):
+class UpdaterConnTests(Isolated):
     def test_builtin_updater_is_found_through_its_token_file_and_user_config_wins(self):
         import tempfile
         old = (S.UPD_TOKEN_FILE, dict(S.CFG))
@@ -1058,7 +1223,7 @@ class UpdaterConnTests(unittest.TestCase):
 from features import chstats as CS  # noqa: E402
 
 
-class ChargingStatsTests(unittest.TestCase):
+class ChargingStatsTests(Isolated):
     def test_summarize_splits_ac_dc_and_buckets(self):
         rows = [dict(dc=False, charge_energy_added=10.0, charge_energy_used=11.0, duration_min=120, power_max=7, start_soc=20, end_soc=45, start_date='2026-09-10T10:00:00'),
                 dict(dc=True, charge_energy_added=30.0, charge_energy_used=33.0, duration_min=30, power_max=170, start_soc=8, end_soc=80, start_date='2026-10-01T10:00:00'),
@@ -1081,7 +1246,7 @@ class ChargingStatsTests(unittest.TestCase):
         self.assertEqual((r['kinds']['dc']['n'], r['dc_share'], r['kinds']['ac']['avg_kw']), (0, None, None))
 
 
-class AuditFixesTests(unittest.TestCase):
+class AuditFixesTests(Isolated):
     def test_short_interval_is_not_soon_right_after_service(self):
         today = dt.date(2026, 3, 1)
         it = dict(interval_km=None, interval_months=1, last_date='2026-02-28', last_km=None)
@@ -1117,7 +1282,7 @@ class AuditFixesTests(unittest.TestCase):
         self.assertEqual(S.rule_clean(dict(type='depart_climate', time='07:30'))['time'], '07:30')
 
 
-class TyreDatesTests(unittest.TestCase):
+class TyreDatesTests(Isolated):
     def setUp(self):
         S.OWN.run('delete from tire_checks')
         S.OWN.run('delete from tire_sets')

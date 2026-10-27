@@ -155,7 +155,12 @@ def init(S):
         S.OWN.kv_set('push_kinds', {k: bool(b.get(k)) for k in DEFAULT_KINDS})
         return dict(ok=True, kinds=kinds())
 
+    last_test = [0.0]
+
     @S.route('POST', '/api/push/test', role='user')
     def test(h, b):
+        if time.time() - last_test[0] < 10:
+            return dict(ok=False, reason='Așteaptă câteva secunde între teste.')           # fara PIN (butonul e un test banal), dar nu poate fi folosit ca sa inunde dispozitivele
+        last_test[0] = time.time()
         r = deliver(dict(title='🔔 Test notificare', body='Notificările push funcționează pe acest dispozitiv.', kind='test', tag='tesla_test', path='#/settings'))
         return dict(ok=r['sent'] > 0, reason=None if r['sent'] else 'Niciun dispozitiv abonat sau serviciul push nu a răspuns.', **r)

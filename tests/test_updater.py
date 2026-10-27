@@ -63,6 +63,55 @@ class UpdaterTests(unittest.TestCase):
         self.assertIn('docker compose pull ui proxy', st['log'])
         self.assertEqual(up.start()[0], 429)                                                            # prea repede dupa o rulare
 
+    def _run(self, up):
+        up.start()
+        for _ in range(100):
+            if not up.status()['running']:
+                break
+            time.sleep(0.05)
+        return up.status()
+
+    def test_self_update_is_the_last_step(self):
+        import tempfile
+        sf = os.path.join(tempfile.mkdtemp(), 'state.json')
+        calls = []
+        up = U.Updater(TOKEN, ['ui', 'proxy'], runner=lambda a: (calls.append(a) or (0, 'ok')), selfsvc='updater', state_file=sf)
+        st = self._run(up)
+        self.assertEqual(calls, [['pull', 'ui', 'proxy'], ['up', '-d', '--no-build', 'ui', 'proxy'], ['pull', 'updater'], ['up', '-d', '--no-build', '--no-deps', 'updater']])
+        self.assertTrue(st['success'])
+        self.assertEqual(json.load(open(sf))['success'], True)                                          # starea ramane pe disc
+
+    def test_self_update_failure_keeps_app_success(self):
+        calls = []
+        up = U.Updater(TOKEN, ['ui'], runner=lambda a: (calls.append(a) or ((1, 'nu merge') if a[:2] == ['pull', 'updater'] else (0, 'ok'))), selfsvc='updater')
+        st = self._run(up)
+        self.assertTrue(st['success'])                                                                  # aplicatia s-a actualizat; doar imaginea updater-ului a esuat
+        self.assertIn('actualizarea imaginii updater-ului a esuat', st['log'])
+        self.assertEqual(calls[-1], ['pull', 'updater'])                                                # nu se mai recreeaza daca imaginea n-a putut fi trasa
+
+    def test_self_service_not_duplicated_and_none_without_label(self):
+        calls = []
+        up = U.Updater(TOKEN, ['ui', 'updater'], runner=lambda a: (calls.append(a) or (0, 'ok')), selfsvc='updater')
+        self._run(up)
+        self.assertEqual(len(calls), 2)                                                                 # daca e deja in UPDATER_SERVICES, nu se adauga un pas separat
+        self.assertEqual(U.self_service([dict(Config=dict(Labels={'com.docker.compose.service': 'updater'}))]), 'updater')
+        self.assertIsNone(U.self_service([dict(Config=dict(Labels={}))]))
+        self.assertIsNone(U.self_service([dict(Config=dict(Labels={'com.docker.compose.service': 'x; rm -rf /'}))]))
+
+    def test_state_survives_restart_during_self_step(self):
+        import tempfile
+        sf = os.path.join(tempfile.mkdtemp(), 'state.json')
+        json.dump(dict(running=True, started=1, finished=0, success=None, log='$ pull', self_step=True), open(sf, 'w'))
+        up = U.Updater(TOKEN, ['ui'], runner=lambda a: (0, ''), state_file=sf)
+        st = up.status()
+        self.assertEqual((st['running'], st['success']), (False, True))
+        self.assertIn('imaginea noua', st['log'])
+        json.dump(dict(running=True, started=1, finished=0, success=None, log='$ pull'), open(sf, 'w'))     # oprit din alt motiv
+        st = U.Updater(TOKEN, ['ui'], runner=lambda a: (0, ''), state_file=sf).status()
+        self.assertEqual((st['running'], st['success']), (False, None))
+        open(sf, 'w').write('nu e json')
+        self.assertFalse(U.Updater(TOKEN, ['ui'], runner=lambda a: (0, ''), state_file=sf).status()['running'])   # fisier stricat: ignorat
+
     def test_failure_stops_before_up(self):
         calls = []
         up = U.Updater(TOKEN, ['ui'], runner=lambda a: (calls.append(a[0]) or (1, 'nu merge')))

@@ -3,6 +3,32 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.5.3 - 2026-10-27
+
+### New features
+- **The updater now updates itself**, as the very last step (after `ui` and `proxy`, so a problem with its own new image can never interrupt the app update). It pulls its own image and a helper container recreates it; the new instance shows the status of the run it came from (kept in `./data/updater.state.json`). Set `UPDATER_SELF=0` in `.env` to switch it off. The updater container now also runs with a **read-only filesystem** (it writes only to `./data` and a `/tmp` tmpfs). **To get the new `read_only` setting, fetch the new `docker-compose.yml`** (the updater does not change compose files); the self-update itself works with the old file too.
+- **Alerts now go away when the cause is gone** (rain with a window open: the window is closed; charging stopped / plugged but not charging: charging resumes or the cable is removed; not plugged in tonight: plugged in or driving away; low tyre pressure: pressure back above the threshold; hot cabin: temperature back below it). Alert notifications on the phone carry a tag, so the same alert replaces the old one instead of stacking, and after an app restart the stale ones are swept once. (They used to stay until you swiped them away.)
+- **"No status notifications at home"** switch in Notifications: cable connected and door/frunk-open notifications, and the "open" and "plugged" Live Activity cards, are not sent while the car is in your home geofence (the same pattern as the "not plugged in tonight" alert, default `acas|home`). Alerts and the charging card are not affected. Off by default.
+- **Settings → Internet access & roles → Sign out all devices** ends every password session at once (password sessions were stateless: only a password or `SESSION_SECRET` change could end them). Session cookies now also carry a random nonce.
+
+### Security
+- **Without an app password, the LAN stays open, but only for private, loopback and link-local addresses.** A request that reaches port 4100 directly from a public address (a router port-forward, a cloud host with the port open) is now refused until a password is set. `setup.sh` and the docs explain `UI_BIND=127.0.0.1` to keep the port on the host only.
+- Unexpected internal errors (database, file, library exceptions) are no longer sent to the browser; the client gets a general message and the details stay in the app log. Messages written for the user (for example "the Tesla account is not authorised") are still shown.
+- `POST /api/push/test` is limited to one test every 10 seconds.
+
+### Fixes
+- Car handoff (valet / guest / speed limit) now uses the car selected in the app, and the page shows only that car's handoffs (it always used car 1).
+- **The Live Activity (iPhone card) now starts reliably.** iOS can keep an old card with the same tag whose push token is gone; updates and new cards with that tag then never show. Before a card starts "from nothing" the app now ends the old one first (2 s earlier; ending does not use up the push-to-start budget).
+- **Doors, frunk, trunk, windows and lock now come from the car itself (Fleet Telemetry), anywhere.** If a telemetry server is configured (the Profiler's ingest), the app also reads `DoorState`, `Locked` and the four window fields from the same stream, all the time and not only during a Profiler session, and feeds them through the same path as MQTT. The car sends them the moment they change, wherever it is and even when TeslaMate has stopped polling it. Needs these fields in the car's telemetry config (billed by Tesla per signal sent; they are sent only on change). The Profiler's "back to base" configuration should include them too. Values such as `{"doorValue": {...}}` are now shown as an object in the Profiler instead of a text.
+- **Frunk, trunk and lock changes now show up while the car sleeps** (with the ESP32 BLE link configured in Home Assistant). TeslaMate stops asking the car once it is asleep or "suspended", so MQTT kept the old values and an opened frunk, or a closed one, was not noticed for minutes: neither the app nor the Live Activity card changed. The app now also reads the BLE entities (`cover.<prefix>_frunk`, `cover.<prefix>_trunk`, `lock.<prefix>_doors`) every 15 s and feeds any change through the same path as MQTT (the car is not woken). The delay now is the ESP32's own refresh interval.
+- A trip can chain up to 30 drives (it was cut at 12, unlike the Journey page).
+- The daily fuel price is stored under the app's local date (`TZ`), not the server's.
+- Small layout fixes: left/right safe-area padding in landscape, the sticky category bar in Settings no longer slides under the top bar, rows of 3-4 buttons wrap instead of overflowing on narrow phones.
+- The documentation in Romanian (`README.ro.md`) is brought up to date with the English one.
+
+### Tests
+- New tests for the sleep guard report (including a Sentry period that started before the window), the PZU analysis (cost, cheapest night, offline fallback), the restore tool (order, conflict rules, DSN from the environment, dry run) and the updater (self-update, state across restarts). Tests no longer depend on the order they run in (each test restores what it changed in the server module).
+
 ## 1.5.2 - 2026-10-27
 
 ### Fixes

@@ -4,7 +4,7 @@ EXTRA_MENU.push(['handoff', 'Predare mașină', 'Car handoff', 'handoff']);
 PAGES.handoff = {
   nav: 'handoff',
   async render() {
-    let d; try { d = await api('/api/handoff'); } catch (e) { return `<div class="top"><h1>${X('Predare mașină', 'Car handoff')}</h1></div><div class="empty">${X('Doar administratorul poate folosi această pagină.', 'Only the administrator can use this page.')}</div>`; }
+    let d; try { d = await api('/api/handoff?car=' + car); } catch (e) { return `<div class="top"><h1>${X('Predare mașină', 'Car handoff')}</h1></div><div class="empty">${X('Doar administratorul poate folosi această pagină.', 'Only the administrator can use this page.')}</div>`; }
     const a = d.active, kmh = (mph) => Math.round(mph * 1.609);
     const rep = (r) => !r ? '—' : (r.drives ? `${r.drives} ${X('curse', 'drives')} · ${nf(r.km, 1)} km · ${X('max', 'max')} ${nf(r.speed_max, 0)} km/h${r.places && r.places.length ? '<br><small class="mut">' + r.places.map(esc).join(' → ') + '</small>' : ''}` : X('Nicio cursă', 'No drives'));
     const mod = (m) => m.split(',').map((x) => ({ guest: X('oaspete', 'guest'), valet: 'valet', 'limită': X('limită viteză', 'speed limit') }[x] || x)).join(' + ');
@@ -33,15 +33,15 @@ PAGES.handoff = {
       e.preventDefault();
       const kmh = parseFloat(v('ho_kmh').value);
       say(X('Se trimit comenzile către mașină…', 'Sending commands to the car…'), 'busy');
-      const [ok, j] = await pinPost('/api/handoff/start', { valet: ck('ho_valet'), guest: ck('ho_guest'), mph: kmh ? Math.round(kmh / 1.609) : 0, minutes: v('ho_min').value, label: v('ho_label').value, pin4: v('ho_pin').value });
+      const [ok, j] = await pinPost('/api/handoff/start', { car, valet: ck('ho_valet'), guest: ck('ho_guest'), mph: kmh ? Math.round(kmh / 1.609) : 0, minutes: v('ho_min').value, label: v('ho_label').value, pin4: v('ho_pin').value });
       if (ok && j.ok) { if (j.partial) alert((j.steps || []).filter((s) => !s.ok).map((s) => s.step + ': ' + s.reason).join('\n')); render(); }
       else say('✗ ' + (j.reason || X('Eroare', 'Error')), 'bad');
     };
     const end = v('ho_end');
     if (end) end.onclick = async (e) => {
       e.preventDefault(); say(X('Se încheie…', 'Ending…'), 'busy');
-      let [ok, j] = await pinPost('/api/handoff/end', { pin4: v('ho_pin').value });
-      if (!ok && j.can_force && confirm((j.reason || '') + ' ' + X('Încheii oricum (dezactivezi manual din mașină)?', 'End it anyway (turn it off in the car yourself)?'))) [ok, j] = await pinPost('/api/handoff/end', { pin4: v('ho_pin').value, force: true });
+      let [ok, j] = await pinPost('/api/handoff/end', { car, pin4: v('ho_pin').value });
+      if (!ok && j.can_force && confirm((j.reason || '') + ' ' + X('Încheii oricum (dezactivezi manual din mașină)?', 'End it anyway (turn it off in the car yourself)?'))) [ok, j] = await pinPost('/api/handoff/end', { car, pin4: v('ho_pin').value, force: true });
       if (ok && j.ok) { if (j.manual) alert(X('Unele funcții trebuie oprite din mașină: ', 'Some features must be turned off in the car: ') + (j.steps || []).filter((s) => !s.ok).map((s) => s.step).join(', ')); render(); }
       else say('✗ ' + (j.reason || X('Eroare', 'Error')), 'bad');
     };

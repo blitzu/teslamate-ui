@@ -4,7 +4,7 @@ The **Profiler** page streams 200+ internal vehicle signals live — charging (c
 
 ## How it works
 
-1. You pick a profile and a duration (5–30 min) and press **Start**. The app saves the car's current telemetry configuration, then sends a new one (the profile's fields at 1 s intervals, always keeping `SentryMode`) through the signing proxy.
+1. You pick a profile and a duration (5–30 min) and press **Start**. The app saves the car's current telemetry configuration, then sends a new one (the profile's fields at 1 s intervals, always keeping the base configuration: `SentryMode` plus, if you use them, `DoorState`, `Locked` and the window fields; see [docs/notifications.md](notifications.md)) through the signing proxy.
 2. The car streams the fields to **your own Fleet Telemetry server**. A small forwarder ([tools/telemetry_forwarder.py](../tools/telemetry_forwarder.py)) pushes the decoded records to the app, which shows them live (table, sparklines, tiles) and records the session (CSV export).
 3. When the time is up — or you press **Stop** — the app restores the previous configuration automatically.
 

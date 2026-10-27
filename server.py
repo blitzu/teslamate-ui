@@ -81,6 +81,30 @@ def conv(v):
     return v
 
 
+def live_apply(car, key, val):
+    """O valoare noua pentru starea live (din MQTT sau din BLE): actualizeaza, transmite in aplicatie si declanseaza notificari, reguli si module."""
+    d = LIVE.setdefault(car, {})
+    known = key in d
+    if not known and val is None:
+        d[key] = None                         # "gol" cunoscut (ex. in afara oricarui geofence): intrarea ulterioara intr-un geofence conteaza ca sosire
+        return
+    if d.get(key) != val:
+        prev = d.get(key)
+        d[key] = val
+        LIVE_TS[car] = time.time()
+        broadcast({'car': car, 'k': key, 'v': val})
+        try:
+            notify_check(car, key, prev, val)
+            rules_check(car, key, prev, val, known)
+            for fn in MQTT_HOOKS:
+                try:
+                    fn(car, key, prev, val, known)
+                except Exception as e:  # noqa
+                    log('mqtt hook: %s' % e)
+        except Exception as e:  # noqa
+            log('notify:', e, flush=True)
+
+
 def mqtt_thread():
     if not MQ['host']:
         return
@@ -98,28 +122,7 @@ def mqtt_thread():
         parts = m.topic[len(prefix):].split('/')
         if len(parts) != 2 or not parts[0].isdigit():
             return
-        car, key = int(parts[0]), parts[1]
-        val = conv(m.payload.decode('utf-8', 'replace'))
-        d = LIVE.setdefault(car, {})
-        known = key in d
-        if not known and val is None:
-            d[key] = None                         # "gol" cunoscut (ex. in afara oricarui geofence): intrarea ulterioara intr-un geofence conteaza ca sosire
-            return
-        if d.get(key) != val:
-            prev = d.get(key)
-            d[key] = val
-            LIVE_TS[car] = time.time()
-            broadcast({'car': car, 'k': key, 'v': val})
-            try:
-                notify_check(car, key, prev, val)
-                rules_check(car, key, prev, val, known)
-                for fn in MQTT_HOOKS:
-                    try:
-                        fn(car, key, prev, val, known)
-                    except Exception as e:  # noqa
-                        log('mqtt hook: %s' % e)
-            except Exception as e:  # noqa
-                log('notify:', e, flush=True)
+        live_apply(int(parts[0]), parts[1], conv(m.payload.decode('utf-8', 'replace')))
 
     try:
         c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
@@ -377,6 +380,15 @@ def _fnum(x, d=0.0):
         return d
 
 
+def local_today():
+    """Data de azi in fusul orar al aplicatiei (TZ), nu cel al sistemului: preturile si zilele din statistici se grupeaza pe aceeasi zi locala."""
+    try:
+        import zoneinfo
+        return dt.datetime.now(zoneinfo.ZoneInfo(LOCAL_TZ)).date()
+    except Exception:  # noqa
+        return dt.date.today()
+
+
 def fuel_conf():
     ft = str(cget('fuel_type', 'FUEL_TYPE', 'euro95')).lower()
     return dict(type=ft if ft in ('euro95', 'diesel', 'manual') else 'euro95', manual=_fnum(cget('fuel_price', 'FUEL_PRICE', '')),
@@ -595,7 +607,7 @@ def fuel_fetch():
             rate = 1.0
         elif code:
             rate = float(json.loads(_get_text('https://api.frankfurter.dev/v1/latest?base=EUR&symbols=' + code))['rates'][code])
-        day = dt.date.today().isoformat()
+        day = local_today().isoformat()
         with MLOCK:
             data = _json_file(FUELFILE, {})
             data.setdefault('days', {})[day] = dict(euro95=e95v, diesel=dslv, rate=rate, cur=code, upd=updv, ts=int(time.time()), country=slug)
@@ -620,7 +632,7 @@ def fuel_info():
     fc = fuel_conf()
     book = fuel_book(fc)
     return dict(type=fc['type'], country=fc['country'], l100=fc['l100'], manual=fc['manual'] or None, currency=CURRENCY, convertible=bool(CUR_CODES.get(str(CURRENCY).strip().lower())),
-                today=fuel_lookup(book, dt.date.today().isoformat(), fc['manual'])[0], days=[dict(day=d, price=p) for d, p in book[-120:]], last=FUEL_STATE['last'] or None, error=FUEL_STATE['err'] or None,
+                today=fuel_lookup(book, local_today().isoformat(), fc['manual'])[0], days=[dict(day=d, price=p) for d, p in book[-120:]], last=FUEL_STATE['last'] or None, error=FUEL_STATE['err'] or None,
                 source='fuel-prices.eu (Monitorul Prețurilor Carburanților)' if fc['country'].lower() == 'romania' else 'fuel-prices.eu')
 
 
@@ -709,6 +721,9 @@ def _dtp(x):
     return dt.datetime.fromisoformat(x)
 
 
+TRIP_MAX = 30                                                     # curse legate intr-o calatorie (la fel ca in pagina Journey, fara plafon de 12)
+
+
 def trip(car, did):
     """Calatorie = cursa ceruta + cursele vecine cu pauza < 2 h. Intoarce segmentele cu puncte si opririle dintre ele (oprire / incarcare)."""
     rows = q("""select id, start_date, end_date from drives where car_id=%s and end_date is not null
@@ -718,9 +733,9 @@ def trip(car, did):
     if idx is None:
         return dict(segments=[], stops=[])
     lo = hi = idx
-    while lo > 0 and hi - lo < 11 and _dtp(rows[lo]['start_date']) - _dtp(rows[lo - 1]['end_date']) < TRIP_GAP:
+    while lo > 0 and hi - lo < TRIP_MAX - 1 and _dtp(rows[lo]['start_date']) - _dtp(rows[lo - 1]['end_date']) < TRIP_GAP:
         lo -= 1
-    while hi < len(rows) - 1 and hi - lo < 11 and _dtp(rows[hi + 1]['start_date']) - _dtp(rows[hi]['end_date']) < TRIP_GAP:
+    while hi < len(rows) - 1 and hi - lo < TRIP_MAX - 1 and _dtp(rows[hi + 1]['start_date']) - _dtp(rows[hi]['end_date']) < TRIP_GAP:
         hi += 1
     chain = rows[lo:hi + 1]
     info = {d['id']: d for d in drives_by_ids(car, [r['id'] for r in chain])}
@@ -2022,8 +2037,8 @@ def pf_norm(v):
     """Valoare decodata din record -> (numar | text). Obiecte cu un singur camp se aplatizeaza (ex. SentryMode)."""
     if isinstance(v, dict):
         if len(v) == 1:
-            v = next(iter(v.values()))
-        else:
+            v = next(iter(v.values()))                                   # {"booleanValue": true} / {"doorValue": {...}} -> continutul
+        if isinstance(v, dict):
             return {k: (round(x, 6) if isinstance(x, float) else x) for k, x in v.items()}
     if isinstance(v, bool):
         return v
@@ -2032,9 +2047,49 @@ def pf_norm(v):
     return str(v)
 
 
+TEL_VIN_CAR = {}                                                   # VIN -> id masina (retinut: nu interogam baza la fiecare inregistrare)
+TEL_WINDOWS = {}                                                  # (masina, camp) -> inchis? (pentru "un geam e deschis" = oricare dintre cele 4)
+
+
+def tel_live(vin, updates):
+    """Campurile de inchideri/incuietori trimise de masina prin Fleet Telemetry (DoorState, Locked, *Window) -> starea live, pe acelasi drum ca MQTT.
+    Masina le trimite singura, oriunde ar fi si cat ar dormi TeslaMate (care atunci nu o mai intreaba)."""
+    car = TEL_VIN_CAR.get(vin)
+    if car is None:
+        car = next((c for c in list(LIVE) if vin_for(c) == vin), None) if vin else (next(iter(LIVE), None) if len(LIVE) == 1 else None)
+        if car is None:
+            return
+        if vin:
+            TEL_VIN_CAR[vin] = car
+    norm = lambda s: str(s).lower().replace('_', '')
+    for k, v in updates:
+        if k == 'Locked' and isinstance(v, bool):
+            live_apply(car, 'locked', v)
+        elif k == 'DoorState' and isinstance(v, dict):
+            d = {norm(a): b for a, b in v.items() if isinstance(b, bool)}
+            doors = [d[x] for x in ('driverfront', 'driverrear', 'passengerfront', 'passengerrear') if x in d]
+            if doors:
+                live_apply(car, 'doors_open', any(doors))
+            if 'trunkfront' in d:
+                live_apply(car, 'frunk_open', d['trunkfront'])
+            if 'trunkrear' in d:
+                live_apply(car, 'trunk_open', d['trunkrear'])
+        elif k in ('FdWindow', 'FpWindow', 'RdWindow', 'RpWindow') and isinstance(v, str):
+            s = norm(v)
+            if 'unknown' in s:
+                continue
+            TEL_WINDOWS[(car, k)] = 'closed' in s
+            if all((car, w) in TEL_WINDOWS for w in ('FdWindow', 'FpWindow', 'RdWindow', 'RpWindow')):
+                live_apply(car, 'windows_open', not all(TEL_WINDOWS[(car, w)] for w in ('FdWindow', 'FpWindow', 'RdWindow', 'RpWindow')))
+
+
+TEL_LIVE_FIELDS = ('DoorState', 'Locked', 'FdWindow', 'FpWindow', 'RdWindow', 'RpWindow')
+
+
 def pf_ingest(records):
     now = time.time()
     batch = {}
+    tel = {}
     with PF['lock']:
         for rec in records[:200]:
             if isinstance(rec, dict) and isinstance(rec.get('conn'), dict):
@@ -2047,6 +2102,8 @@ def pf_ingest(records):
                 if k in ('CreatedAt', 'IsResend', 'Vin') or k not in PF_META:
                     continue
                 v = pf_norm(v)
+                if k in TEL_LIVE_FIELDS:
+                    tel.setdefault(str(d.get('Vin') or ''), []).append((k, v))
                 if PF_META[k]['miles'] and isinstance(v, (int, float)):
                     v = round(v * 1.609344, 2)
                 PF['values'][k] = (v, now)
@@ -2058,6 +2115,11 @@ def pf_ingest(records):
                 if PF['session']:
                     PF['log'].append((now, k, v))                # deque cu maxlen: taierea e O(1)
         PF['last_rx'] = now
+    for vin, ups in tel.items():
+        try:
+            tel_live(vin, ups)
+        except Exception as e:  # noqa
+            log('telemetrie -> live:', e, flush=True)
     if batch:
         pf_broadcast(dict(t=now, d=batch))
 
@@ -2359,7 +2421,18 @@ KIND_ACTIONS = {           # butoane pe notificarile obisnuite (Live Activity nu
 
 def app_link(kind='live'):
     return (APPURL + '/' + KIND_ROUTE.get(kind, '#/car')) if APPURL else None
-NDEFAULT = dict(plugged=True, charge_done=True, door=True, update=True, low_batt=True, live=True, live_drive=False, actions=True, app_update=True)
+NDEFAULT = dict(plugged=True, charge_done=True, door=True, update=True, low_batt=True, live=True, live_drive=False, actions=True, app_update=True, away_only=False)
+AWAY_KINDS = ('plugged', 'door')                                    # cu "doar in afara casei": notificarile astea (si cardurile 'open'/'plugged') nu se trimit cat masina e acasa
+
+
+def at_home(car=None):
+    lv = LIVE.get(car if car is not None else next(iter(LIVE), None), {}) or {}
+    rx = 'acas|home'
+    try:
+        rx = ALERTS.cfg()['not_plugged_night']['home']
+    except Exception:  # noqa
+        pass
+    return bool(re.search(rx, str(lv.get('geofence') or ''), re.I))
 EVENTS = []          # cele mai noi primele, max 60
 NLOCK = threading.Lock()
 LAST_SENT = {}
@@ -2385,6 +2458,8 @@ def notify(kind, title, msg, data=None, log=True):
         with NLOCK:
             EVENTS.insert(0, ev)
             del EVENTS[60:]
+    if kind in AWAY_KINDS and nset_load().get('away_only') and at_home():
+        return False                                                        # acasa: nu trimitem (ramane in istoricul din aplicatie)
     if NHOOK:
         payload = dict(title=title, message=msg, kind=kind)
         if data is None:
@@ -2570,6 +2645,7 @@ def rule_clean(b):
 # ---------------------------------------------------------------- Live Activities iOS (prin webhook HA -> notify.mobile_app_*: live_update + tag)
 LA_TAG = 'tesla_status'
 SUP = str.maketrans('0123456789', '⁰¹²³⁴⁵⁶⁷⁸⁹')
+LA_CLEAR_GAP = 2.0                                                  # pauza intre inchiderea cardului vechi si pornirea celui nou (secunde)
 LA = dict(kind='unknown', sent=0.0, soc=None, since=0.0, timer=None)       # 'unknown' = dupa repornire nu stim ce arata telefonul: daca nu mai e nimic de aratat, il stergem o data
 
 
@@ -2597,7 +2673,8 @@ def la_payload(car):
         return None
     shift = lv.get('shift_state')
     opened = [w for k, w in OPEN_KEYS.items() if lv.get(k) is True]
-    if opened and shift in (None, 'P') and lv.get('locked') is not False:
+    quiet_home = bool(st.get('away_only')) and at_home(car)               # "doar in afara casei": fara carduri 'deschis' / 'conectata' acasa
+    if opened and shift in (None, 'P') and lv.get('locked') is not False and not quiet_home:
         return 'open', 'Deschis', opened[0].capitalize(), dict(base, critical_text='Deschis', notification_icon='mdi:car-door', notification_icon_color='#FFB15C', progress=soc, progress_max=100, progress_bar_color='#FFB15C')
     cs = lv.get('charging_state')
     if cs == 'Charging':
@@ -2620,7 +2697,7 @@ def la_payload(car):
     if st.get('live_drive') and shift in ('D', 'R', 'N'):
         v = lv.get('speed') or 0
         return 'drive', 'În mers', '%d km/h' % round(v), dict(base, critical_text='%d km/h' % round(v), notification_icon='mdi:car', notification_icon_color='#7AA8FF', progress=soc, progress_max=100, progress_bar_color='#7AA8FF', silent=True)
-    if lv.get('plugged_in') and cs in ('Stopped', 'NoPower', 'Starting', None, 'Disconnected') and shift in (None, 'P'):
+    if lv.get('plugged_in') and cs in ('Stopped', 'NoPower', 'Starting', None, 'Disconnected') and shift in (None, 'P') and not quiet_home:
         return 'plugged', 'Conectată', '%s%%' % soc, dict(base, critical_text='%s%%' % soc, notification_icon='mdi:ev-plug-type2', notification_icon_color='#8F99A4', progress=soc, progress_max=100, progress_bar_color='#8F99A4')
     return None
 
@@ -2655,6 +2732,13 @@ def la_sync(car=1):
     if changed or (soc != LA['soc'] and now - LA['sent'] > min_gap) or (kind == 'charge' and now - LA['sent'] > 120) or (kind == 'drive' and now - LA['sent'] > 240):
         if changed:
             LA['since'] = now
+            if LA['kind'] in (None, 'cleared', 'unknown'):
+                # Pornire "din nimic": iOS poate tine un card vechi cu acelasi tag (jeton pierdut) si atunci nici actualizarea, nici cardul nou nu apar. Il inchidem intai (nu consuma din bugetul de pornire).
+                try:
+                    http(NHOOK, dict(clear=True, tag=LA_TAG, kind='live'), timeout=10)
+                    time.sleep(LA_CLEAR_GAP)
+                except Exception as e:  # noqa
+                    log('live activity clear:', e, flush=True)
         LA.update(kind=kind, sent=now, soc=soc)
         notify('live', title, msg, data, log=False)
 
@@ -2692,6 +2776,43 @@ def notify_reconcile(car):
         notify_clear('tesla_update', 'update')
 
 
+# TeslaMate nu intreaba masina cat timp doarme sau e "suspended", deci un frunk deschis/inchis sau o incuiere nu apar in MQTT (valorile retinute raman vechi).
+# ESP32 BLE (prin HA) vede masina fara s-o trezeasca: schimbarile lui trec prin acelasi drum ca cele din MQTT, deci apar si cardurile Live Activity.
+BLE_CLOSURES = (('cover.%s_frunk', 'frunk_open', {'open': True, 'closed': False}), ('cover.%s_trunk', 'trunk_open', {'open': True, 'closed': False}),
+                ('lock.%s_doors', 'locked', {'locked': True, 'unlocked': False}))
+BLE_SEEN = {}
+
+
+def ble_state_sync(car=1):
+    """O trecere: citeste din HA starea frunk/portbagaj/incuietori BLE si o aplica daca a aparut o schimbare (sau la prima citire, daca difera de ce stim)."""
+    if not (ha_ok() and HA['ble']) or not LIVE.get(car):
+        return 0
+    n = 0
+    for tpl, key, vals in BLE_CLOSURES:
+        eid = tpl % HA['prefix']
+        st = ha_state(eid)
+        if not st or st.get('state') not in vals:
+            continue                                                  # unknown / unavailable / opening / closing
+        marker = st.get('last_changed')
+        first = eid not in BLE_SEEN
+        changed = BLE_SEEN.get(eid) != marker
+        BLE_SEEN[eid] = marker
+        val = vals[st['state']]
+        if (first or changed) and LIVE[car].get(key) != val:
+            live_apply(car, key, val)
+            n += 1
+    return n
+
+
+def ble_state_loop():
+    while True:
+        time.sleep(15)
+        try:
+            ble_state_sync()
+        except Exception as e:  # noqa
+            log('ble stare:', e, flush=True)
+
+
 def la_loop():
     reconciled = False
     while True:
@@ -2707,7 +2828,7 @@ def la_loop():
 
 
 # ---------------------------------------------------------------- acces din internet (parola + cookie semnat)
-import hashlib, hmac, html as html_mod
+import hashlib, hmac, html as html_mod, ipaddress
 AUTH = dict(pw=os.environ.get('APP_PASSWORD', ''), secret=(os.environ.get('SESSION_SECRET') or secrets.token_hex(32)).encode())
 FAILS = {}   # ip -> [timestamps]
 LOGIN = {
@@ -2720,16 +2841,36 @@ def _sess_key():
     return AUTH['secret'] + hashlib.sha256(str(AUTH['pw']).encode('utf-8', 'replace')).digest()
 
 
+SESS = dict(epoch=None)                                           # sesiunile emise INAINTE de acest moment nu mai sunt valide ("iesire de pe toate dispozitivele")
+
+
+def sess_epoch():
+    if SESS['epoch'] is None:
+        try:
+            SESS['epoch'] = int(float(OWN.kv_get('sess_epoch', 0) or 0)) if OWN else 0
+        except Exception:  # noqa
+            SESS['epoch'] = 0
+    return SESS['epoch']
+
+
+def sess_revoke_all():
+    SESS['epoch'] = int(time.time())
+    if OWN:
+        OWN.kv_set('sess_epoch', SESS['epoch'])
+    return SESS['epoch']
+
+
 def sess_make():
-    ts = str(int(time.time()))
-    return ts + '.' + hmac.new(_sess_key(), ts.encode(), hashlib.sha256).hexdigest()
+    body = '%d.%s' % (int(time.time()), secrets.token_hex(8))        # nonce: doua sesiuni emise in aceeasi secunda au valori diferite
+    return body + '.' + hmac.new(_sess_key(), body.encode(), hashlib.sha256).hexdigest()
 
 
 def sess_ok(v):
     try:
-        ts, sig = v.split('.', 1)
-        good = hmac.new(_sess_key(), ts.encode(), hashlib.sha256).hexdigest()
-        return hmac.compare_digest(sig, good) and time.time() - int(ts) < 30 * 86400
+        ts, nonce, sig = v.split('.', 2)
+        good = hmac.new(_sess_key(), ('%s.%s' % (ts, nonce)).encode(), hashlib.sha256).hexdigest()
+        t = int(ts)
+        return hmac.compare_digest(sig, good) and time.time() - t < 30 * 86400 and t >= sess_epoch()
     except Exception:
         return False
 
@@ -2902,6 +3043,13 @@ def route_lookup(method, path):
     return None
 
 
+@route('POST', '/api/logout_all', pin=True, role='admin')
+def _logout_all(h, b):
+    sess_revoke_all()
+    log('audit: toate sesiunile cu parola au fost revocate')
+    return dict(ok=True)
+
+
 def audit(kind, **kw):
     for fn in list(AUDIT_HOOKS):
         try:
@@ -3025,6 +3173,15 @@ class H(BaseHTTPRequestHandler):
             log('audit: PIN gresit ip=%s' % ip)
         return False, 'PIN greșit.' if FL['pin'] else 'PIN greșit sau neconfigurat.', 403
 
+    def private_peer(self):
+        try:
+            ip = ipaddress.ip_address(self.client_address[0].split('%')[0])
+            if getattr(ip, 'ipv4_mapped', None):
+                ip = ip.ipv4_mapped
+            return ip.is_private or ip.is_loopback or ip.is_link_local
+        except ValueError:
+            return False
+
     def authed(self):
         if DEMO_ONLY:
             return True
@@ -3036,7 +3193,7 @@ class H(BaseHTTPRequestHandler):
             if not AUTH['pw']:
                 return False           # din internet fara parola configurata: totul inchis
         elif not AUTH['pw']:
-            return True                # LAN fara parola setata: ramane deschis (UI avertizeaza); cu parola setata cere autentificare si in LAN
+            return self.private_peer()  # fara parola: deschis doar pentru adrese private/locale (UI avertizeaza); un port expus direct pe internet nu mai e accesibil; cu parola setata cere autentificare peste tot
         for part in self.headers.get('Cookie', '').split(';'):
             k, _, v = part.strip().partition('=')
             if k == 'sess' and sess_ok(v):
@@ -3183,15 +3340,19 @@ class H(BaseHTTPRequestHandler):
             try:
                 pf_ingest((json.loads(self.read_body(2_000_000) or b'{}')).get('records') or [])
             except Exception as e:  # noqa
-                return self.send_json(dict(ok=False, error=str(e)), 400)
+                log('profiler ingest: %s' % e, flush=True)
+                return self.send_json(dict(ok=False, error='cerere invalidă'), 400)
             return self.send_json(dict(ok=True))
         if DEMO_ONLY and u.path in ('/api/profiler/start', '/api/profiler/stop'):
             try:
                 raw = self.read_body(65536)
                 body = json.loads(raw) if raw else {}
                 return self.send_json(pf_start(1, body.get('profile'), body.get('minutes', 5)) if u.path.endswith('start') else pf_stop())
+            except RuntimeError as e:
+                return self.send_json(dict(ok=False, reason=str(e)[:300]), 400)
             except Exception as e:  # noqa
-                return self.send_json(dict(ok=False, reason=str(e)), 400)
+                log('profiler demo: %s' % e, flush=True)
+                return self.send_json(dict(ok=False, reason='cerere invalidă'), 400)
         if DEMO_ONLY:
             return self.send_json(dict(ok=False, reason='demo'), 403)
         if u.path == '/login':
@@ -3291,9 +3452,12 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(dict(ok=False, reason='Nu există.'), 404)
         except KeyError as e:
             return self.send_json(dict(ok=False, reason='Cerere invalidă: lipsește câmpul %s' % e), 400)
-        except Exception as e:  # noqa
+        except RuntimeError as e:                         # mesajele RuntimeError sunt scrise pentru utilizator ("contul Tesla nu e autorizat", "baza e ocupata"...)
             log('POST %s: %s' % (u.path, e), flush=True)
             return self.send_json(dict(ok=False, reason=str(e)[:300]), 500)
+        except Exception as e:  # noqa                    # SQL / cai de fisiere / biblioteci: doar in jurnal, clientul primeste un mesaj general
+            log('POST %s: %s: %s' % (u.path, type(e).__name__, e), flush=True)
+            return self.send_json(dict(ok=False, reason='Eroare internă (detalii în jurnalul aplicației).'), 500)
         return self.send_json(dict(error='not found'), 404)
 
     def api(self, p, a):
@@ -3373,7 +3537,10 @@ class H(BaseHTTPRequestHandler):
                 return PF['diag'][1]
             vin = vin_for(car)
             b, resp, c = pf_cfg_get(vin) if vin else (None, {}, 0)
-            out = dict(ok=bool(b), synced=resp.get('synced'), fields=len((b or {}).get('fields') or {}), state=LIVE.get(car, {}).get('state'), code=c)
+            nf = len((b or {}).get('fields') or {})
+            base = jload(DATA_DIR + '/profiler_base.json', None) or {}
+            nb = len(base.get('fields') or {}) or 1                       # configuratia de baza (Sentry + usi/incuiere/geamuri), nu doar Sentry
+            out = dict(ok=bool(b), synced=resp.get('synced'), fields=nf, base_fields=nb, normal=nf <= nb, state=LIVE.get(car, {}).get('state'), code=c)
             PF['diag'] = (time.time(), out)
             return out
         if p == '/api/profiler':
@@ -3550,6 +3717,6 @@ def supervise(fn):
 if __name__ == '__main__':
     log('pornit: demo=%s mqtt=%s ha=%s pin=%s parola=%s access=%s module=%s' % (DEMO_ONLY, bool(MQ['host']), bool(HA['url']), bool(FL['pin']), bool(AUTH['pw']), bool(ACCESS['team']), ','.join(FEATURES)))
     if not DEMO_ONLY:
-        for fn in [mqtt_thread, rules_clock, pf_watch, la_loop, fuel_loop, update_loop, serve_public] + BG_TASKS:
+        for fn in [mqtt_thread, rules_clock, pf_watch, la_loop, ble_state_loop, fuel_loop, update_loop, serve_public] + BG_TASKS:
             supervise(fn)
     ThreadingHTTPServer(('0.0.0.0', PORT), H).serve_forever()

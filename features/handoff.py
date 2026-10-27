@@ -67,10 +67,11 @@ def init(S):
 
     @S.route('GET', '/api/handoff', role='admin')
     def status(h, a):
-        cur = active()
+        car = int(a['car']) if str(a.get('car', '')).isdigit() else None
+        cur = active(car)
         if cur:
             cur = dict(cur, so_far=report(cur['car'], cur['started'], time.time()))
-        past = S.OWN.rows('select id, car, started, ended, modes, limit_mph, label, report from handoffs where ended is not null order by id desc limit 15')
+        past = S.OWN.rows('select id, car, started, ended, modes, limit_mph, label, report from handoffs where ended is not null' + (' and car=?' if car else '') + ' order by id desc limit 15', (car,) if car else ())
         for p in past:
             p['report'] = json.loads(p['report']) if p['report'] else None
         return dict(active=cur, past=past, now=time.time())

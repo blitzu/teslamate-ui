@@ -53,6 +53,7 @@ Read-only features (everything except Controls/Climate/Charging control/HomeLink
 
 * `ui`: dependency-light Python server (`server.py`) + static single-page app (`static/`).
 * `proxy`: Tesla's official [vehicle-command](https://github.com/teslamotors/vehicle-command) HTTP proxy, compiled from source at a pinned tag. It signs commands (required for modern vehicles).
+* `updater`: a tiny container behind the **Update now** button in Settings (see [docs/updates.md](docs/updates.md)); it needs the Docker socket and can be removed.
 * History comes from TeslaMate. The app keeps its own small state in `./data` (OAuth tokens, settings, and `app.db` for service reminders, alerts, tags, places and the optional backup copy).
 
 ## Requirements

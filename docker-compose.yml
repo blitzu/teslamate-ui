@@ -82,6 +82,9 @@ services:
     image: ghcr.io/blitzu/teslamate-ui-updater:${APP_TAG:-latest}
     container_name: tessie-updater
     restart: unless-stopped
+    read_only: true                  # writes only to ./data (token, last status) and the /tmp tmpfs
+    tmpfs:
+      - /tmp
     security_opt:
       - no-new-privileges:true
     cap_drop: [ALL]
@@ -94,6 +97,7 @@ services:
     environment:
       APP_UID: ${APP_UID:-10001}                     # the token file is handed to the app user so the UI can read it
       UPDATER_AUTO_HOURS: ${UPDATER_AUTO_HOURS:-0}   # 0 = only when you press the button (default); e.g. 24 = also update by itself once a day
+      UPDATER_SELF: ${UPDATER_SELF:-1}               # 1 = after the app, also pull and restart its own image (last step); 0 = never touch itself
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data:/data

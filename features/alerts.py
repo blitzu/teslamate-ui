@@ -68,6 +68,16 @@ class Engine:
         self.rain_alerted = {}
         self.now = None                                                      # ceasul ultimei verificari (tick/MQTT), folosit si de fire()
         self.held = set()                                                    # alerte retinute de orele de liniste (jurnalizate o singura data)
+        self.active = set()                                                  # alerte trimise si inca neinchise: (tip, masina)
+        self.swept = set()                                                   # perechi (tip, masina) pentru care, dupa pornire, s-a cerut o data stergerea unei notificari ramase de dinainte
+
+    def resolve(self, key, car):
+        """Cauza alertei a trecut: sterge notificarea de pe telefon. Dupa o repornire, prima trecere sterge o data si ce a ramas de dinainte."""
+        k = (key, car)
+        if k in self.active or k not in self.swept:
+            self.active.discard(k)
+            self.swept.add(k)
+            self.S.notify_clear('tesla_alert_%s' % key, 'alert')
 
     def cfg(self):
         return merged(self.S.OWN.kv_get('alerts_cfg', {}))
@@ -97,7 +107,12 @@ class Engine:
         if full not in self.held:
             S.OWN.run('insert into alerts_log(ts, car, key, severity, title, msg) values(?,?,?,?,?,?)', (time.time(), car, key.split(':')[0], sev, title, msg))
         self.held.discard(full)
-        S.notify('alert', title, msg)
+        data = dict(tag='tesla_alert_%s' % key.split(':')[0])               # aceeasi alerta o inlocuieste pe cea veche si poate fi stearsa cand trece cauza
+        if S.app_link('alert'):
+            data['url'] = S.app_link('alert')
+        S.notify('alert', title, msg, data)
+        self.active.add((key.split(':')[0], car))
+        self.swept.add((key.split(':')[0], car))
         return True
 
     # ---- evenimente MQTT (tranzitii)
@@ -119,6 +134,12 @@ class Engine:
                 self.fire('charge_stopped', '⚠️ Încărcarea s-a oprit', 'Stare: %s (%s). Baterie %s%%.' % (new, why, soc if soc is not None else '?'), car, cfg=cfg)
         if key == 'windows_open' and not new:
             self.rain_alerted.pop(car, None)
+            self.resolve('rain_window', car)
+        if key == 'charging_state' and new == 'Charging' or key == 'plugged_in' and new is False:
+            self.resolve('charge_stopped', car)
+            self.resolve('plugged_not_charging', car)
+        if key == 'plugged_in' and new is True:
+            self.resolve('not_plugged_night', car)
 
     # ---- verificari periodice (la ~30 s)
     def tick(self, now=None, now_dt=None):
@@ -142,6 +163,8 @@ class Engine:
         bad = live.get('plugged_in') and live.get('charging_state') in ('Stopped', 'NoPower') and soc is not None and soc < lim - 1 and not scheduled
         if not (c['on'] and bad):
             self.since.pop(k, None)
+            if not bad:
+                self.resolve('plugged_not_charging', car)
             return
         if self.S.OWN.one("select 1 x from cmd_log where name in ('charge_stop','charging_amps','sched_charging') and ts > ? limit 1", (now - 6 * 3600,)):
             self.since.pop(k, None)
@@ -153,6 +176,8 @@ class Engine:
 
     def check_night(self, car, live, cfg, now, now_dt):
         c = cfg['not_plugged_night']
+        if live.get('plugged_in') or live.get('shift_state') in ('D', 'R', 'N'):
+            self.resolve('not_plugged_night', car)                           # a conectat-o sau a plecat: seara nu mai are rost
         if not c['on'] or now_dt.hour != c['hour'] or now_dt.minute > 10:
             return
         geo = str(live.get('geofence') or '')
@@ -168,6 +193,8 @@ class Engine:
         names = dict(fl='față stânga', fr='față dreapta', rl='spate stânga', rr='spate dreapta')
         low = [(names[w], live.get('tpms_pressure_' + w)) for w in names if live.get('tpms_pressure_' + w) and 0 < live.get('tpms_pressure_' + w) < c['bar']]
         soft = [names[w] for w in names if live.get('tpms_soft_warning_' + w)]
+        if not (low or soft):
+            self.resolve('tpms_low', car)
         if (low or soft) and self.cool('tpms_low:%s' % car, now):
             parts = ['%s %.2f bar' % (n, v) for n, v in low] + ['avertizare mașină: %s' % n for n in soft]
             self.fire('tpms_low', '🛞 Presiune scăzută la anvelope', '; '.join(parts) + ' (prag %.1f bar).' % c['bar'], car, now_dt, cfg)
@@ -176,6 +203,8 @@ class Engine:
         c = cfg['cabin_hot']
         mode = str(live.get('climate_keeper_mode') or '').lower()
         temp = live.get('inside_temp')
+        if not (mode in ('dog', 'camp') and temp is not None and temp > c['temp']):
+            self.resolve('cabin_hot', car)
         if c['on'] and mode in ('dog', 'camp') and temp is not None and temp > c['temp'] and self.cool('cabin_hot:%s' % car, now):
             self.fire('cabin_hot', '🐕 Cabina e fierbinte în modul %s' % mode, 'Temperatura în cabină: %.0f°C (prag %d°C). Verifică imediat.' % (temp, c['temp']), car, now_dt, cfg)
 

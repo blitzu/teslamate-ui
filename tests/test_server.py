@@ -19,11 +19,13 @@ os.environ['DATA_DIR'] = TMP
 os.environ['DEMO_ONLY'] = '1'
 sys.path.insert(0, ROOT)
 import server as S  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from isolation import Isolated  # noqa: E402
 
 CRLF = chr(13) + chr(10)
 
 
-class Pure(unittest.TestCase):
+class Pure(Isolated):
     def setUp(self):
         S.FUELFILE = os.path.join(TMP, 'fuel.json')
         S.METAFILE = os.path.join(TMP, 'meta.json')
@@ -106,6 +108,27 @@ class Pure(unittest.TestCase):
         self.assertFalse(S.sess_ok(cookie))                                       # schimbarea parolei invalideaza sesiunile
         S.AUTH['pw'] = ''
 
+    def test_session_revocation_and_peer(self):
+        import types
+        S.AUTH['pw'] = 'parola-1-parola-1'
+        a, b = S.sess_make(), S.sess_make()
+        self.assertNotEqual(a, b)                                                 # nonce: valori diferite chiar in aceeasi secunda
+        self.assertFalse(S.sess_ok(a.rsplit('.', 1)[0] + '.' + '0' * 64))
+        old = S.SESS['epoch']
+        try:
+            S.SESS['epoch'] = int(time.time()) + 5                                # "deconectare de pe toate dispozitivele"
+            self.assertFalse(S.sess_ok(a))
+            S.SESS['epoch'] = 0
+            self.assertTrue(S.sess_ok(a))
+        finally:
+            S.SESS['epoch'] = old
+            S.AUTH['pw'] = ''
+        peer = lambda ip: S.H.private_peer(types.SimpleNamespace(client_address=(ip, 1)))
+        for ip in ('192.168.1.5', '10.0.0.1', '172.18.0.1', '127.0.0.1', '::1', '::ffff:192.168.1.9', 'fe80::1'):
+            self.assertTrue(peer(ip), ip)
+        for ip in ('8.8.8.8', '2a00:1450::1', '::ffff:8.8.8.8', 'nu-e-ip'):
+            self.assertFalse(peer(ip), ip)
+
     def test_run_command_norepeat(self):
         calls = []
         S._run_command = lambda car, name, arg=None: (calls.append(name) or dict(ok=True))
@@ -120,7 +143,7 @@ class Pure(unittest.TestCase):
         self.assertEqual(S.ble_plan('cop_temp', {'level': 77})[2]['option'], 'High')
 
 
-class Versioning(unittest.TestCase):
+class Versioning(Isolated):
     def setUp(self):
         S.UPDFILE = os.path.join(TMP, 'update.json')
         S.APP_VERSION = '1.0.0'
@@ -213,7 +236,7 @@ def raw_status(lines):
     return out.split(CRLF.encode())[0]
 
 
-class HttpOpen(unittest.TestCase):
+class HttpOpen(Isolated):
     """Fara parola, fara baza de date."""
     @classmethod
     def setUpClass(cls):
@@ -265,7 +288,7 @@ class HttpOpen(unittest.TestCase):
         self.assertEqual(h.get('X-Content-Type-Options'), 'nosniff')
 
 
-class HttpWithPassword(unittest.TestCase):
+class HttpWithPassword(Isolated):
     PW = 'parola-de-test-123'
 
     @classmethod

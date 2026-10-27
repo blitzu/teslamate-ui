@@ -39,4 +39,6 @@ Next steps:
   1. Edit .env, then:  docker compose up -d --build
   2. Open http://<host>:4100  (read-only dashboard works right away)
   3. To send commands to the car, follow docs/fleet-api.md
+  Port 4100 listens on all interfaces of this host: set UI_BIND=127.0.0.1 in .env to keep it local, and set an app
+  password (Settings) before exposing it anywhere. Without a password only private/local addresses are served.
 EOF
