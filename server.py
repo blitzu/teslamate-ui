@@ -857,11 +857,11 @@ def activity(car, days, limit):
     """Cronologie unificata: curse, incarcari, stationari (>= 1 h), update-uri software, evenimente/automatizari din aplicatie."""
     since = dt.datetime.utcnow() - dt.timedelta(days=days)
     ev = []
-    for d in drives(car, 300, 0):
+    for d in drives(car, 2000, 0, since):
         if _dtp(d['start_date']) >= since:
             ev.append(dict(type='drive', t=d['start_date'], end=d['end_date'], id=d['id'], title='%s → %s' % (d['start_name'], d['end_name']),
                            km=d['distance'], kwh=d['kwh'], soc0=d['start_soc'], soc1=d['end_soc']))
-    for c in decorate(_charges_rows(car, 300, 0)):
+    for c in charges(car, 2000, 0, None, since):               # acelasi cost ca in lista de incarcari (inclusiv costul real)
         if _dtp(c['start_date']) >= since:
             ev.append(dict(type='charge', t=c['start_date'], end=c['end_date'], id=c['id'], title=c['name'], kwh=c['charge_energy_added'], soc0=c['start_soc'], soc1=c['end_soc'], dc=c['dc'], cost=c['cost_eff']))
     try:
@@ -2741,10 +2741,16 @@ FAMILY_OK = {'lock', 'unlock', 'climate_on', 'climate_off', 'set_temps', 'seat_h
 _JWKS = []
 
 
+_JWT_BAD = {}                                                     # amprenta tokenului respins -> momentul (memorie scurta)
+
+
 def access_ok(token):
     """Valideaza JWT-ul Cloudflare Access (semnatura, audienta, emitent) - cererea a trecut deci prin autentificarea Access."""
     if not (ACCESS['team'] and ACCESS['aud'] and token):
         return False
+    bad_key = hashlib.sha256(token.encode('utf-8', 'replace')).hexdigest()[:20]
+    if time.time() - _JWT_BAD.get(bad_key, 0) < 60:
+        return False                                              # acelasi token respins acum: nu mai cerem certificatele si nu mai umplem jurnalul
     try:
         import jwt
         if not _JWKS:
@@ -2755,6 +2761,9 @@ def access_ok(token):
         return (em or '__noemail__') if (ROLES or not ACCESS['email'] or em == ACCESS['email'].lower()) else False     # fara email in JWT (service token) = viewer, nu admin
     except Exception as e:  # noqa
         log('access jwt:', e, flush=True)
+        if len(_JWT_BAD) > 500:
+            _JWT_BAD.clear()
+        _JWT_BAD[bad_key] = time.time()
         return False
 
 
@@ -2922,6 +2931,8 @@ class H(BaseHTTPRequestHandler):
     def run_route(self, r, data):
         fn, o = r
         need = o['role']
+        if DEMO_ONLY and need == 'admin':
+            return self.send_json(dict(ok=False, reason='Indisponibil în demonstrație.'), 403)      # instanta publica: rutele de administrare ale modulelor (backup, zone, linkuri) nu raspund
         if (need == 'admin' and self.role != 'admin') or (need == 'family' and self.role not in ('admin', 'family')) or (need == 'user' and self.role == 'viewer'):
             return self.send_json(dict(ok=False, reason='Nu ai permisiunea pentru această acțiune (rol: %s).' % self.role), 403)
         CTX.actor = 'user:%s' % self.role                 # comenzile pornite din rute de module (valet, handoff...) se jurnalizeaza pe utilizator, nu pe "system"
@@ -3109,6 +3120,8 @@ class H(BaseHTTPRequestHandler):
         try:
             if p == '/api/health':
                 db = True if DEMO_ONLY else (has_cars() is not None)
+                if not self.authed():                         # fara autentificare: doar starea (healthcheck-ul Docker), fara versiune/fire de executie
+                    return self.send_json(dict(ok=db, db=db), 200 if db else 503)
                 return self.send_json(dict(ok=db, db=db, version=APP_VERSION, mqtt=(MQ_STATE['up'] if MQ['host'] else None), threads={k: t.is_alive() for k, t in THREADS.items()}), 200 if db else 503)
             if p == '/api/state':
                 d = api_state()

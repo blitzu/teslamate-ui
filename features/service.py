@@ -2,6 +2,7 @@
 Datele sunt in baza proprie (nu in TeslaMate). Odometrul vine din TeslaMate (max positions.odometer) sau din MQTT."""
 import calendar
 import datetime as dt
+import math
 import statistics
 import time
 
@@ -64,19 +65,23 @@ def init(S):
         now = time.time()
         if now - _odo[0] < 120 and _odo[1] is not None:
             return _odo[1]
-        v = None
-        try:
-            r = S.q('select max(odometer) o from positions where car_id=%s', (car,))
-            v = r[0]['o'] if r else None
-        except Exception:  # noqa
-            pass
+        v = (S.LIVE.get(car) or {}).get('odometer')                  # valoarea live (MQTT) evita scanarea tabelei positions
         if v is None:
-            v = (S.LIVE.get(car) or {}).get('odometer')
+            try:
+                r = S.q('select max(odometer) o from positions where car_id=%s', (car,))
+                v = r[0]['o'] if r else None
+            except Exception:  # noqa
+                pass
         _odo[:] = [now, v]
         return v
 
     def num(x):
-        return None if x in (None, '') else float(str(x).replace(',', '.'))
+        if x in (None, ''):
+            return None
+        v = float(str(x).replace(',', '.'))
+        if not math.isfinite(v) or v < 0:
+            raise ValueError('valoare invalidă: %s' % x)
+        return v
 
     def day(x):
         return dt.date.fromisoformat(str(x)).isoformat() if x else None
@@ -124,7 +129,14 @@ def init(S):
             raise S.NotFound()
         d = day(b.get('date')) or dt.date.today().isoformat()
         odo = num(b.get('odometer'))
-        odo = odo if odo is not None else odometer()
+        if odo is None and b.get('date') and d < dt.date.today().isoformat():           # facut in trecut: kilometrajul de atunci, nu cel de azi
+            try:
+                past = odometer_at(dt.date.fromisoformat(d))
+                odo = None if past is None else round(past)
+            except Exception:  # noqa
+                odo = None
+        elif odo is None:
+            odo = odometer()
         S.OWN.run('update maint_items set last_date=?, last_km=?, notified_at=null, notified_state=null where id=?', (d, odo, it['id']))
         S.OWN.run('insert into service_log(date, odometer, category, description, cost, notes) values(?,?,?,?,?,?)', (d, odo, it['name'], it['name'], num(b.get('cost')), str(b.get('notes') or '')[:300]))
         return dict(ok=True)
@@ -170,7 +182,7 @@ def init(S):
     def sets_with_km(odo):
         out = []
         for s in S.OWN.rows('select * from tire_sets order by (removed_date is not null), mounted_date desc, id desc'):
-            end = s['removed_km'] if s['removed_km'] is not None else odo
+            end = s['removed_km'] if s['removed_km'] is not None else (None if s['removed_date'] else odo)
             s['km'] = round(end - s['mounted_km']) if (end is not None and s['mounted_km'] is not None) else None
             s['active'] = s['mounted_date'] is not None and s['removed_date'] is None
             s['checks'] = S.OWN.rows('select * from tire_checks where set_id=? order by date desc, id desc limit 12', (s['id'],))
@@ -244,9 +256,9 @@ def init(S):
                 raise ValueError('nume lipsa')
             if b.get('mounted_date') or b.get('removed_date'):       # valideaza datele INAINTE de a crea setul
                 apply_dates(0, b)
-            S.OWN.run('insert into tire_sets(name, kind, brand, size, notes) values(?,?,?,?,?)', (name, str(b.get('kind') or '')[:20], str(b.get('brand') or '')[:60], str(b.get('size') or '')[:30], str(b.get('notes') or '')[:200]))
+            cur = S.OWN.run('insert into tire_sets(name, kind, brand, size, notes) values(?,?,?,?,?)', (name, str(b.get('kind') or '')[:20], str(b.get('brand') or '')[:60], str(b.get('size') or '')[:30], str(b.get('notes') or '')[:200]))
             if b.get('mounted_date'):
-                apply_dates(S.OWN.one('select max(id) m from tire_sets')['m'], b)
+                apply_dates(cur.lastrowid, b)
         return dict(ok=True)
 
     @S.route('POST', '/api/tires/check', pin=True, role='family')
@@ -254,8 +266,17 @@ def init(S):
         sid = int(b['set_id'])
         if not S.OWN.one('select 1 x from tire_sets where id=?', (sid,)):
             raise S.NotFound()
+        cd = day(b.get('date')) or dt.date.today().isoformat()
+        if cd < dt.date.today().isoformat():
+            try:
+                past = odometer_at(dt.date.fromisoformat(cd))
+            except Exception:  # noqa
+                past = None
+            cod = None if past is None else round(past)
+        else:
+            cod = odometer()
         S.OWN.run('insert into tire_checks(set_id, date, odometer, d_fl, d_fr, d_rl, d_rr, notes) values(?,?,?,?,?,?,?,?)',
-                  (sid, day(b.get('date')) or dt.date.today().isoformat(), odometer(), num(b.get('d_fl')), num(b.get('d_fr')), num(b.get('d_rl')), num(b.get('d_rr')), str(b.get('notes') or '')[:200]))
+                  (sid, cd, cod, num(b.get('d_fl')), num(b.get('d_fr')), num(b.get('d_rl')), num(b.get('d_rr')), str(b.get('notes') or '')[:200]))
         return dict(ok=True)
 
     def pressure_series(car, days):

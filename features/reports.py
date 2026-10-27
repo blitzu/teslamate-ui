@@ -42,7 +42,7 @@ def init(S):
         return dt.datetime.fromisoformat(iso).replace(tzinfo=dt.timezone.utc).astimezone(tz()).strftime('%Y-%m-%d')
 
     def charges_in(car, a, b):
-        rows = [r for r in S._charges_rows(car, 800, 0) if a <= r['start_date'] < b]
+        rows = [r for r in S._charges_rows(car, 5000, 0, None, dt.datetime.fromisoformat(str(a)), dt.datetime.fromisoformat(str(b))) if a <= r['start_date'] < b]
         if S.ha_ok() and S.HA['grid']:
             budget = 15
             for r in rows:

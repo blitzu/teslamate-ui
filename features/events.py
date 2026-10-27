@@ -19,6 +19,8 @@ def init(S):
             S.OWN.run('insert into events(ts, car, key, old, new) values(?,?,?,?,?)', (time.time(), car, key, None if old is None else str(old), None if new is None else str(new)))
 
     def on_audit(kind, **kw):
+        if kind in ('share', 'share_revoke'):                # crearea/retragerea unui link de locatie apare in jurnalul de comenzi
+            S.OWN.run('insert into cmd_log(ts, car, name, actor, ok, via, note) values(?,?,?,?,?,?,?)', (time.time(), None, kind, 'user:%s' % (kw.get('actor') or '?'), 1, 'app', 'toate' if kw.get('all') else ''))
         if kind == 'cmd':
             S.OWN.run('insert into cmd_log(ts, car, name, actor, ok, via, note) values(?,?,?,?,?,?,?)',
                       (time.time(), kw.get('car'), kw.get('name'), kw.get('actor', 'system'), 1 if kw.get('ok') else 0, kw.get('via'), (kw.get('note') or '')[:200]))
@@ -29,10 +31,13 @@ def init(S):
             cut = time.time() - KEEP_DAYS * 86400
             S.OWN.run('delete from events where ts < ?', (cut,))
             S.OWN.run('delete from cmd_log where ts < ?', (cut,))
-            try:
-                S.OWN.run('delete from alerts_log where ts < ?', (time.time() - 400 * 86400,))
-            except Exception:  # noqa
-                pass                                         # modulul de alerte lipseste
+            for sql, args in (('delete from alerts_log where ts < ?', (time.time() - 400 * 86400,)),
+                              ('delete from shares where expires < ?', (time.time() - 30 * 86400,)),
+                              ("delete from kv where k like 'handoff_warned_%' and ts < ?", (time.time() - 30 * 86400,))):
+                try:
+                    S.OWN.run(sql, args)
+                except Exception:  # noqa
+                    pass                                     # modulul sau tabelul lipseste
             time.sleep(3600 * 6)
 
     S.MQTT_HOOKS.append(on_mqtt)

@@ -135,6 +135,9 @@ def init(S):
             res.append(step('valet_off', car, dict(pin=pin)) if pin else dict(step='valet_off', ok=False, reason='fără PIN: dezactivează Valet din mașină'))
         if 'guest' in modes:
             res.append(step('guest_off', car))
+        failed = [x for x in res if not x['ok']]
+        if failed and not b.get('force'):                    # ceva nu s-a dezactivat (PIN gresit, masina adormita): predarea ramane deschisa ca sa poti reincerca
+            return dict(ok=False, can_force=True, steps=res, reason='Nu s-a putut dezactiva: ' + '; '.join('%s (%s)' % (x['step'], x.get('reason') or 'eșuat') for x in failed) + '. Reîncearcă (cu PIN-ul corect, după ce mașina se trezește) sau încheie forțat.')
         now = time.time()
         rep = report(car, cur['started'], now)
         S.OWN.run('update handoffs set ended=?, report=? where id=?', (now, json.dumps(rep), cur['id']))

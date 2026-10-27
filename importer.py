@@ -114,10 +114,11 @@ class Ctx:
         if r:
             self.addr_cache[k] = r[0]
             return r[0]
+        text = (text or '').strip() or None                       # text gol -> NULL (altfel locul apare cu numele "" in loc de "—")
         oid = -int(zlib.crc32(('%.4f,%.4f' % (lat, lon)).encode()))
         cur.execute("""insert into addresses (display_name, latitude, longitude, name, inserted_at, updated_at, osm_id, osm_type)
             values (%s,%s,%s,%s,now() at time zone 'utc',now() at time zone 'utc',%s,'node')
-            on conflict (osm_id, osm_type) do update set updated_at=now() at time zone 'utc' returning id, (xmax = 0)""", (text, lat, lon, text, oid))
+            on conflict (osm_id, osm_type) do update set updated_at=now() at time zone 'utc' returning id, (xmax = 0)""", (text or '—', lat, lon, text, oid))
         i, fresh = cur.fetchone()
         if fresh:
             self.ledger['addresses'].append(i)

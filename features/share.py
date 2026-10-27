@@ -81,9 +81,14 @@ def init(S):
 
     def blocked(ip):
         with lock:
-            d = bad[ip]
+            d = bad.get(ip)
+            if not d:
+                return False
             while d and d[0] < time.time() - 600:
                 d.popleft()
+            if not d:
+                bad.pop(ip, None)                              # nu pastram intrari goale pentru fiecare IP vazut
+                return False
             return len(d) >= 20
 
     def base():
@@ -157,6 +162,7 @@ def init(S):
 
     @S.route('POST', '/api/share/revoke', pin=True, role='user')
     def revoke(h, b):
+        S.audit('share_revoke', actor=getattr(h, 'role', None), all=bool(b.get('all')))
         if b.get('all'):
             S.OWN.run('update shares set revoked=1 where revoked=0')
         else:

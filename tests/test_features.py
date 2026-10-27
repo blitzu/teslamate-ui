@@ -787,8 +787,14 @@ class HandoffTests(unittest.TestCase):
         start(None, dict(valet=True, guest=True, minutes=30, pin4='1111'))
         self.cmds.clear()
         e = end(None, {})
-        self.assertTrue(e['manual'])
-        self.assertEqual([c[0] for c in self.cmds], ['guest_off'])             # valet nu se poate opri fara PIN
+        self.assertFalse(e['ok'])                                                # valet nu se poate opri fara PIN: predarea ramane deschisa
+        self.assertTrue(e['can_force'])
+        self.assertIsNotNone(S.OWN.one('select * from handoffs where ended is null'))
+        self.cmds.clear()
+        e = end(None, dict(force=True))
+        self.assertTrue(e['ok'] and e['manual'])
+        self.assertEqual([c[0] for c in self.cmds], ['guest_off'])
+        self.assertIsNone(S.OWN.one('select * from handoffs where ended is null'))
 
     def test_failed_commands_do_not_open_a_session(self):
         start, _ = S.route_lookup('POST', '/api/handoff/start')

@@ -58,8 +58,8 @@ def init(S):
             drives = [d for d in S.DEMO['drives']]
             charges = S.decorate([dict(c) for c in S.DEMO['charges']])
         else:
-            drives = [d for d in S.drives(car, 2000, 0) if d['start_date'] >= since]
-            charges = S.decorate(S._charges_rows(car, 1000, 0))
+            drives = S.drives(car, 5000, 0, dt.datetime.fromisoformat(since))
+            charges = S.charges(car, 3000, 0, None, dt.datetime.fromisoformat(since))
         trips = group(drives, charges, S.TRIP_GAP)
         return dict(gap_h=int(S.TRIP_GAP.total_seconds() // 3600), trips=trips)
 

@@ -121,7 +121,7 @@ def init(S):
             gprice = float(S.cget('price_grid', 'PRICE_GRID', '') or 0)
         except ValueError:
             gprice = 0
-        sess = [r for r in S._charges_rows(car, 800, 0) if r['start_date'] >= since and not r['dc'] and (r['power_max'] or 0) <= 25 and re.search(r'acas|home', r['name'] or '', re.I)]
+        sess = [r for r in S._charges_rows(car, 3000, 0, None, dt.datetime.fromisoformat(since)) if r['start_date'] >= since and not r['dc'] and (r['power_max'] or 0) <= 25 and re.search(r'acas|home', r['name'] or '', re.I)]
         if not sess:
             return dict(sessions=[], months=[], config=c, note='Nicio încărcare AC acasă în perioadă.')
         d0 = dt.datetime.fromisoformat(min(r['start_date'] for r in sess)).date() - dt.timedelta(days=1)

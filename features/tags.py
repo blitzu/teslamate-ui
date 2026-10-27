@@ -149,17 +149,17 @@ def init(S):
         if not ds and not tagged_ch:
             return dict(drives=[], charges=[], stops=[], summary=build([], [])[2], truncated=False)
         if not ds:
-            tagged_rows = S.decorate(S._charges_rows(car, 600, 0, None, None, None, list(tagged_ch)))
+            tagged_rows = S.charges(car, 600, 0, None, None, None, list(tagged_ch))
             keep, stops, summ = build([], tagged_rows, tagged_ch)
             return dict(drives=[], charges=[dict(id=c['id'], lat=c['lat'], lon=c['lon'], name=c['name'], start=c['start_date'], end=c['end_date'], kwh=c['charge_energy_added'], cost=c.get('cost_eff'),
                                                  dc=bool(c.get('dc'))) for c in keep if c.get('lat') is not None], stops=[], summary=summ, truncated=False)
         starts = [d['start_date'] for d in ds]
         t0 = S._dtp(min(starts)) - dt.timedelta(minutes=45) if ds else None
         t1 = S._dtp(max(d['end_date'] for d in ds)) + dt.timedelta(minutes=45) if ds else None
-        chs = S.decorate(S._charges_rows(car, 600, 0, None, t0, t1)) if ds else []
+        chs = S.charges(car, 600, 0, None, t0, t1) if ds else []
         if tagged_ch:
             have = {c['id'] for c in chs}
-            extra = [c for c in S.decorate(S._charges_rows(car, 600, 0, None, None, None, list(tagged_ch))) if c['id'] not in have]
+            extra = [c for c in S.charges(car, 600, 0, None, None, None, list(tagged_ch)) if c['id'] not in have]
             chs += extra
         keep, stops, summ = build(ds, chs, tagged_ch)
         per = max(40, MAX_POINTS // max(1, len(ds)))

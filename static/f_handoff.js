@@ -40,7 +40,8 @@ PAGES.handoff = {
     const end = v('ho_end');
     if (end) end.onclick = async (e) => {
       e.preventDefault(); say(X('Se încheie…', 'Ending…'), 'busy');
-      const [ok, j] = await pinPost('/api/handoff/end', { pin4: v('ho_pin').value });
+      let [ok, j] = await pinPost('/api/handoff/end', { pin4: v('ho_pin').value });
+      if (!ok && j.can_force && confirm((j.reason || '') + ' ' + X('Încheii oricum (dezactivezi manual din mașină)?', 'End it anyway (turn it off in the car yourself)?'))) [ok, j] = await pinPost('/api/handoff/end', { pin4: v('ho_pin').value, force: true });
       if (ok && j.ok) { if (j.manual) alert(X('Unele funcții trebuie oprite din mașină: ', 'Some features must be turned off in the car: ') + (j.steps || []).filter((s) => !s.ok).map((s) => s.step).join(', ')); render(); }
       else say('✗ ' + (j.reason || X('Eroare', 'Error')), 'bad');
     };
