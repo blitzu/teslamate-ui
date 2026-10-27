@@ -569,6 +569,68 @@ class PushTests(unittest.TestCase):
             urllib.request.urlopen = real
 
 
+class NotificationClearTests(unittest.TestCase):
+    def setUp(self):
+        self.calls = []
+        self.orig = (S.http, S.NHOOK, S.notify, dict(S.LA))
+        S.http = lambda url, data=None, **k: (self.calls.append(data) or (200, {}))
+        S.NHOOK = 'http://hook.test/x'
+        S.notify = REAL_NOTIFY
+        S.LIVE.clear()
+
+    def tearDown(self):
+        S.http, S.NHOOK, S.notify = self.orig[0], self.orig[1], self.orig[2]
+        S.LA.clear()
+        S.LA.update(self.orig[3])
+        S.LIVE.clear()
+
+    def clears(self):
+        time.sleep(0.3)
+        return sorted(c['tag'] for c in self.calls if c and c.get('clear'))
+
+    def test_unplugging_clears_plug_and_charge_done_notifications(self):
+        S.LIVE[1] = dict(plugged_in=False, battery_level=60)
+        S.notify_check(1, 'plugged_in', True, False)
+        self.assertEqual(self.clears(), ['tesla_charge_done', 'tesla_plugged'])
+
+    def test_door_notification_is_cleared_only_when_everything_is_closed(self):
+        S.LIVE[1] = dict(doors_open=False, trunk_open=True)
+        S.notify_check(1, 'doors_open', True, False)
+        self.assertEqual(self.clears(), [])                                                 # portbagajul e inca deschis
+        S.LIVE[1] = dict(doors_open=False, trunk_open=False)
+        S.notify_check(1, 'trunk_open', True, False)
+        self.assertEqual(self.clears(), ['tesla_door'])
+
+    def test_low_battery_is_tagged_ignores_zero_and_clears_on_recovery(self):
+        S.LIVE[1] = dict(battery_level=0, plugged_in=False, shift_state='P')
+        S.notify_check(1, 'battery_level', 25, 0)
+        time.sleep(0.3)
+        self.assertEqual([c for c in self.calls if c and c.get('kind') == 'low_batt'], [])  # 0% nu e o valoare reala
+        S.LIVE[1] = dict(battery_level=18, plugged_in=False, shift_state='P')
+        S.notify_check(1, 'battery_level', 22, 18)
+        time.sleep(0.3)
+        low = [c for c in self.calls if c and c.get('kind') == 'low_batt' and not c.get('clear')]
+        self.assertEqual((len(low), low[0]['data']['tag']), (1, 'tesla_low_batt'))
+        self.calls.clear()
+        S.LIVE[1] = dict(battery_level=30, plugged_in=True)
+        S.notify_check(1, 'battery_level', 18, 30)
+        self.assertEqual(self.clears(), ['tesla_low_batt'])
+
+    def test_reconcile_clears_only_what_is_no_longer_true(self):
+        S.LIVE[1] = dict(plugged_in=False, battery_level=60, doors_open=False, trunk_open=True, update_available=False)
+        S.notify_reconcile(1)
+        self.assertEqual(self.clears(), ['tesla_charge_done', 'tesla_low_batt', 'tesla_plugged', 'tesla_update'])      # portbagajul e deschis: usa ramane
+
+    def test_stale_live_card_is_cleared_once_after_a_restart(self):
+        S.LA.update(kind='unknown')
+        S.LIVE[1] = dict(battery_level=55, shift_state='P', plugged_in=False)                # nimic de aratat
+        S.la_sync(1)
+        self.assertEqual(self.clears(), ['tesla_status'])
+        self.calls.clear()
+        S.la_sync(1)
+        self.assertEqual(self.clears(), [])                                                 # a doua oara nu mai trimite nimic
+
+
 from features import share as SHR  # noqa: E402
 
 

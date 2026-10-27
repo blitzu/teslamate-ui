@@ -3,6 +3,13 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.5.2 - unreleased
+
+### Fixes
+- **Notifications on the phone now disappear when the event is over.** The "Cable connected", "Charging complete", "Opened while locked" / "Left open", "Low battery" and "Update available" notifications now carry a tag and are removed from the phone by themselves when the situation ends: cable unplugged, everything closed, battery back above 20 % or plugged in, update installed. This needs the notification automation in Home Assistant to handle `clear` (the example in `docs/notifications.md` already does).
+- **The iPhone Live Activity could stay on the Lock Screen forever** when the app restarted (an update, a reboot) while it was showing, or when you switched the Live Activity off in Settings while one was visible. The app now clears it on the first check after a restart if there is nothing to show, and when you switch it off. After a restart it also clears any state notification whose situation is no longer true.
+- A "Low battery" alert is no longer sent for a 0 % reading (not a real value).
+
 ## 1.5.1 - 2026-10-23
 
 ### New features

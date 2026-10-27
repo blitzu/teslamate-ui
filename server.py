@@ -2353,6 +2353,8 @@ def notify(kind, title, msg, data=None, log=True):
             data = {}
             if app_link(kind):
                 data['url'] = app_link(kind)                                # atingerea notificarii deschide aplicatia
+            if kind in STATE_KINDS:
+                data['tag'] = 'tesla_' + kind                                # poate fi inlocuita si stearsa automat cand evenimentul a trecut
             if KIND_ACTIONS.get(kind) and nset_load().get('actions', True):
                 data['actions'] = [dict(action=a, title=t) for a, t in KIND_ACTIONS[kind]]
                 data['tag'] = 'tesla_' + kind
@@ -2375,11 +2377,31 @@ def _once(kind, secs=90):
 OPEN_KEYS = {'doors_open': 'o ușă', 'trunk_open': 'portbagajul', 'frunk_open': 'frunk-ul', 'windows_open': 'un geam'}
 
 
+STATE_KINDS = ('plugged', 'charge_done', 'door', 'low_batt', 'update')       # notificari care descriu o stare: dispar singure cand starea trece
+
+
+def notify_clear_check(car, key, new):
+    """Sterge de pe telefon notificarile al caror eveniment a trecut: cablu scos, usa inchisa, baterie refacuta, update instalat."""
+    lv = LIVE.get(car, {})
+    if key == 'plugged_in' and new is False:
+        notify_clear('tesla_plugged', 'plugged')
+        notify_clear('tesla_charge_done', 'charge_done')
+    elif key in OPEN_KEYS and new is False and not any(lv.get(k) is True for k in OPEN_KEYS):
+        notify_clear('tesla_door', 'door')
+    elif key == 'battery_level' and isinstance(new, (int, float)) and new >= 20:
+        notify_clear('tesla_low_batt', 'low_batt')
+    elif key == 'update_available' and new is False:
+        notify_clear('tesla_update', 'update')
+    if key == 'plugged_in' and new is True:
+        notify_clear('tesla_low_batt', 'low_batt')
+
+
 def notify_check(car, key, old, new):
     if key in ('charging_state', 'plugged_in', 'battery_level', 'shift_state', 'doors_open', 'trunk_open', 'frunk_open', 'windows_open', 'locked', 'charge_limit_soc', 'time_to_full_charge'):
         la_poke(car)
     if old is None or old == new:
         return
+    notify_clear_check(car, key, new)
     lv = LIVE.get(car, {})
     nm = lv.get('display_name') or 'Tesla'
     st = nset_load()
@@ -2390,7 +2412,7 @@ def notify_check(car, key, old, new):
         notify('charge_done', '🔋 Încărcare terminată', '%s: baterie %s%%%s.' % (nm, soc if soc is not None else '?', ', limita %s%%' % lv['charge_limit_soc'] if lv.get('charge_limit_soc') else ''))
     elif key == 'update_available' and new is True and st['update'] and _once('update', 6 * 3600):
         notify('update', '⬇️ Update software disponibil', '%s: versiune nouă %s.' % (nm, lv.get('update_version') or ''))
-    elif key == 'battery_level' and isinstance(new, (int, float)) and new < 20 <= (old or 0) and st['low_batt'] and not lv.get('plugged_in') and lv.get('shift_state') in (None, 'P') and _once('low_batt', 12 * 3600):
+    elif key == 'battery_level' and isinstance(new, (int, float)) and 1 <= new < 20 <= (old or 0) and st['low_batt'] and not lv.get('plugged_in') and lv.get('shift_state') in (None, 'P') and _once('low_batt', 12 * 3600):
         notify('low_batt', '🪫 Baterie scăzută', '%s: baterie %s%% și nu e conectată la priză.' % (nm, new))
     elif key in OPEN_KEYS and new is True and st['door']:
         what = OPEN_KEYS[key]
@@ -2510,12 +2532,17 @@ def rule_clean(b):
 # ---------------------------------------------------------------- Live Activities iOS (prin webhook HA -> notify.mobile_app_*: live_update + tag)
 LA_TAG = 'tesla_status'
 SUP = str.maketrans('0123456789', '⁰¹²³⁴⁵⁶⁷⁸⁹')
-LA = dict(kind=None, sent=0.0, soc=None, since=0.0, timer=None)
+LA = dict(kind='unknown', sent=0.0, soc=None, since=0.0, timer=None)       # 'unknown' = dupa repornire nu stim ce arata telefonul: daca nu mai e nimic de aratat, il stergem o data
+
+
+def notify_clear(tag, kind='clear'):
+    """Cere telefonului sa stearga notificarea cu acest tag (automatizarea din HA o trece la clear_notification)."""
+    if NHOOK:
+        threading.Thread(target=lambda: http(NHOOK, dict(clear=True, tag=tag, kind=kind), timeout=10), daemon=True).start()
 
 
 def la_clear():
-    if NHOOK:
-        threading.Thread(target=lambda: http(NHOOK, dict(clear=True, tag=LA_TAG, kind='live'), timeout=10), daemon=True).start()
+    notify_clear(LA_TAG, 'live')
 
 
 def la_payload(car):
@@ -2563,12 +2590,17 @@ def la_payload(car):
 def la_sync(car=1):
     """Trimite/actualizeaza/inchide Live Activity-ul in functie de starea masinii (apelat dupa evenimente MQTT si periodic)."""
     st = nset_load()
-    if not (NHOOK and st.get('live')):
+    if not NHOOK:
+        return
+    if not st.get('live'):                                          # oprit din setari cat timp un card era afisat: il sterg
+        if LA['kind'] not in (None, 'cleared'):
+            la_clear()
+            LA.update(kind=None, soc=None)
         return
     now = time.time()
     pl = la_payload(car)
     if pl is None:
-        if LA['kind'] not in (None, 'cleared'):
+        if LA['kind'] not in (None, 'cleared'):                    # inclusiv 'unknown' (dupa repornire)
             la_clear()
         LA.update(kind=None, soc=None)
         return
@@ -2605,12 +2637,33 @@ def la_poke(car):
     LA['timer'].start()
 
 
+def notify_reconcile(car):
+    """O data dupa pornire: sterge de pe telefon notificarile de stare ramase de dinainte (repornire, cablu scos cat aplicatia era oprita etc.), daca starea lor nu mai e adevarata."""
+    lv = LIVE.get(car, {})
+    if not lv:
+        return
+    if lv.get('plugged_in') is False:
+        notify_clear('tesla_plugged', 'plugged')
+        notify_clear('tesla_charge_done', 'charge_done')
+    if not any(lv.get(k) is True for k in OPEN_KEYS):
+        notify_clear('tesla_door', 'door')
+    soc = lv.get('battery_level')
+    if (isinstance(soc, (int, float)) and soc >= 20) or lv.get('plugged_in') is True:
+        notify_clear('tesla_low_batt', 'low_batt')
+    if lv.get('update_available') is False:
+        notify_clear('tesla_update', 'update')
+
+
 def la_loop():
+    reconciled = False
     while True:
         time.sleep(45)
         try:
             for c in list(LIVE):
                 la_sync(c)
+                if not reconciled and NHOOK and LIVE.get(c):
+                    notify_reconcile(c)
+                    reconciled = True
         except Exception as e:  # noqa
             log('live loop:', e, flush=True)
 
