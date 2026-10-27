@@ -159,6 +159,7 @@ const STATE = { online: 'Online', asleep: 'Doarme', offline: 'Offline', charging
 function pageCar() {
   const c = cur(); if (!c) return '<div class="empty">Nicio mașină</div>';
   const L = c.live || {};
+  const v34 = !!c.image34 && lsGet('car_view', 'top') === '34';
   const driving = L.state === 'driving' || (L.shift_state && L.shift_state !== 'P');
   const charging = L.state === 'charging' || L.charging_state === 'Charging';
   const soc = L.usable_battery_level ?? L.battery_level, lim = L.charge_limit_soc;
@@ -191,8 +192,8 @@ function pageCar() {
   return `
 <div class="top row"><div><h1>${esc(c.name || L.display_name || 'Tesla')}</h1><small>${esc(c.marketing_name || ('Model ' + (c.model || '')))}${c.trim && !/^\d+$/.test(c.trim) ? ' · ' + esc(c.trim) : ''}${age ? ' · ' + age : ''}</small></div><div class="sp"></div>${S.demo ? '<span class="pill demo">DEMO</span>' : ''}<span class="pill ${pc}">${esc(st)}</span></div>
 <div class="card" style="margin-top:12px">
-  <div class="stage photo ${c.image === '/car.png' ? 'top' : ''} ${charging ? 'chg' : ''}" id="stage">${c.image ? `<div class="cw"><img src="${esc(c.image)}" alt="">${c.image === '/car.png' ? openPhoto(L, (S.opens || {})[c.id]) : ''}</div>` : carSvg(L)}${c.image === '/car.png' ? ['fl', 'fr', 'rl', 'rr'].map((k) => { const v = L['tpms_pressure_' + k]; return `<span class="tw ${k} ${v != null && v < 2.5 ? 'low' : ''}">${v == null ? '—' : nf(v, 1)}<small>bar</small></span>`; }).join('') : ''}</div>
-  <div class="tpr ${c.image === '/car.png' ? 'hide' : ''}">${['fl', 'fr', 'rl', 'rr'].map((k, i) => { const v = L['tpms_pressure_' + k]; return `<span class="${v != null && v < 2.5 ? 'low' : ''}"><i>${['Față stânga', 'Față dreapta', 'Spate stânga', 'Spate dreapta'][i]}</i><b>${v == null ? '—' : nf(v, 1)}</b> bar</span>`; }).join('')}</div>
+  ${carViewSwitch(c, v34)}<div class="stage photo ${v34 ? 'v34' : c.image === '/car.png' ? 'top' : ''} ${charging ? 'chg' : ''}" id="stage">${v34 ? carView34(c, L) : c.image ? `<div class="cw ${carStateClass(L)}"><img src="${esc(c.image)}" alt="">${c.image === '/car.png' ? openPhoto(L, (S.opens || {})[c.id]) : ''}</div>` : carSvg(L)}${!v34 && c.image === '/car.png' ? ['fl', 'fr', 'rl', 'rr'].map((k) => { const v = L['tpms_pressure_' + k]; return `<span class="tw ${k} ${v != null && v < 2.5 ? 'low' : ''}">${v == null ? '—' : nf(v, 1)}<small>bar</small></span>`; }).join('') : ''}</div>
+  <div class="tpr ${c.image === '/car.png' && !v34 ? 'hide' : ''}">${['fl', 'fr', 'rl', 'rr'].map((k, i) => { const v = L['tpms_pressure_' + k]; return `<span class="${v != null && v < 2.5 ? 'low' : ''}"><i>${['Față stânga', 'Față dreapta', 'Spate stânga', 'Spate dreapta'][i]}</i><b>${v == null ? '—' : nf(v, 1)}</b> bar</span>`; }).join('')}</div>
   <div class="row" style="align-items:flex-end;margin-top:4px"><div class="pct">${nf(soc)}<small>%</small></div><div class="rng"><b>${nf(range)}</b> km autonomie</div></div>
   <div class="bar"><div class="fill ${socCls(soc)} ${charging ? 'chg' : ''}" style="width:${Math.max(0, Math.min(100, soc || 0))}%"></div>${lim ? `<div class="lim" style="left:calc(${Math.min(100, lim)}% - 1px)"></div>` : ''}</div>
   <div class="sub"><span>${charging ? tr('Se încarcă') + (L.charger_power ? ' · ' + nf(L.charger_power, 1) + ' kW' : '') : ''}</span><span>${lim ? tr('Limită ') + nf(lim) + '%' : ''}</span></div>
@@ -234,8 +235,9 @@ async function afterCar() {
   drawMap($('#map'), c.live || {});
   renderCmds();
   refreshOpenings(c);
+  document.querySelectorAll('[data-cv]').forEach((b) => b.onclick = () => { lsSet('car_view', b.dataset.cv); render(); });
   const im = $('#stage img');
-  if (im) im.onerror = () => { $('#stage').classList.remove('photo'); $('#stage').innerHTML = carSvg(c.live || {}); };
+  if (im) im.onerror = () => { if ($('#stage .cw34')) { lsSet('car_view', 'top'); render(); return; } $('#stage').classList.remove('photo'); $('#stage').innerHTML = carSvg(c.live || {}); };
   try {
     const [d, ch] = await Promise.all([api('/api/drives?car=' + c.id + '&limit=1'), api('/api/charges?car=' + c.id + '&limit=1')]);
     const parts = [];

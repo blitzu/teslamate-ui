@@ -3,6 +3,16 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.5.4 - 2026-10-27
+
+### Fixes
+- **"Update now" and "Check now" did nothing on a fresh install.** Every button in Settings that sends a request needs the app PIN, and until you set one the app answered *"PIN wrong or not configured"* — so anyone who had not created a PIN could not update from the app (the updater itself works: tested from 1.5.2 to 1.5.3 with the published images). Both buttons now work for the administrator while no PIN is set; once a PIN exists they ask for it like every other command.
+
+### New features
+- **The car picture now shows more of the car's state.** On the top-down photo the app draws, live and animated: **Sentry** (red rings pulsing around the car), **charging** (glow on the charge port and a cable running out of the car, with a green flow while charging and a calm green when complete, grey when only plugged in; an orange ring when the flap is open without a cable), **climate** (warm or cool waves in the cabin depending on the outside temperature), **front/rear defrost**, **Dog / Camp mode** glyph, and the whole picture dimmed while the car **sleeps** (with "z z"; TeslaMate's `offline` counts as sleeping, like the "Asleep for…" card), with a blue ring while **updating**. Doors, frunk, trunk and windows keep opening on the real photo as before.
+- **3/4 view of the car (Model 3 Highland and Model Y Juniper).** A **Top / 3/4** switch above the car picture shows Tesla's real front-left three-quarter render of your car (body, paint, wheels) with the state drawn on it: the hood, the left doors and the trunk are highlighted when open (a note appears for right-side doors, which are on the far side), a dashed line along the windows when one is open, Sentry rings on the ground, the charge port glow and a cable, climate waves above the roof, Dog/Camp glyph, "z z" and a dimmed car while it sleeps, an update ring, and pressure badges on the two visible wheels (all four are listed below). The choice is remembered on the device. If the image cannot be loaded, the app goes back to the top view. **These pictures are Tesla's, loaded by your browser from Tesla's servers, so the published version is off by default: set `TESLA_RENDERS=1` in `.env` to turn the 3/4 view on** (only Model 3 Highland and Model Y Juniper are supported; nothing is sent to Tesla otherwise).
+- **Better stand-in picture when there is no `car.png`:** for a **Model 3 Highland** and a **Model Y Juniper** the app now asks Tesla's configurator for the current body, base wheels and your paint (Pearl White, Stealth Grey, Quicksilver and Ultra Red for the 3; those plus Solid Black and Deep Blue for the Y), already cropped to the car. Other paints fall back to the nearest valid one; other models keep the old picture. The old request returned the pre-2024 Model 3.
+
 ## 1.5.3 - 2026-10-27
 
 ### New features

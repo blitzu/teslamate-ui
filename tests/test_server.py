@@ -129,6 +129,22 @@ class Pure(Isolated):
         for ip in ('8.8.8.8', '2a00:1450::1', '::ffff:8.8.8.8', 'nu-e-ip'):
             self.assertFalse(peer(ip), ip)
 
+    def test_compositor_url_highland_and_juniper(self):
+        old = os.environ.get('TESLA_RENDERS')
+        os.environ['TESLA_RENDERS'] = '1'
+        self.addCleanup(lambda: os.environ.pop('TESLA_RENDERS', None) if old is None else os.environ.__setitem__('TESLA_RENDERS', old))
+        u = S.compositor_url(dict(model='3', color='PearlWhite'))
+        self.assertIn('options=$MT367,$PPSW,$W38C,$IBB8', u)
+        self.assertIn('view=STUD_FRONT34&model=m3', u)
+        self.assertIn('crop=1200,700,370,230', u)
+        self.assertIn('$PR01', S.compositor_url(dict(model='3', color='RedMulticoat')))
+        self.assertIn('$PBSB', S.compositor_url(dict(model='Y', color='SolidBlack')))
+        self.assertIn('view=FRONT34&model=my', S.compositor_url(dict(model='y', color='PearlWhite')))
+        self.assertIn('$PN01', S.compositor_url(dict(model='3', color='MidnightSilver')))        # culoare fara cod valid: cea mai apropiata
+        self.assertIsNone(S.compositor_url(dict(model='S', color='PearlWhite')))
+        os.environ['TESLA_RENDERS'] = '0'
+        self.assertIsNone(S.compositor_url(dict(model='3', color='PearlWhite')))                  # oprit: nicio cerere catre Tesla
+
     def test_run_command_norepeat(self):
         calls = []
         S._run_command = lambda car, name, arg=None: (calls.append(name) or dict(ok=True))
@@ -252,6 +268,14 @@ class HttpOpen(Isolated):
         self.assertEqual(st, 200)
         self.assertTrue(json.loads(d)['lan_open'])
         self.assertEqual(req('GET', '/api/state', headers={'X-Forwarded-For': '1.2.3.4'})[0], 401)
+
+    def test_update_buttons_work_before_a_pin_is_set(self):
+        st, d, _ = req('POST', '/api/update/check', body=b'{}', headers={'Content-Type': 'application/json'})
+        self.assertEqual(st, 200)                                                           # inainte: 403 "PIN gresit sau neconfigurat" pe o instalare noua
+        st, d, _ = req('POST', '/api/update/apply', body=b'{}', headers={'Content-Type': 'application/json'})
+        self.assertEqual(st, 200)
+        self.assertIn('updater', json.loads(d)['reason'])                                   # nu exista updater in test: mesajul vine de la updater, nu de la PIN
+        self.assertEqual(req('POST', '/api/rules', body=b'{}', headers={'Content-Type': 'application/json'})[0], 403)      # restul comenzilor cer in continuare PIN
 
     def test_db_down_is_503_not_demo(self):
         self.assertEqual(req('GET', '/api/drives')[0], 503)

@@ -2939,6 +2939,26 @@ def has_cars():
     return v
 
 
+# Model 3 "Highland" (2024+) si Model Y "Juniper" (2025+): codurile actuale din configuratorul Tesla (caroserie, jante de baza, interior, vedere 3/4).
+# Doar codurile care raspund (altfel serverul Tesla da 412); culorile fara cod valid cad pe cea mai apropiata.
+COMPOSITOR = {
+    '3': dict(model='m3', base='$MT367', wheel='$W38C', interior='$IBB8', view='STUD_FRONT34',
+              paints={'PearlWhite': '$PPSW', 'StealthGrey': '$PN01', 'Quicksilver': '$PN00', 'RedMulticoat': '$PR01'}, fallback='$PN01'),
+    'Y': dict(model='my', base='$MTY61', wheel='$WY18P', interior='$IBB6', view='FRONT34',
+              paints={'PearlWhite': '$PPSW', 'SolidBlack': '$PBSB', 'DeepBlue': '$PPSB', 'DeepBlueMetallic': '$PPSB', 'StealthGrey': '$PN01', 'Quicksilver': '$PN00', 'RedMulticoat': '$PR01'}, fallback='$PN01'),
+}
+
+
+def compositor_url(c, view=None):
+    """Poza 3/4 a masinii de la configuratorul Tesla (decupata pe masina), pentru Model 3 / Model Y; None pentru restul modelelor."""
+    k = COMPOSITOR.get(str(c.get('model') or '').upper())
+    if not k or os.environ.get('TESLA_RENDERS', '0') != '1':           # 0 = nu cerem imagini de la Tesla (implicit in versiunea publica)
+        return None
+    paint = k['paints'].get(str(c.get('color') or ''), k['fallback'])
+    return ('https://static-assets.tesla.com/configurator/compositor?context=design_studio_2&options=%s,%s,%s,%s&view=%s&model=%s&size=1920&bkba_opt=1&crop=1200,700,370,230&overlay=0&'
+            % (k['base'], paint, k['wheel'], k['interior'], view or k['view'], k['model']))
+
+
 def car_image(c):
     """Imaginea masinii e servita la /car.png: /data/car.png (a utilizatorului), apoi static/car.png, apoi desenul generic car-default.svg."""
     return '/car.png'
@@ -2976,10 +2996,11 @@ def api_state():
                 c['sleep'] = None
             c['live'] = lv
             c['image'] = car_image(c)
+            c['image34'] = compositor_url(c) if not os.environ.get('CAR_OPTIONS') else None                 # vederea 3/4 (Model 3 / Y)
             c['live_age'] = (time.time() - LIVE_TS[c['id']]) if c['id'] in LIVE_TS else None
             out.append(c)
         return dict(demo=False, cars=out, links=LINKS, mqtt=bool(LIVE), lan_open=not AUTH['pw'] and not DEMO_ONLY, currency=CURRENCY, app=app_brief())
-    return dict(demo=True, public_demo=DEMO_ONLY, cars=[dict(DEMO_CAR, live=DEMO_LIVE, live_age=0, image=car_image(DEMO_CAR), sleep=DEMO_SLEEP)],
+    return dict(demo=True, public_demo=DEMO_ONLY, cars=[dict(DEMO_CAR, live=DEMO_LIVE, live_age=0, image=car_image(DEMO_CAR), image34=compositor_url(DEMO_CAR), sleep=DEMO_SLEEP)],
                 links=({} if DEMO_ONLY else LINKS), mqtt=False, db_error=(cl is None and not DEMO_ONLY), lan_open=not AUTH['pw'] and not DEMO_ONLY, currency=CURRENCY, app=app_brief())
 
 
@@ -3393,7 +3414,9 @@ class H(BaseHTTPRequestHandler):
                 return self.send_json(dict(ok=ok, reason=err, config=cfg_public()) if ok else dict(ok=False, reason=err), 200 if ok else 400)
             if self.role == 'viewer':
                 return self.send_json(dict(ok=False, reason='Nu ai permisiunea pentru această acțiune (rol: viewer).'), 403)
-            pok, why, pcode = self.pin_check()
+            # Actualizarea din aplicatie merge si cat timp nu ai setat inca un PIN (administratorul e deja verificat mai sus); cu PIN setat se cere ca oricare alta comanda.
+            pin_free = u.path in ('/api/update/check', '/api/update/apply') and not FL['pin'] and self.role == 'admin'
+            pok, why, pcode = (True, '', 200) if pin_free else self.pin_check()
             if not pok:
                 return self.send_json(dict(ok=False, reason=why), pcode)
             if r and r[1]['pin']:
