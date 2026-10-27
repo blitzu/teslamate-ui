@@ -54,7 +54,7 @@ It uses the same webhook: payloads with a `data` object carry `live_update`, `ta
 ```yaml
 actions:
   - choose:
-      - conditions: "{{ trigger.json.clear | default(false) }}"
+      - conditions: "{{ trigger.json['clear'] | default(false) }}"
         sequence:
           - action: notify.mobile_app_YOUR_PHONE
             data:
@@ -68,6 +68,8 @@ actions:
           message: "{{ trigger.json.message | default('') }}"
           data: "{{ trigger.json.data | default({}) }}"
 ```
+
+**Important:** write `trigger.json['clear']`, not `trigger.json.clear`. In Home Assistant templates `.clear` on a dictionary is the dictionary's own `clear()` method, so the condition is never true and the Live Activity (and the notifications below) would stay on the phone forever. Versions of this page before v1.5.2 showed the dotted form; if you copied it, change it now.
 
 Toggle it in the app (Notifications → *iPhone Live Activity*, and *while driving*). Apple limits activities to 8 hours and throttles frequent updates.
 
