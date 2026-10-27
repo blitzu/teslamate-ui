@@ -257,6 +257,45 @@ class AlertsTests(unittest.TestCase):
         self.assertIn('fierbinte', self.sent[0][1])                                 # doar cea critica a trecut
         self.assertEqual(len(S.OWN.rows('select * from alerts_log')), 2)            # ambele sunt in jurnal
 
+    def test_quiet_hours_do_not_consume_the_cooldown(self):
+        S.OWN.kv_set('alerts_cfg', {'quiet': {'on': True, 'start': '23:00', 'end': '07:00'}})
+        S.LIVE[1] = dict(tpms_pressure_fl=2.0)
+        self.E.tick(now=1000, now_dt=dt.datetime(2026, 10, 23, 23, 30))
+        self.assertEqual(self.sent, [])                                             # retinuta de orele de liniste
+        self.E.tick(now=1000 + 660, now_dt=dt.datetime(2026, 10, 23, 23, 41))
+        self.assertEqual(self.sent, [])
+        self.E.tick(now=1000 + 1320, now_dt=dt.datetime(2026, 10, 24, 7, 5))        # dupa liniste: trimisa, nu pierduta 24 h
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(len(S.OWN.rows('select * from alerts_log')), 1)            # jurnalizata o singura data
+        self.E.tick(now=1000 + 1400, now_dt=dt.datetime(2026, 10, 24, 7, 6))
+        self.assertEqual(len(self.sent), 1)                                         # acum cooldown-ul e activ
+
+    def test_globally_disabled_alerts_send_and_log_nothing(self):
+        S.OWN.kv_set('alerts_cfg', {'enabled': False})
+        self.assertFalse(self.E.fire('tire_leak', 'T', 'm'))
+        self.assertEqual((self.sent, S.OWN.rows('select * from alerts_log')), ([], []))
+        self.assertTrue(self.E.fire('test', 'T', 'm'))                              # testul manual merge oricum
+
+    def test_plugged_not_charging_ignores_a_stop_you_just_sent(self):
+        S.LIVE[1] = dict(plugged_in=True, charging_state='Stopped', battery_level=30, charge_limit_soc=80)
+        S.OWN.run("insert into cmd_log(ts, car, name, actor, ok) values(?,?,?,?,?)", (time.time() - 1800, 1, 'charge_stop', 'user:admin', 1))
+        self.E.tick(now=time.time())
+        self.E.tick(now=time.time() + 3600)
+        self.assertEqual(self.sent, [])
+
+    def test_rain_is_retried_after_quiet_hours(self):
+        S.OWN.kv_set('alerts_cfg', {'quiet': {'on': True, 'start': '23:00', 'end': '07:00'}})
+        S.LIVE[1] = dict(windows_open=True, latitude=45.0, longitude=25.0)
+        orig = S._get_text
+        S._get_text = lambda url, t=15: '{"current":{"precipitation":1.0},"hourly":{"precipitation":[1.0]}}'
+        try:
+            self.E.tick(now=1000, now_dt=dt.datetime(2026, 10, 23, 23, 30))
+            self.assertEqual(self.sent, [])
+            self.E.tick(now=1000 + 700, now_dt=dt.datetime(2026, 10, 24, 7, 10))
+        finally:
+            S._get_text = orig
+        self.assertEqual(len(self.sent), 1)
+
     def test_rain_with_open_window(self):
         S.LIVE[1] = dict(windows_open=True, latitude=44.43, longitude=26.1)
         S._get_text = lambda url, timeout=20: '{"current": {"precipitation": 0.0}, "hourly": {"precipitation": [0.0, 0.8]}}'
@@ -1025,7 +1064,8 @@ class ChargingStatsTests(unittest.TestCase):
         self.assertEqual(dc['used'], 53.0)                                                                           # fara kWh consumati: se iau cei adaugati
         self.assertEqual(r['dc_share'], 83)
         self.assertEqual([x['n'] for x in r['start_hist']['dc']][:2], [1, 1])                                        # 8% -> 0-10, 10% -> 10-20
-        self.assertEqual(r['end_hist']['dc'][7]['n'], 1)                                                             # 80% -> 70-80
+        self.assertEqual(r['end_hist']['dc'][8]['n'], 1)                                                             # 80% -> 80-90 (la fel ca la start)
+        self.assertEqual(dc['efficiency'], 91)                                                                       # 30/33: sesiunea fara kWh consumati nu umfla eficienta
         self.assertEqual(r['end_hist']['dc'][9]['n'], 1)                                                             # 100% intra in 90-100
         self.assertEqual([m['month'] for m in r['months']], ['2026-09', '2026-10'])
         self.assertEqual(r['months'][1]['dc'], 50.0)
@@ -1033,6 +1073,42 @@ class ChargingStatsTests(unittest.TestCase):
     def test_empty(self):
         r = CS.summarize([])
         self.assertEqual((r['kinds']['dc']['n'], r['dc_share'], r['kinds']['ac']['avg_kw']), (0, None, None))
+
+
+class AuditFixesTests(unittest.TestCase):
+    def test_short_interval_is_not_soon_right_after_service(self):
+        today = dt.date(2026, 3, 1)
+        it = dict(interval_km=None, interval_months=1, last_date='2026-02-28', last_km=None)
+        self.assertEqual(SV.due(it, None, today)['status'], 'ok')                                  # a trecut 1 zi dintr-o luna
+        it2 = dict(interval_km=None, interval_months=12, last_date='2025-03-20', last_km=None)
+        self.assertEqual(SV.due(it2, None, today)['status'], 'soon')                               # 19 zile din 365
+
+    def test_ice_has_no_negative_saving_without_a_fuel_price(self):
+        r = S.ice_calc([dict(day='2026-10-01', km=100)], 15, 10, 15, l100=7.0, book=[], manual=0)
+        self.assertIsNone(r['saving'])
+
+    def test_share_keeps_home_hidden_when_the_geofence_blinks_out(self):
+        sh = dict(id=77, label='', expires=time.time() + 3600, hide_home=1, show_dest=0)
+        at = dict(latitude=44.1, longitude=26.1, geofence='Acasă', shift_state=None)
+        SHR.view(sh, at, now=1000)
+        gone = dict(at, geofence=None)                                                   # MQTT "nil" cateva secunde
+        self.assertNotIn('lat', SHR.view(sh, gone, now=1060))
+        self.assertIn('lat', SHR.view(sh, gone, now=1000 + 400))                         # dupa cateva minute chiar a plecat
+
+    def test_journey_for_a_tag_that_has_only_charges(self):
+        ch = [dict(id=5, start_date='2026-10-01T10:00:00', end_date='2026-10-01T11:00:00', charge_energy_added=12.0, cost_eff=7.5),
+              dict(id=6, start_date='2026-10-02T10:00:00', end_date='2026-10-02T11:00:00', charge_energy_added=9.0, cost_eff=1.0)]
+        keep, stops, summ = TG.build([], ch, {5})
+        self.assertEqual(([c['id'] for c in keep], stops, summ['charges'], summ['charged_kwh'], summ['cost']), ([5], [], 1, 12.0, 7.5))
+
+    def test_zone_pattern_drops_empty_alternatives(self):
+        r = ZN.clean(dict(name='x', kind='enter', pattern='Acasă| |'))
+        self.assertEqual(r['pattern'], 'Acasă')
+
+    def test_rule_clean_rejects_impossible_times(self):
+        with self.assertRaises(ValueError):
+            S.rule_clean(dict(type='depart_climate', time='25:70'))
+        self.assertEqual(S.rule_clean(dict(type='depart_climate', time='07:30'))['time'], '07:30')
 
 
 class TyreDatesTests(unittest.TestCase):
@@ -1070,6 +1146,14 @@ class TyreDatesTests(unittest.TestCase):
         self.assertEqual((r['Iarna']['removed_date'], r['Iarna']['removed_km'], r['Vara']['removed_date']), ('2025-10-02', 9000.0, None))
         km = {s['name']: s['km'] for s in self.tires(None, {})['sets']}
         self.assertEqual((km['Iarna'], km['Vara']), (4000, 3000))                                      # Vara: 12000 acum - 9000
+
+    def test_retroactive_set_closes_an_earlier_open_set_even_when_a_later_one_exists(self):
+        self.set(None, dict(action='add', name='A', mounted_date='2025-01-02'))                        # ramane deschis
+        self.set(None, dict(action='add', name='C', mounted_date='2025-10-02'))                        # inchide A la 2 oct
+        S.OWN.run("update tire_sets set removed_date=null, removed_km=null where name='A'")            # simulam A deschis, apoi adaugam B in trecut
+        self.set(None, dict(action='add', name='B', mounted_date='2025-06-02'))
+        r = self.rows()
+        self.assertEqual((r['A']['removed_date'], r['B']['removed_date']), ('2025-06-02', '2025-10-02'))
 
     def test_a_set_mounted_in_the_past_ends_where_the_next_one_starts(self):
         self.set(None, dict(action='add', name='Nou', mounted_date='2025-10-02'))

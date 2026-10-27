@@ -81,7 +81,7 @@ def init(S):
             by_day[k] = by_day.get(k, 0) + (d['distance'] or 0)
         ice = S.ice_calc([dict(day=k, km=v) for k, v in sorted(by_day.items())], kwh_d, cost, kwh_c) if by_day else dict(enabled=False)
         longest = max(drives, key=lambda d: d['distance'] or 0) if drives else None
-        eff = [d for d in drives if d['kwh'] and (d['distance'] or 0) >= 10]
+        eff = [d for d in drives if d['kwh'] and d['kwh'] > 0 and (d['distance'] or 0) >= 10]
         best = min(eff, key=lambda d: d['kwh'] / d['distance']) if eff else None
         pw = S.q('select max(ch.charger_power) p from charges ch join charging_processes cp on cp.id = ch.charging_process_id where cp.car_id=%s and cp.start_date >= %s and cp.start_date < %s', (car, a, b))
         return dict(start=start.isoformat(), end=(end - dt.timedelta(days=1)).isoformat(), drives=len(drives), km=round(km, 1), kwh=round(kwh_d, 1), wh_km=round(kwh_d * 1000 / km_e) if km_e > 20 else None,
@@ -96,9 +96,9 @@ def init(S):
         if days > 60:
             return None
         try:
-            rep = S.sleep_report(car, days)
+            rep = S.sleep_report(car, days, full=True)
             a, b = to_utc(start), to_utc(end)
-            rows = [i for i in rep['idle'] if a <= i['start'] < b and i.get('kwh') is not None]
+            rows = [i for i in rep['idle_all'] if a <= i['start'] < b and i.get('kwh') is not None]
             return round(sum(i['kwh'] for i in rows), 1) if rows else None
         except Exception as e:  # noqa
             S.log('raport scurgere repaus: %s' % e)
@@ -154,11 +154,16 @@ def init(S):
                 L.append('↔ față de perioada anterioară: ' + ', '.join(cmp))
         return title, '\n'.join(L)
 
+    def prev_range(kind, a, b):
+        """Perioada de comparatie: saptamana de dinainte, respectiv LUNA calendaristica de dinainte (nu \"aceeasi durata\": lunile au 28-31 de zile)."""
+        if kind == 'month':
+            return (a - dt.timedelta(days=1)).replace(day=1), a
+        return a - (b - a), a
+
     def generate(kind, send=False, car=1, today=None):
         a, b = period(kind, today)
         r = core(car, a, b)
-        span = (b - a)
-        prev = core(car, a - span, a) if kind != 'year' else None
+        prev = core(car, *prev_range(kind, a, b)) if kind != 'year' else None
         drain = idle_drain(car, a, b)
         title, body = text(kind, r, prev, drain)
         data = dict(report=r, previous=prev, drain=drain)
@@ -181,17 +186,18 @@ def init(S):
                 now = dt.datetime.now()
                 c = cfg()
                 last = S.OWN.kv_get('reports_last', {}) or {}
-                if now.hour >= int(c['hour']) and S.has_cars():
-                    wk = '%d-W%02d' % now.isocalendar()[:2]
-                    if c['weekly'] and now.weekday() == 0 and last.get('weekly') != wk:
-                        last['weekly'] = wk
-                        S.OWN.kv_set('reports_last', last)
+                wk, mo = '%d-W%02d' % now.isocalendar()[:2], now.strftime('%Y-%m')
+                if not last:                                           # prima rulare: nu genera acum rapoarte "restante", incepe de la urmatoarea saptamana/luna
+                    S.OWN.kv_set('reports_last', {'weekly': wk, 'monthly': mo})
+                elif now.hour >= int(c['hour']) and S.has_cars():
+                    if c['weekly'] and last.get('weekly') != wk:       # luni, sau prima verificare dupa o zi ratata (aplicatia oprita)
                         generate('week', send=True)
-                    mo = now.strftime('%Y-%m')
-                    if c['monthly'] and now.day == 1 and last.get('monthly') != mo:
+                        last['weekly'] = wk
+                        S.OWN.kv_set('reports_last', last)             # se noteaza DOAR dupa succes: o eroare trecatoare se reincearca
+                    if c['monthly'] and last.get('monthly') != mo:
+                        generate('month', send=True)
                         last['monthly'] = mo
                         S.OWN.kv_set('reports_last', last)
-                        generate('month', send=True)
             except Exception as e:  # noqa
                 S.log('rapoarte: %s' % e)
             time.sleep(600)

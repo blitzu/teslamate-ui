@@ -42,8 +42,8 @@ services:
       - ./fleet/tls-cert.pem:/fleet/tls-cert.pem:ro        # the UI never mounts the private keys (only the proxy does)
       - ./data:/data          # OAuth tokens, notification settings, optional car.png
     ports:
-      - "${UI_PORT:-4100}:4100"        # the app (LAN). Do NOT expose this port to the internet without protection.
-      - "${PUBLIC_PORT:-4101}:4101"    # public listener: ONLY Tesla's public key + OAuth callback (point your HTTPS domain here)
+      - "${UI_BIND:-0.0.0.0}:${UI_PORT:-4100}:4100"        # the app (LAN). Do NOT expose this port to the internet without protection. UI_BIND=127.0.0.1 keeps it on this host only.
+      - "${PUBLIC_PORT:-4101}:4101"    # public listener: Tesla's public key, the OAuth callback and live-location share links (/share/<token>); point your HTTPS domain here
     networks:
       - default
       - teslamate
@@ -62,6 +62,7 @@ services:
     security_opt:
       - no-new-privileges:true
     cap_drop: [ALL]
+    cap_add: [DAC_READ_SEARCH]       # setup.sh makes the private keys mode 600 and owned by whoever ran it; root without this capability could not read them
     mem_limit: 256m
     pids_limit: 128
     logging:
@@ -91,6 +92,7 @@ services:
       driver: json-file
       options: {max-size: "10m", max-file: "3"}
     environment:
+      APP_UID: ${APP_UID:-10001}                     # the token file is handed to the app user so the UI can read it
       UPDATER_AUTO_HOURS: ${UPDATER_AUTO_HOURS:-0}   # 0 = only when you press the button (default); e.g. 24 = also update by itself once a day
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

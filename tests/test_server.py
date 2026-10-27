@@ -130,8 +130,10 @@ class Versioning(unittest.TestCase):
         S.notify = lambda kind, title, msg, data=None, log=True: self.sent.append((kind, title))
 
     def test_ver_tuple_and_newer(self):
-        self.assertEqual(S.ver_tuple('v1.2.3'), (1, 2, 3))
-        self.assertEqual(S.ver_tuple('1.10'), (1, 10, 0))
+        self.assertEqual(S.ver_tuple('v1.2.3')[:3], (1, 2, 3))
+        self.assertEqual(S.ver_tuple('1.10')[:3], (1, 10, 0))
+        self.assertLess(S.ver_tuple('1.6.0-rc1'), S.ver_tuple('1.6.0'))                # un release candidate nu e la fel cu versiunea finala
+        self.assertEqual(S.ver_tuple('1.6.0-private'), S.ver_tuple('1.6.0'))
         self.assertGreater(S.ver_tuple('1.10.0'), S.ver_tuple('1.9.9'))
         S.UPD['latest'] = '1.0.1'
         self.assertTrue(S.update_newer())

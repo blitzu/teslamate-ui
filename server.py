@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """TeslaMate UI (stil Tessie): backend. MQTT (live) + Postgres TeslaMate (istoric) -> JSON/SSE. Fara date demo cat timp TeslaMate nu are masini => mod DEMO."""
-import builtins, collections, sys, json, math, os, re, queue, random, secrets, shutil, ssl, threading, time, datetime as dt
+import builtins, collections, sys, json, math, os, re, queue, random, secrets, shutil, socket, ssl, threading, time, datetime as dt
 import urllib.request, urllib.error, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -217,7 +217,8 @@ def drives_by_ids(car, ids):
 def drive_points(did):
     rows = q("select date, latitude, longitude, speed, power, battery_level, elevation from positions where drive_id=%s order by date", (did,))
     step = max(1, len(rows) // 500)
-    return [[r['date'], r['latitude'], r['longitude'], r['speed'], r['power'], r['battery_level'], r['elevation']] for r in rows[::step]]
+    pick = rows[::step] + ([rows[-1]] if rows and (len(rows) - 1) % step else [])         # mereu si ultimul punct (destinatia)
+    return [[r['date'], r['latitude'], r['longitude'], r['speed'], r['power'], r['battery_level'], r['elevation']] for r in pick]
 
 
 RC_CACHE = {}        # (id, senzor, pret) -> cost real; incarcarile terminate nu se mai schimba
@@ -435,8 +436,10 @@ ULOCK = threading.Lock()
 
 
 def ver_tuple(v):
-    m = re.match(r'^\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?', str(v or ''))
-    return tuple(int(x or 0) for x in m.groups()) if m else (0, 0, 0)
+    s = str(v or '').replace('-private', '')
+    m = re.match(r'^\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?', s)
+    base = tuple(int(x or 0) for x in m.groups()) if m else (0, 0, 0)
+    return base + (0 if re.match(r'^\s*v?\d+(?:\.\d+){0,2}-', s) else 1,)          # 1.6.0-rc1 < 1.6.0
 
 
 def update_cfg_on():
@@ -511,6 +514,10 @@ def update_apply():
     try:
         c, r = http(url, None, headers=({'Authorization': 'Bearer ' + tok} if tok else {}), method='POST', timeout=300)
     except Exception as e:  # noqa
+        import http.client as _hc
+        cause = getattr(e, 'reason', e)
+        if isinstance(cause, (ConnectionRefusedError, socket.gaierror)) or (isinstance(e, urllib.error.URLError) and not isinstance(cause, (TimeoutError, ConnectionResetError, BrokenPipeError, _hc.RemoteDisconnected, _hc.IncompleteRead))):
+            return dict(ok=False, reason='Nu pot ajunge la updater (%s). Verifică dacă rulează (docker compose ps).' % str(e)[:100])
         return dict(ok=True, reason='Cererea a fost trimisă; conexiunea s-a întrerupt (normal dacă aplicația se repornește): %s' % str(e)[:120])
     return dict(ok=c < 300, code=c, reason='' if c < 300 else 'Updater-ul a răspuns %s.' % c)
 
@@ -641,7 +648,10 @@ def ice_calc(by_day, ev_kwh, ev_cost, kwh_charged, l100=None, book=None, manual=
         km_tot += km
         est_all.append(kind in ('carry', 'early'))
         days.append(dict(day=x['day'], km=round(km, 1), price=round(p, 3), cost=round(lit * p, 2), kind=kind))
-    ev = round(ev_kwh * ev_cost / kwh_charged, 2) if (kwh_charged and ev_cost is not None and ev_kwh) else None
+    all_km = sum((x.get('km') or 0) for x in by_day)
+    ev = None
+    if kwh_charged and ev_cost is not None and ev_kwh and km_tot > 0 and all_km > 0:
+        ev = round(ev_kwh * ev_cost / kwh_charged * min(1.0, km_tot / all_km), 2)      # EV pe aceleasi zile ca termica (cele fara pret nu intra in niciuna)
     avg = round(cost / liters, 3) if liters else None
     return dict(enabled=True, type=fc['type'], l100=l100, currency=CURRENCY, km=round(km_tot, 1), liters=round(liters, 1), cost=round(cost, 2), avg_price=avg,
                 ev_cost=ev, saving=round(cost - ev, 2) if ev is not None else None, per100_ice=round(l100 * avg, 2) if avg else None,
@@ -688,7 +698,8 @@ def _charges_rows(car, limit, offset, cid=None, lo=None, hi=None, ids=None):
 def charge_points(cid):
     rows = q("select date, charger_power, battery_level, charger_voltage, charger_actual_current, charge_energy_added from charges where charging_process_id=%s order by date", (cid,))
     step = max(1, len(rows) // 400)
-    return [[r['date'], r['charger_power'], r['battery_level'], r['charger_voltage'], r['charger_actual_current'], r['charge_energy_added']] for r in rows[::step]]
+    pick = rows[::step] + ([rows[-1]] if rows and (len(rows) - 1) % step else [])
+    return [[r['date'], r['charger_power'], r['battery_level'], r['charger_voltage'], r['charger_actual_current'], r['charge_energy_added']] for r in pick]
 
 
 TRIP_GAP = dt.timedelta(hours=2)     # curse cu pauza mai mica de 2 h = aceeasi calatorie
@@ -779,7 +790,7 @@ def _runs(rows, now):
     return out
 
 
-def sleep_report(car, days):
+def sleep_report(car, days, full=False):
     """Somn si consum in repaus: intervale de somn/veghe, scurgere de baterie intre activitati (curse/incarcari), tipar de treziri."""
     now = dt.datetime.utcnow()
     since = now - dt.timedelta(days=days)
@@ -792,8 +803,6 @@ def sleep_report(car, days):
     sleep_s = sum((min(P(r['end']), now) - P(r['start'])).total_seconds() for r in runs if r['s'] == 'sleep')
     win = max((now - since).total_seconds(), 1)
     # trezirile scurte repetate (tipar de tip 'ciclu BLE'): perioade veghe intre doua somnuri, fara curse/incarcari
-    awake = [(P(r['end']) - P(r['start'])).total_seconds() / 60 for i, r in enumerate(runs) if r['s'] == 'awake' and r['end'] and 0 < i < len(runs) - 1]
-    short = [m for m in awake if 8 <= m <= 16]
     eff = (q("select efficiency from cars where id=%s", (car,)) or [{'efficiency': 0.15}])[0]['efficiency'] or 0.15
     acts = q(f"""select 'd' as k, d.start_date, d.end_date, sp.battery_level as s0, ep.battery_level as s1, sp.ideal_battery_range_km as r0, ep.ideal_battery_range_km as r1, {NAME_B} as place
         from drives d left join positions sp on sp.id=d.start_position_id left join positions ep on ep.id=d.end_position_id
@@ -802,6 +811,10 @@ def sleep_report(car, days):
         union all select 'c', cp.start_date, cp.end_date, cp.start_battery_level, cp.end_battery_level, cp.start_ideal_range_km, cp.end_ideal_range_km, {NAME_A} as place
         from charging_processes cp left join geofences g on g.id=cp.geofence_id left join addresses a on a.id=cp.address_id
         where cp.car_id=%s and cp.end_date is not null and cp.end_date > %s order by 2""", (car, since, car, since))
+    busy = [(P(a['start_date']), P(a['end_date'])) for a in acts]
+    awake = [(P(r['end']) - P(r['start'])).total_seconds() / 60 for i, r in enumerate(runs)
+             if r['s'] == 'awake' and r['end'] and 0 < i < len(runs) - 1 and not any(b0 < P(r['end']) and b1 > P(r['start']) for b0, b1 in busy)]      # fara curse/incarcari in ele
+    short = [m for m in awake if 8 <= m <= 16]
     idle = []
     for a, b in zip(acts, acts[1:]):
         t0, t1 = P(a['end_date']), P(b['start_date'])
@@ -817,18 +830,26 @@ def sleep_report(car, days):
     tot_drop = sum(i['drop'] for i in idle)
     tot_kwh = sum(i['kwh'] for i in idle if i['kwh'] is not None)
     by_day = {}
-    for r in runs:
+    try:
+        import zoneinfo
+        tz = zoneinfo.ZoneInfo(LOCAL_TZ)
+    except Exception:  # noqa
+        tz = dt.timezone.utc
+    for r in runs:                                                   # zilele se taie la miezul noptii LOCAL (ca restul statisticilor), durata din timestamp-uri (corect si la schimbarea orei)
         if r['s'] != 'sleep':
             continue
-        a, b = P(r['start']), min(P(r['end']), now)
+        a, b = P(r['start']).replace(tzinfo=dt.timezone.utc).astimezone(tz), min(P(r['end']), now).replace(tzinfo=dt.timezone.utc).astimezone(tz)
         while a < b:
             d0 = a.replace(hour=0, minute=0, second=0, microsecond=0)
-            e = min(b, d0 + dt.timedelta(days=1))
-            by_day[d0.date().isoformat()] = by_day.get(d0.date().isoformat(), 0) + (e - a).total_seconds()
+            e = min(b, (d0 + dt.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0))
+            if e <= a:
+                break
+            k = d0.date().isoformat()
+            by_day[k] = by_day.get(k, 0) + (e.timestamp() - a.timestamp())
             a = e
     return dict(days=days, runs=runs[-300:], sleep_pct=round(sleep_s / win * 100, 1), sleep_h=round(sleep_s / 3600, 1),
                 wakes=len([r for r in runs if r['s'] == 'awake']), short_wakes=len(short), short_med=round(sorted(short)[len(short) // 2], 1) if short else None,
-                idle=idle[::-1][:30], idle_hours=round(tot_h, 1), idle_drop=tot_drop, idle_kwh=round(tot_kwh, 1), per_h=round(tot_drop / tot_h, 3) if tot_h else None,
+                idle=idle[::-1][:30], **(dict(idle_all=idle[::-1]) if full else {}), idle_hours=round(tot_h, 1), idle_drop=tot_drop, idle_kwh=round(tot_kwh, 1), per_h=round(tot_drop / tot_h, 3) if tot_h else None,
                 kwh_day=round(tot_kwh / (tot_h / 24), 2) if tot_h else None, by_day=[dict(day=k, pct=round(v / 864, 1)) for k, v in sorted(by_day.items())])
 
 
@@ -844,7 +865,7 @@ def activity(car, days, limit):
         if _dtp(c['start_date']) >= since:
             ev.append(dict(type='charge', t=c['start_date'], end=c['end_date'], id=c['id'], title=c['name'], kwh=c['charge_energy_added'], soc0=c['start_soc'], soc1=c['end_soc'], dc=c['dc'], cost=c['cost_eff']))
     try:
-        for i in sleep_report(car, min(days, 30))['idle']:
+        for i in sleep_report(car, min(days, 30), full=True)['idle_all']:
             if i['hours'] >= 1:
                 ev.append(dict(type='parked', t=i['start'], end=i['end'], title=i['place'] or '—', hours=i['hours'], drop=i['drop'], sleep_pct=i['pct_sleep'], kwh=i['kwh']))
     except Exception as e:  # noqa
@@ -882,7 +903,7 @@ def battery_health(car):
     cap = [dict(date=x['start_date'], cap=round(x['kwh'] / (x['s1'] - x['s0']) * 100, 1)) for x in ses]
     vals = [c['cap'] for c in cap]
     med = lambda v: sorted(v)[len(v) // 2] if v else None
-    now_c, first_c = med(vals[-8:]), med(vals[:8])
+    now_c, first_c = (med(vals[-8:]), med(vals[:8])) if len(vals) >= 16 else (med(vals), None)     # sub 16 sesiuni esantioanele s-ar suprapune: nu pretindem o degradare
     last = [x for x in ses[-12:]][-6:]
     curves = []
     for x in last:
@@ -979,32 +1000,33 @@ def overview(car, days):
         where d.car_id=%s and d.start_date>=%s and d.end_date is not null group by 1 order by 1""", (car, since))
     chday = q(f"""select to_char(date_trunc('day', start_date at time zone 'UTC' at time zone '{LOCAL_TZ}'),'YYYY-MM-DD') as day, sum(charge_energy_added) kwh, sum(cost) cost
         from charging_processes where car_id=%s and start_date>=%s and end_date is not null group by 1 order by 1""", (car, since))
-    try:                                                      # cost efectiv: manual > real (AC acasa = import retea x tarif) > cost TeslaMate
+    try:                                                      # cost efectiv: acelasi lant ca in lista de incarcari (manual > real > loc salvat > TeslaMate), prin decorate()
         budget, tot, man, kwh_c = 60, 0.0, 0, 0.0         # kwh_c = kWh doar din sesiunile cu cost cunoscut (pentru pretul mediu pe kWh)
-        meta = meta_load()
-        for r in _charges_rows(car, 600, 0):
-            if _dtp(r['start_date']) < since:
-                continue
-            me = meta.get(str(r['id'])) or {}
-            if me.get('cost') is not None:
-                tot += me['cost']
-                man += 1
-                kwh_c += r['charge_energy_added'] or 0
-                continue
-            val = None
-            if ha_ok() and HA['grid']:
+        rows = _charges_rows(car, 5000, 0, lo=since)
+        if ha_ok() and HA['grid']:
+            for r in rows:
                 try:
                     val, fetched = real_cost(r, budget > 0)
                     budget -= 1 if fetched else 0
+                    r['cost_real'] = val
                 except Exception as ex:  # noqa
                     budget = 0
                     log('overview real cost:', ex, flush=True)
-            tot += val if val is not None else (r['cost'] or 0)
-            if val is not None or r['cost'] is not None:
+        import zoneinfo
+        ltz = zoneinfo.ZoneInfo(LOCAL_TZ)
+        per_day = {}
+        for r in decorate(rows):
+            if r['cost_eff'] is not None:
+                tot += r['cost_eff']
                 kwh_c += r['charge_energy_added'] or 0
+                day = _dtp(r['start_date']).replace(tzinfo=dt.timezone.utc).astimezone(ltz).strftime('%Y-%m-%d')
+                per_day[day] = per_day.get(day, 0.0) + r['cost_eff']
+            man += 1 if r.get('cost_manual') is not None else 0
         ch['cost_eff'] = round(tot, 2)
         ch['manual_n'] = man
         ch['kwh_c'] = round(kwh_c, 2)
+        for x in chday:                                       # barele zilnice folosesc aceleasi costuri ca totalul
+            x['cost'] = round(per_day.get(x['day'], 0.0), 2)
         if ha_ok() and HA['grid']:
             ch['cost_real'] = ch['cost_eff']
     except Exception as e:  # noqa
@@ -1366,6 +1388,19 @@ def tok_save(d):
     jsave(TOKENS, d)
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Un redirect nu se urmeaza: antetul Authorization (token HA, updater) nu trebuie sa ajunga pe alt host."""
+    def redirect_request(self, *a, **k):
+        return None
+
+
+def _OPENER(ctx=None):
+    hs = [_NoRedirect()]
+    if ctx is not None:
+        hs.append(urllib.request.HTTPSHandler(context=ctx))
+    return urllib.request.build_opener(*hs)
+
+
 def http(url, data=None, headers=None, form=False, ctx=None, timeout=25, method=None):
     h = dict(headers or {})
     body = None
@@ -1378,7 +1413,7 @@ def http(url, data=None, headers=None, form=False, ctx=None, timeout=25, method=
             h['Content-Type'] = 'application/json'
     req = urllib.request.Request(url, data=body, headers=h, method=method or ('POST' if body is not None else 'GET'))
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+        with _OPENER(ctx).open(req, timeout=timeout) as r:
             raw = r.read()
             code = r.status
     except urllib.error.HTTPError as e:
@@ -2249,13 +2284,16 @@ def imp_action(car, body):
     token = cget('tessie_token', 'TESSIE_TOKEN')
     act = body.get('action')
     if act == 'undo':
-        if not os.path.isfile(importer.LEDGER):
+        if not (os.path.isfile(importer.LEDGER) or os.path.isfile(importer.LEDGER + '.pending')):
             return dict(ok=False, reason='Nu există niciun import de anulat.')
-        cn = imp_conn()
-        try:
-            return dict(ok=True, undone=importer.undo(cn))
-        finally:
-            cn.close()
+        with ILOCK:
+            if IMP['running']:
+                return dict(ok=False, reason='Un import rulează acum; așteaptă să se termine.')
+            cn = imp_conn()
+            try:
+                return dict(ok=True, undone=importer.undo(cn))
+            finally:
+                cn.close()
     if not token:
         return dict(ok=False, reason='Salvează mai întâi tokenul Tessie în Setări.')
     if act == 'vehicles':
@@ -2276,7 +2314,7 @@ def imp_action(car, body):
             return dict(ok=False, reason=str(e))
         finally:
             cn.close()
-        r['already'] = os.path.isfile(importer.LEDGER)
+        r['already'] = os.path.isfile(importer.LEDGER) or os.path.isfile(importer.LEDGER + '.pending')
         return r
     if act in ('dry', 'run'):
         if act == 'run' and not body.get('confirm'):
@@ -2474,10 +2512,10 @@ def rules_check(car, key, old, new, known=True):
         if not r.get('enabled'):
             continue
         t = r.get('type')
-        if t == 'arrive_gate' and key == 'geofence' and new == r.get('geofence') and old != new:
+        if t == 'arrive_gate' and key == 'geofence' and str(new) == str(r.get('geofence')) and old != new:
             if _once('rule:%s' % r['id'], 600):
                 rule_exec(car, r, 'homelink')
-        elif t == 'plug_limit' and key == 'plugged_in' and new is True and (not r.get('geofence') or lv.get('geofence') == r.get('geofence')):
+        elif t == 'plug_limit' and key == 'plugged_in' and new is True and (not r.get('geofence') or str(lv.get('geofence')) == str(r.get('geofence'))):
             if _once('rule:%s' % r['id'], 600):
                 rule_exec(car, r, 'charge_limit', int(r.get('limit', 80)))
 
@@ -2522,7 +2560,7 @@ def rule_clean(b):
         r['limit'] = int(max(50, min(100, float(b.get('limit', 80)))))
     if t == 'depart_climate':
         hh = str(b.get('time') or '07:30')
-        if not (len(hh) == 5 and hh[2] == ':' and hh[:2].isdigit() and hh[3:].isdigit()):
+        if not re.fullmatch(r'([01]\d|2[0-3]):[0-5]\d', hh):
             raise ValueError('ora invalida')
         r['time'] = hh
         r['days'] = b.get('days') if b.get('days') in ('ALL', 'WEEKDAYS', 'WEEKEND') else 'ALL'
@@ -2800,7 +2838,7 @@ CSP = os.environ.get('CSP') or (
     "img-src 'self' data: blob: https://tile.openstreetmap.org https://static-assets.tesla.com; "
     "connect-src 'self' https://tile.openstreetmap.org https://api.open-meteo.com https://archive-api.open-meteo.com; "
     "worker-src 'self' blob:; child-src blob:; font-src 'self' data:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'")
-SEC_HEADERS = [('Content-Security-Policy', CSP), ('X-Content-Type-Options', 'nosniff'), ('Referrer-Policy', 'strict-origin-when-cross-origin'),
+SEC_HEADERS = [('Content-Security-Policy', CSP if 'frame-ancestors' in CSP else CSP + "; frame-ancestors 'none'"), ('X-Frame-Options', 'DENY'), ('X-Content-Type-Options', 'nosniff'), ('Referrer-Policy', 'strict-origin-when-cross-origin'),
                ('Permissions-Policy', 'geolocation=(), camera=(), microphone=(), payment=()')]
 
 
@@ -2886,7 +2924,11 @@ class H(BaseHTTPRequestHandler):
         need = o['role']
         if (need == 'admin' and self.role != 'admin') or (need == 'family' and self.role not in ('admin', 'family')) or (need == 'user' and self.role == 'viewer'):
             return self.send_json(dict(ok=False, reason='Nu ai permisiunea pentru această acțiune (rol: %s).' % self.role), 403)
-        res = fn(self, data)
+        CTX.actor = 'user:%s' % self.role                 # comenzile pornite din rute de module (valet, handoff...) se jurnalizeaza pe utilizator, nu pe "system"
+        try:
+            res = fn(self, data)
+        finally:
+            CTX.actor = 'system'
         if isinstance(res, Raw):
             return self.send_raw(res)
         return self.send_json(dict(ok=True) if res is None else res)
@@ -2954,19 +2996,21 @@ class H(BaseHTTPRequestHandler):
     def pin_check(self):
         """(ok, motiv, cod HTTP). Max. 5 PIN-uri gresite / 10 min per IP si 30 in total; comparatie in timp constant, pe octeti."""
         ip, now = self.client_ip(), time.time()
-        with PIN_LOCK:
+        got = self.headers.get('X-Pin', '')
+        wrong = False
+        with PIN_LOCK:                                    # limita, compararea si inregistrarea esecului se fac sub acelasi lacat: N cereri paralele nu trec de limita
             for k in list(PINF):
                 PINF[k] = [x for x in PINF[k] if now - x < 600]
                 if not PINF[k]:
                     del PINF[k]
             if len(PINF.get(ip, [])) >= 5 or sum(len(v) for v in PINF.values()) >= 30:
                 return False, 'Prea multe încercări greșite. Reia peste 10 minute.', 429
-        got = self.headers.get('X-Pin', '')
-        if FL['pin'] and secrets.compare_digest(got.encode('utf-8', 'replace'), FL['pin'].encode('utf-8', 'replace')):
-            return True, '', 200
-        if FL['pin'] and got:
-            with PIN_LOCK:
+            if FL['pin'] and secrets.compare_digest(got.encode('utf-8', 'replace'), FL['pin'].encode('utf-8', 'replace')):
+                return True, '', 200
+            if FL['pin'] and got:
                 PINF.setdefault(ip, []).append(now)
+                wrong = True
+        if wrong:
             log('audit: PIN gresit ip=%s' % ip)
         return False, 'PIN greșit.' if FL['pin'] else 'PIN greșit sau neconfigurat.', 403
 
@@ -3105,6 +3149,9 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(dict(error='db', reason='Baza de date TeslaMate nu răspunde.'), 503)
         except NotFound:
             return self.send_json(dict(error='not found'), 404)
+        except (ValueError, TypeError) as e:                     # parametri gresiti (int('abc') etc.): 400, nu 500
+            log('GET %s: cerere invalida: %s' % (p, e), flush=True)
+            return self.send_json(dict(error='cerere invalidă', reason=str(e)[:120]), 400)
         except Exception as e:  # noqa
             log('GET %s: %s' % (p, e), flush=True)
             return self.send_json(dict(error='eroare internă'), 500)
@@ -3170,6 +3217,8 @@ class H(BaseHTTPRequestHandler):
                     return self.send_json(cfg_test(body.get('what')))
                 ok, err = cfg_update(body)
                 return self.send_json(dict(ok=ok, reason=err, config=cfg_public()) if ok else dict(ok=False, reason=err), 200 if ok else 400)
+            if self.role == 'viewer':
+                return self.send_json(dict(ok=False, reason='Nu ai permisiunea pentru această acțiune (rol: viewer).'), 403)
             pok, why, pcode = self.pin_check()
             if not pok:
                 return self.send_json(dict(ok=False, reason=why), pcode)
@@ -3225,6 +3274,10 @@ class H(BaseHTTPRequestHandler):
                 return self.send_json(res)
         except ValueError as e:
             return self.send_json(dict(ok=False, reason='Cerere invalidă: %s' % e), 400)
+        except NotFound:
+            return self.send_json(dict(ok=False, reason='Nu există.'), 404)
+        except KeyError as e:
+            return self.send_json(dict(ok=False, reason='Cerere invalidă: lipsește câmpul %s' % e), 400)
         except Exception as e:  # noqa
             log('POST %s: %s' % (u.path, e), flush=True)
             return self.send_json(dict(ok=False, reason=str(e)[:300]), 500)
@@ -3275,14 +3328,14 @@ class H(BaseHTTPRequestHandler):
             cid = int(p.rsplit('/', 1)[1])
             return dict(points=demo_charge_points(cid) if demo else charge_points(cid))
         if p == '/api/overview':
-            days = int(a.get('days', 30))
+            days = max(1, min(int(a.get('days', 30)), 730))
             return demo_overview(days) if demo else overview(car, days)
         if p == '/api/fuel':
             return fuel_info()
         if p == '/api/version':
             return version_info()
         if p == '/api/changelog':
-            return changelog_entries(int(a.get('limit', 8)))
+            return changelog_entries(max(1, min(int(a.get('limit', 8)), 50)))
         if p == '/api/battery':
             return demo_battery() if demo else battery(car)
         if p == '/api/sleep':

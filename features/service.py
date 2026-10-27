@@ -30,7 +30,7 @@ def due(item, odo, today):
     if not prog:
         return dict(km_left=None, days_left=None, progress=0, status='unknown')
     late = (km_left is not None and km_left < 0) or (days_left is not None and days_left < 0)
-    soon = (km_left is not None and item['interval_km'] and km_left < 0.1 * item['interval_km']) or (days_left is not None and days_left < 30)
+    soon = (km_left is not None and item['interval_km'] and km_left < 0.1 * item['interval_km']) or (days_left is not None and days_left < min(30, total * 0.2))
     return dict(km_left=None if km_left is None else round(km_left), days_left=days_left, progress=round(max(prog), 3), status='overdue' if late else 'soon' if soon else 'ok')
 
 
@@ -207,11 +207,12 @@ def init(S):
             raise ValueError('Kilometrajul la demontare e mai mic decât la montare.')
         if not sid:
             return
+        explicit_end = bool(rd)
         if not rd:                                               # fara demontare: se opreste cand incepe urmatorul set (cel montat mai tarziu), daca exista
             nxt = S.OWN.one('select mounted_date, mounted_km from tire_sets where mounted_date > ? and id != ? order by mounted_date limit 1', (md.isoformat(), sid))
             if nxt:
                 rd, rkm = dt.date.fromisoformat(nxt['mounted_date']), nxt['mounted_km']
-        if not rd:
+        if not explicit_end:                                     # setul anterior ramas deschis se inchide la montarea acestuia (si cand mai exista un set ulterior)
             S.OWN.run('update tire_sets set removed_date=?, removed_km=? where mounted_date is not null and removed_date is null and id != ? and mounted_date <= ?', (md.isoformat(), mkm, sid, md.isoformat()))
         S.OWN.run('update tire_sets set mounted_date=?, mounted_km=?, removed_date=?, removed_km=? where id=?', (md.isoformat(), mkm, rd.isoformat() if rd else None, rkm, sid))
 
@@ -276,7 +277,7 @@ def init(S):
         for w, pts in (series or {}).items():
             xs = [(dt.date.fromisoformat(d) - dt.date(2000, 1, 1)).days for d, _ in pts]
             sl = slope(list(zip(xs, [p for _, p in pts])))
-            out[w] = dict(per_day=None if sl is None else round(sl, 4), leaking=bool(sl is not None and len(pts) >= 7 and sl < -0.012 and (pts[0][1] - pts[-1][1]) > 0.12))
+            out[w] = dict(per_day=None if sl is None else round(sl, 4), leaking=bool(sl is not None and len(pts) >= 7 and sl < -0.008 and (pts[0][1] - pts[-1][1]) > 0.1))
         return out
 
     @S.route('GET', '/api/tires/pressure')
@@ -300,7 +301,8 @@ def init(S):
                     lk = leak_check(pressure_series(1, 28))
                     names = dict(fl='față stânga', fr='față dreapta', rl='spate stânga', rr='spate dreapta')
                     bad = [(names[w], v['per_day']) for w, v in lk.items() if v['leaking']]
-                    if bad and S.ALERTS.cool('tire_leak:1', time.time()):
+                    acfg = S.ALERTS.cfg()
+                    if bad and acfg['enabled'] and acfg['tire_leak']['on'] and S.ALERTS.cool('tire_leak:1', time.time()):
                         S.ALERTS.fire('tire_leak', '🛞 Posibilă scurgere lentă la anvelope', '; '.join('%s: %.3f bar/zi' % b for b in bad) + ' (presiune adusă la 20°C).')
                 except Exception as e:  # noqa
                     S.log('scurgeri anvelope: %s' % e)

@@ -114,7 +114,10 @@ def init(S):
             "select start_date a, end_date b from drives where car_id=%s and coalesce(end_date, now() at time zone 'utc') > %s "
             "union all select start_date, end_date from charging_processes where car_id=%s and coalesce(end_date, now() at time zone 'utc') > %s", (car, sd, car, sd))]
         upd = [[ts(r['start_date']), ts(r['end_date'])] for r in S.q("select start_date, end_date from updates where car_id=%s and coalesce(end_date, now() at time zone 'utc') > %s", (car, sd))]
-        ev = lambda key: [(r['ts'], r['new']) for r in S.OWN.rows('select ts, new from events where key=? and car=? and ts >= ? order by ts', (key, car, since - 86400))]
+        def ev(key):
+            rows = [(r['ts'], r['new']) for r in S.OWN.rows('select ts, new from events where key=? and car=? and ts >= ? order by ts', (key, car, since - 86400))]
+            prev = S.OWN.one('select ts, new from events where key=? and car=? and ts < ? order by ts desc limit 1', (key, car, since - 86400))
+            return ([(prev['ts'], prev['new'])] if prev else []) + rows           # starea din care incepe fereastra (ex. Sentry pornit de 5 zile)
         sentry = intervals_from_events(ev('sentry_mode'), 'True', now)
         user = intervals_from_events(ev('is_user_present'), 'True', now)
         cmds = [(r['ts'], r['actor']) for r in S.OWN.rows('select ts, actor from cmd_log where car=? and ts >= ?', (car, since - 600))]
@@ -147,10 +150,11 @@ def init(S):
             if now.hour >= 8 and today != last and S.has_cars():
                 last = today
                 try:
-                    cfg = S.ALERTS.cfg()['awake_unexplained']
+                    acfg = S.ALERTS.cfg()
+                    cfg = acfg['awake_unexplained']
                     y = (now - dt.timedelta(days=1)).strftime('%Y-%m-%d')
                     day = report(1, 3).get(y)
-                    if cfg['on'] and day and day['unexplained'] >= cfg['minutes'] and S.ALERTS.cool('awake_unexplained:1', time.time()):
+                    if acfg['enabled'] and cfg['on'] and day and day['unexplained'] >= cfg['minutes'] and S.ALERTS.cool('awake_unexplained:1', time.time()):
                         top = ', '.join('%s %d min' % (k, v) for k, v in sorted(day['reasons'].items(), key=lambda kv: -kv[1])[:3])
                         S.ALERTS.fire('awake_unexplained', '😴 Mașina a stat trează fără motiv', 'Ieri: %d min fără să conducă/încarce, din care %d min nelămurite (%s).' % (day['total'], day['unexplained'], top))
                 except Exception as e:  # noqa

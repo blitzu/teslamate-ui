@@ -18,7 +18,7 @@ async function fire(name, label, arg, msgId) {
   try {
     const r = await fetch('/api/cmd/' + name, { method: 'POST', headers: { 'X-Pin': pin, 'Content-Type': 'application/json' }, body: JSON.stringify({ car, arg }) });
     const j = await r.json();
-    if (r.status === 403) { pinClear(); toast(msgId, tr('PIN greșit.'), 'bad'); return null; }
+    if (r.status === 403 && /PIN/i.test(j.reason || '')) { pinClear(); toast(msgId, tr('PIN greșit.'), 'bad'); return null; }
     toast(msgId, j.ok ? '✓ ' + label + (j.via === 'ble' ? ' · BLE' : '') : '✗ ' + label + (j.reason ? ' — ' + j.reason : ''), j.ok ? 'ok' : 'bad');
     return j;
   } catch (e) { toast(msgId, '✗ ' + label + ' — ' + e.message, 'bad'); return null; }
@@ -95,6 +95,7 @@ async function afterClimate() {
 function chargeCtlShell() { return '<div id="chctl"></div>'; }
 async function afterCharges() {
   drawChargeList();
+  if (!chRows.length) lfBind('charges', () => render());                              // lista goala: filtrele (perioada/tag) trebuie sa ramana folosibile
   const go = $('#goctl'); if (go) go.onclick = (ev) => { ev.preventDefault(); const t = $('#chctl'); if (t) t.scrollIntoView({ behavior: 'smooth' }); };
   const box = $('#chctl'); if (!box) return;
   const c = cur(); if (!c) return;
@@ -583,8 +584,9 @@ function afterAuto() {
   $('#rtype').onchange = fields; fields();
   const post = async (body) => {
     const pin = await getPin(); if (!pin) return;
-    const r = await fetch('/api/rules', { method: 'POST', headers: { 'X-Pin': pin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), j = await r.json();
-    if (r.status === 403) { pinClear(); toast('rmsg', j.reason || tr('PIN greșit.'), 'bad'); return; }
+    let r, j;
+    try { r = await fetch('/api/rules', { method: 'POST', headers: { 'X-Pin': pin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); j = await r.json(); } catch (e) { toast('rmsg', '✗ ' + e.message, 'bad'); return; }
+    if (r.status === 403) { if (/PIN/i.test(j.reason || '')) pinClear(); toast('rmsg', j.reason || tr('PIN greșit.'), 'bad'); return; }
     if (j.ok === false || j.error) { toast('rmsg', '✗ ' + (j.reason || j.error), 'bad'); return; }
     render();
   };
@@ -630,7 +632,7 @@ async function pageSettings() {
   return `<div class="top"><h1>${X('Setări', 'Settings')}</h1><small>${X('Totul se salvează pe server și se aplică imediat. Câmpurile secrete nu se mai afișează după salvare.', 'Everything is saved on the server and applies immediately. Secret fields are never shown again after saving.')}</small></div>
   <div class="seg scats">${cats.map(([k, l]) => `<button data-scat="${k}" class="${k === setCat ? 'on' : ''}">${l}</button>`).join('')}</div>
   <div class="scat" data-cat="general">${lang}
-  ${G('security')}${sec2(X('PIN comenzi', 'Command PIN'), f(fl.pin_set ? X('PIN nou (lasă gol ca să-l păstrezi)', 'New PIN (leave empty to keep)') : X('Setează un PIN (min. 4 caractere)', 'Set a PIN (min. 4 characters)'), 'pin', '', { secret: true, set: false, attrs: 'inputmode="numeric"' }) + `<small class="ch">${fl.pin_set ? X('PIN-ul e setat. Orice schimbare cere PIN-ul actual.', 'A PIN is set. Any change asks for the current PIN.') : X('Fără PIN nu se pot trimite comenzi. Prima setare se face doar din rețeaua locală.', 'No commands without a PIN. The first setup must be done on the local network.')}</small>`, 'pin')}
+  ${G('security')}${sec2(X('PIN comenzi', 'Command PIN'), f(fl.pin_set ? X('PIN nou (lasă gol ca să-l păstrezi)', 'New PIN (leave empty to keep)') : X('Setează un PIN (min. 6 caractere)', 'Set a PIN (min. 6 characters)'), 'pin', '', { secret: true, set: false, attrs: 'inputmode="numeric"' }) + `<small class="ch">${fl.pin_set ? X('PIN-ul e setat. Orice schimbare cere PIN-ul actual.', 'A PIN is set. Any change asks for the current PIN.') : X('Fără PIN nu se pot trimite comenzi. Prima setare se face doar din rețeaua locală.', 'No commands without a PIN. The first setup must be done on the local network.')}</small>`, 'pin')}
   ${G('conn')}${sec2('Tesla Fleet API', f('Client ID', 'fleet_id', fl.id) + f('Client Secret', 'fleet_secret', '', { secret: true, set: fl.secret_set }) + f(X('Domeniu public (fără https://)', 'Public domain (without https://)'), 'fleet_domain', fl.domain, { ph: 'tesla.example.com' })
     + `<label class="cf">${X('Regiune', 'Region')}<select id="fleet_base"><option value="https://fleet-api.prd.eu.vn.cloud.tesla.com" ${fl.base.includes('.eu.') ? 'selected' : ''}>Europa / Orientul Mijlociu / Africa</option><option value="https://fleet-api.prd.na.vn.cloud.tesla.com" ${fl.base.includes('.na.') ? 'selected' : ''}>America de Nord / Asia-Pacific</option><option value="https://fleet-api.prd.cn.vn.cloud.tesla.cn" ${fl.base.includes('.cn.') ? 'selected' : ''}>China</option></select></label>`
     + `<small class="ch">${X('După salvare, pașii (înregistrare domeniu, conectare cont, cheie virtuală) apar în cardul „Comenzi” din pagina Mașină.', 'After saving, the steps (register domain, connect account, virtual key) appear in the “Controls” card on the Car page.')} <a href="https://github.com/blitzu/teslamate-ui/blob/main/docs/fleet-api.md" target="_blank" rel="noopener" style="color:var(--gold)">${X('Ghid complet', 'Full guide')}</a></small>`, 'fleet')}
@@ -700,7 +702,8 @@ function afterSettings() {
     if (apply && ok && j.ok) {
       say('updates', X('Se descarcă versiunea nouă și aplicația se repornește (circa un minut). Pagina se reîncarcă singură.', 'Downloading the new version and restarting the app (about a minute). The page reloads by itself.'), 'busy');
       const oldBuild = S && S.app && S.app.build; let n = 0;
-      const t = setInterval(async () => {
+      if (window.__updTimer) clearInterval(window.__updTimer);
+      const t = window.__updTimer = setInterval(async () => {
         n += 1;
         try { const r = await fetch('/api/state', { cache: 'no-store' }); if (r.ok) { const d = await r.json(); if (oldBuild && d.app && d.app.build && d.app.build !== oldBuild) { clearInterval(t); say('updates', '✓ ' + X('Gata, se reîncarcă…', 'Done, reloading…'), 'ok'); setTimeout(() => location.reload(), 800); return; } } } catch (e) { /* aplicatia se reporneste */ }
         if (n >= 75) { clearInterval(t); say('updates', '✗ ' + X('Nu am văzut versiunea nouă după 5 minute. Verifică jurnalul updater-ului (docker logs tessie-updater) sau reîncarcă pagina.', 'I did not see the new version after 5 minutes. Check the updater log (docker logs tessie-updater) or reload the page.'), 'bad'); }
@@ -819,7 +822,7 @@ async function pageActivity() {
       : e.type === 'charge' ? `+${nf(e.kwh, 1)} kWh · ${nf(e.soc0)}% → ${nf(e.soc1)}% · ${e.dc ? 'DC' : 'AC'} · ${tm(e.t)}–${tm(e.end)}${e.cost != null ? ' · ' + nf(e.cost, 2) + ' ' + CU() : ''}`
       : e.type === 'parked' ? `${hm(e.hours * 60)} · ${X('somn', 'sleep')} ${e.sleep_pct}% · ${e.drop > 0 ? '−' : '+'}${nf(Math.abs(e.drop))}% · ${tm(e.t)}–${tm(e.end)}`
       : e.type === 'update' ? X('Actualizare software instalată', 'Software update installed') : esc(e.msg || '');
-    const href = e.type === 'drive' ? `#/drive/${e.id}` : e.type === 'charge' ? `#/charge/${e.id}` : e.type === 'parked' ? '#/parked' : '#';
+    const href = e.type === 'drive' ? `#/drive/${e.id}` : e.type === 'charge' ? `#/charge/${e.id}` : e.type === 'parked' ? '#/parked' : '#/activity';
     html += `<a class="item act-i" href="${href}"><div class="t"><span class="ai" style="color:${col}">${nicon(ic)}</span><span>${esc(e.title)}</span></div><div class="m"><span>${meta}</span></div></a>`;
   });
   return head + (html || `<div class="empty">${X('Nimic înregistrat încă.', 'Nothing recorded yet.')}</div>`);
@@ -1072,10 +1075,12 @@ let chF = { p: null, d: 0 }, chRows = [], chKeys = [];
 async function pinPost(path, body) {
   let pin = pinGet();
   if (!pin && window.__pinSet !== false) pin = await getPin();
-  const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Pin': pin || '' }, body: JSON.stringify(body) });
-  const j = await r.json().catch(() => ({}));
-  if (r.status === 403 && /PIN/.test(j.reason || '')) { pinClear(); }
-  return [r.ok && j.ok !== false, j];
+  try {
+    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Pin': pin || '' }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 403 && /PIN/.test(j.reason || '')) { pinClear(); }
+    return [r.ok && j.ok !== false, j];
+  } catch (e) { return [false, { reason: e.message || 'offline' }]; }                // offline / PIN cu caractere speciale: mesajul de "se salveaza" nu ramane blocat
 }
 function chCost(c) {
   const cu = esc(CU()), tmc = c.cost != null ? nf(c.cost, 2) : '—';

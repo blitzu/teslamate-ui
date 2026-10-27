@@ -7,7 +7,7 @@ This app can unlock your car and open your gate. Treat it like a password manage
 | Port | Purpose | Expose to the internet? |
 |---|---|---|
 | `4100` | The app (state, history, commands) | **No**, unless protected (below) |
-| `4101` | Public listener: only Tesla's public key and the OAuth callback | Yes (needed for the Fleet API setup) |
+| `4101` | Public listener: Tesla's public key, the OAuth callback and live-location share links (`/share/<token>`, only while a link you created is active) | Yes (needed for the Fleet API setup) |
 | `4443` | Command-signing proxy | Never published; reachable only inside the Docker network |
 
 The private key (`fleet/private-key.pem`) never leaves your host.

@@ -20,7 +20,7 @@ def in_window(now_hm, window):
 def evaluate(rule, key, prev, val, known, live, now_hm):
     """Intoarce textul alertei sau None. rule: kind, pattern (regex geofence), limit (km/h), window."""
     k = rule['kind']
-    if k == 'speed' and key == 'speed' and isinstance(val, (int, float)):
+    if k == 'speed' and key == 'speed' and known and isinstance(val, (int, float)):
         lim = rule['limit'] or 0
         if lim and val > lim and not (isinstance(prev, (int, float)) and prev > lim):
             return 'Viteză %d km/h (limita ta: %d).' % (round(val), lim)
@@ -55,7 +55,7 @@ def clean(b):
         if not 30 <= r['limit'] <= 250:
             raise ValueError('limita de viteză: 30–250 km/h')
     if kind in ('enter', 'leave'):
-        r['pattern'] = re.sub(r'[^\w|\s.-]', '', str(b.get('pattern', '')))[:60].strip()
+        r['pattern'] = '|'.join(x.strip() for x in re.sub(r'[^\w|\s.-]', '', str(b.get('pattern', '')))[:60].split('|') if x.strip())      # fara alternative goale ("a|" ar potrivi orice)
         if not r['pattern']:
             raise ValueError('numele zonei (geofence din TeslaMate)')
     if kind == 'curfew':

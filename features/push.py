@@ -7,6 +7,7 @@ import re
 import struct
 import threading
 import time
+import zlib
 import urllib.error
 import urllib.request
 from urllib.parse import urlparse
@@ -117,7 +118,7 @@ def init(S):
     def sink(kind, title, msg, data):
         if not kinds().get(kind) or not S.OWN.one('select 1 x from push_subs limit 1'):
             return
-        deliver(dict(title=title, body=msg, kind=kind, tag='tesla_' + kind, path=S.KIND_ROUTE.get(kind, '#/car')), urgency='high' if kind in ('alert', 'rule') else 'normal', role='admin' if kind in ADMIN_ONLY else None)
+        deliver(dict(title=title, body=msg, kind=kind, tag='tesla_' + kind + ('_%08x' % zlib.crc32(title.encode('utf-8')) if kind in ('alert', 'rule', 'maint') else ''), path=S.KIND_ROUTE.get(kind, '#/car')), urgency='high' if kind in ('alert', 'rule') else 'normal', role='admin' if kind in ADMIN_ONLY else None)
 
     S.NOTIFY_SINKS.append(sink)
     S.PUSH_DELIVER = deliver

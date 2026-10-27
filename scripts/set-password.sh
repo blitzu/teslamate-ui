@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Sets a password for access coming through a reverse proxy / tunnel (requests carrying Cf-Connecting-Ip / X-Forwarded-For headers).
-# Direct LAN access stays open. The password is read hidden and written to .env.auth (mode 600). Run from the repository folder:
+# Sets the app password. Once set it is required everywhere: through a reverse proxy / tunnel and on the local network alike.
+# Without it, direct local-network access is open (see docs/security.md). The password is read hidden and written to .env.auth (mode 600). Run from the repository folder:
 #   ./scripts/set-password.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -17,4 +17,4 @@ umask 077
 } > .env.auth
 chmod 600 .env.auth
 docker compose up -d
-echo "Done. Requests that arrive through a proxy/tunnel now require this password."
+echo "Done. The app now asks for this password (also on the local network)."

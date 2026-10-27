@@ -24,11 +24,16 @@ def init(S):
                       (time.time(), kw.get('car'), kw.get('name'), kw.get('actor', 'system'), 1 if kw.get('ok') else 0, kw.get('via'), (kw.get('note') or '')[:200]))
 
     def cleanup():
+        time.sleep(120)                                      # prima curatare imediat dupa pornire: repornirile dese (ex. actualizari zilnice) nu trebuie sa o amane la nesfarsit
         while True:
-            time.sleep(3600 * 6)
             cut = time.time() - KEEP_DAYS * 86400
             S.OWN.run('delete from events where ts < ?', (cut,))
             S.OWN.run('delete from cmd_log where ts < ?', (cut,))
+            try:
+                S.OWN.run('delete from alerts_log where ts < ?', (time.time() - 400 * 86400,))
+            except Exception:  # noqa
+                pass                                         # modulul de alerte lipseste
+            time.sleep(3600 * 6)
 
     S.MQTT_HOOKS.append(on_mqtt)
     S.AUDIT_HOOKS.append(on_audit)

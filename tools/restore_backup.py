@@ -14,7 +14,7 @@ import json
 import sqlite3
 import sys
 
-ORDER = ['cars', 'addresses', 'geofences', 'drives', 'positions', 'charging_processes', 'charges', 'states', 'updates', 'settings']
+ORDER = ['car_settings', 'cars', 'addresses', 'geofences', 'drives', 'positions', 'charging_processes', 'charges', 'states', 'updates', 'settings']
 
 
 def cast(v, pgtype):
@@ -66,7 +66,9 @@ def main():
         if a.dry_run:
             print('%-20s %9d randuri (%d coloane)' % (t, n, len(cols)))
             continue
-        sql = 'insert into "%s" (%s) values %%s on conflict (id) do nothing' % (t, ','.join('"%s"' % c for c in cols))
+        upd = ','.join('"%s"=excluded."%s"' % (c, c) for c in cols if c != 'id')
+        # setarile (limba, unitati, base_url) exista deja dupa prima pornire a TeslaMate: le suprascriem, celelalte tabele raman neatinse la conflict
+        sql = 'insert into "%s" (%s) values %%s on conflict (id) %s' % (t, ','.join('"%s"' % c for c in cols), ('do update set ' + upd) if (t in ('settings', 'car_settings') and upd) else 'do nothing')
         batch, done = [], 0
         for row in src.execute('select %s from "%s" order by id' % (','.join('"%s"' % c for c in cols), t)):
             batch.append([cast(row[c], meta[c]) for c in cols])

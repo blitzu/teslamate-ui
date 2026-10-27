@@ -19,8 +19,10 @@ def build(drives, charges, tagged_charge_ids=(), gap_min=STOP_MIN):
     """drives: curse (cu start/end, coordonate), sortate cronologic; charges: incarcari din interval. Intoarce (incarcari incluse, opriri, rezumat).
     O incarcare intra daca are tag-ul cerut sau cade intre prima plecare si ultima sosire (+/- 30 min). Oprirea = pauza dintre doua curse consecutive care nu e o incarcare."""
     P = lambda x: dt.datetime.fromisoformat(str(x)) if x else None
-    if not drives:
-        return [], [], dict(drives=0, km=0, kwh=0, drive_min=0, charges=0, charged_kwh=0, cost=0, stops=0, start=None, end=None)
+    if not drives:                                                            # un tag doar pe incarcari: le aratam si fara curse
+        keep = sorted([c for c in charges if c['id'] in tagged_charge_ids], key=lambda c: c['start_date'])
+        return keep, [], dict(drives=0, km=0, kwh=0, drive_min=0, charges=len(keep), charged_kwh=round(sum(c.get('charge_energy_added') or 0 for c in keep), 1),
+                              cost=round(sum(c.get('cost_eff') or 0 for c in keep), 2), stops=0, start=keep[0]['start_date'] if keep else None, end=keep[-1]['end_date'] if keep else None)
     t0, t1 = P(drives[0]['start_date']), P(drives[-1]['end_date'])
     pad = dt.timedelta(minutes=30)
     keep = [c for c in charges if c['id'] in tagged_charge_ids or (t0 - pad <= P(c['start_date']) <= t1 + pad)]
@@ -146,6 +148,11 @@ def init(S):
         ds.sort(key=lambda d: d['start_date'])
         if not ds and not tagged_ch:
             return dict(drives=[], charges=[], stops=[], summary=build([], [])[2], truncated=False)
+        if not ds:
+            tagged_rows = S.decorate(S._charges_rows(car, 600, 0, None, None, None, list(tagged_ch)))
+            keep, stops, summ = build([], tagged_rows, tagged_ch)
+            return dict(drives=[], charges=[dict(id=c['id'], lat=c['lat'], lon=c['lon'], name=c['name'], start=c['start_date'], end=c['end_date'], kwh=c['charge_energy_added'], cost=c.get('cost_eff'),
+                                                 dc=bool(c.get('dc'))) for c in keep if c.get('lat') is not None], stops=[], summary=summ, truncated=False)
         starts = [d['start_date'] for d in ds]
         t0 = S._dtp(min(starts)) - dt.timedelta(minutes=45) if ds else None
         t1 = S._dtp(max(d['end_date'] for d in ds)) + dt.timedelta(minutes=45) if ds else None

@@ -92,8 +92,16 @@ def init(S):
         missing = [d for d in ((day_a + dt.timedelta(days=i)).isoformat() for i in range((day_b - day_a).days + 1)) if d not in cache]
         if missing:
             r = json.loads(S._get_text('https://api.frankfurter.dev/v1/%s..%s?base=EUR&symbols=%s' % (day_a.isoformat(), day_b.isoformat(), code), 30))
-            for d, v in (r.get('rates') or {}).items():
-                cache[d] = v[code]
+            got = {d: v[code] for d, v in (r.get('rates') or {}).items()}
+            cache.update(got)
+            if got:                                                    # weekendurile/sarbatorile nu apar in raspuns: le umplem cu ultimul curs, ca sa nu reinterogam la fiecare cerere
+                last, top = None, max(got)
+                for i in range((day_b - day_a).days + 1):
+                    d = (day_a + dt.timedelta(days=i)).isoformat()
+                    if d in cache:
+                        last = cache[d]
+                    elif last is not None and d < top:
+                        cache[d] = last
             S.OWN.kv_set('fx_' + code, cache)
         keys = sorted(cache)
 
@@ -117,12 +125,23 @@ def init(S):
         if not sess:
             return dict(sessions=[], months=[], config=c, note='Nicio încărcare AC acasă în perioadă.')
         d0 = dt.datetime.fromisoformat(min(r['start_date'] for r in sess)).date() - dt.timedelta(days=1)
-        fetch_prices(d0, today)
-        rate = rate_for(d0, today, code)
+        try:
+            fetch_prices(d0, today)
+        except Exception as e:  # noqa
+            S.log('pzu preturi: %s (folosesc ce am in cache)' % e)           # fara retea, sesiunile deja acoperite de cache se calculeaza in continuare
+        try:
+            rate = rate_for(d0, today, code)
+        except Exception as e:  # noqa
+            S.log('pzu curs: %s (folosesc ce am in cache)' % e)
+            cache_fx = S.OWN.kv_get('fx_' + code, {}) or {}
+            keys_fx = sorted(cache_fx)
+            rate = lambda d: next((cache_fx[k] for k in reversed(keys_fx) if k <= d), cache_fx[keys_fx[0]] if keys_fx else 1.0)
         prices = {r['ts']: r['eur_mwh'] for r in S.OWN.rows('select ts, eur_mwh from pzu_prices where ts >= ?', (int(dt.datetime(d0.year, d0.month, d0.day, tzinfo=dt.timezone.utc).timestamp()),))}
 
         def price_kwh(slot):
             p = prices.get(slot)
+            if p is None:
+                p = prices.get(slot - slot % 3600)                      # preturi orare (date mai vechi): valabile pentru toate sferturile orei
             return None if p is None else p / 1000 * rate(dt.datetime.fromtimestamp(slot, dt.timezone.utc).strftime('%Y-%m-%d'))
         out, z = [], tz()
         for r in sess:
@@ -137,15 +156,18 @@ def init(S):
             pzu, cov = cost_of(energy, price_kwh)
             tot, _ = cost_of(energy, price_kwh, c['addon'], c['vat'])
             start_local = dt.datetime.fromisoformat(r['start_date']).replace(tzinfo=dt.timezone.utc).astimezone(z)
-            night0 = (start_local if start_local.hour >= 12 else start_local - dt.timedelta(days=1)).replace(hour=int(c['from_h']), minute=0, second=0, microsecond=0)
-            night1 = (night0 + dt.timedelta(days=1)).replace(hour=int(c['to_h']))
+            dur = dt.timedelta(hours=(int(c['to_h']) - int(c['from_h'])) % 24 or 24)             # 22->7 = 9 h, 0->7 = 7 h (nu 31 h)
+            base = start_local.replace(hour=int(c['from_h']), minute=0, second=0, microsecond=0)
+            cands = [base - dt.timedelta(days=1), base, base + dt.timedelta(days=1)]
+            night0 = next((x for x in cands if x <= start_local < x + dur), None) or next(x for x in cands if x > start_local)     # fereastra in care incepe sesiunea, sau prima urmatoare
+            night1 = night0 + dur
             slots = range(int(night0.timestamp() // SLOT * SLOT), int(night1.timestamp()), SLOT)
             pmax = max([p for _, p in samples] or [3.7]) or 3.7
             best = cheapest(wall, slots, price_kwh, pmax * SLOT / 3600)
             opt = cost_of(best, price_kwh, c['addon'], c['vat'])[0] if best else None
             fixed = wall * (gprice or float(r.get('tariff') or 0))
             out.append(dict(id=r['id'], start=r['start_date'], kwh=round(wall, 2), real=r.get('cost') if r.get('cost') is not None else None, fixed=round(fixed, 2), pzu=round(pzu, 2), pzu_total=round(tot, 2),
-                            optimal=None if opt is None else round(opt, 2), avg_pzu=round(pzu / wall, 3) if wall else None, covered=round(cov / wall, 2)))
+                            optimal=None if opt is None else round(opt, 2), avg_pzu=round(pzu / cov, 3) if cov else None, covered=round(cov / wall, 2)))
         months = {}
         for s in out:
             if s['covered'] < 0.9:

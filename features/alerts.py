@@ -15,6 +15,7 @@ DEFAULT = dict(
     rain_window=dict(on=True),
     cabin_hot=dict(on=True, temp=32),
     awake_unexplained=dict(on=True, minutes=180),
+    tire_leak=dict(on=True),
 )
 COOLDOWN = dict(tire_leak=24 * 3600, charge_stopped=1800, plugged_not_charging=6 * 3600, not_plugged_night=20 * 3600, tpms_low=24 * 3600, rain_window=3600, cabin_hot=1200, awake_unexplained=20 * 3600)
 SEVERITY = dict(tire_leak='high', charge_stopped='normal', plugged_not_charging='normal', not_plugged_night='normal', tpms_low='high', rain_window='high', cabin_hot='critical', awake_unexplained='normal')
@@ -65,6 +66,8 @@ class Engine:
         self.fired = {}
         self.rain_checked = {}
         self.rain_alerted = {}
+        self.now = None                                                      # ceasul ultimei verificari (tick/MQTT), folosit si de fire()
+        self.held = set()                                                    # alerte retinute de orele de liniste (jurnalizate o singura data)
 
     def cfg(self):
         return merged(self.S.OWN.kv_get('alerts_cfg', {}))
@@ -80,10 +83,20 @@ class Engine:
         S = self.S
         cfg = cfg or self.cfg()
         sev = SEVERITY.get(key.split(':')[0], 'normal')
-        S.OWN.run('insert into alerts_log(ts, car, key, severity, title, msg) values(?,?,?,?,?,?)', (time.time(), car, key.split(':')[0], sev, title, msg))
+        full = '%s:%s' % (key.split(':')[0], car)
+        if key != 'test' and not cfg['enabled']:
+            return False                                                     # alertele sunt oprite global: nu trimitem si nu jurnalizam
         quiet = in_quiet(cfg['quiet'], now_dt or dt.datetime.now())
         if quiet and sev != 'critical':
+            if full not in self.held:
+                self.held.add(full)
+                S.OWN.run('insert into alerts_log(ts, car, key, severity, title, msg) values(?,?,?,?,?,?)', (time.time(), car, key.split(':')[0], sev, title, msg))
+            # cooldown-ul nu trebuie "consumat" de o alerta netrimisa: reincercam peste ~10 min, cand orele de liniste s-ar putea sa se fi terminat
+            self.fired[full] = (self.now or time.time()) - COOLDOWN.get(key.split(':')[0], 3600) + 600
             return False
+        if full not in self.held:
+            S.OWN.run('insert into alerts_log(ts, car, key, severity, title, msg) values(?,?,?,?,?,?)', (time.time(), car, key.split(':')[0], sev, title, msg))
+        self.held.discard(full)
         S.notify('alert', title, msg)
         return True
 
@@ -92,7 +105,7 @@ class Engine:
         cfg = self.cfg()
         if not cfg['enabled'] or not known:
             return
-        now = time.time()
+        now = self.now = time.time()
         if key == 'charging_state' and cfg['charge_stopped']['on'] and old == 'Charging' and new in ('Stopped', 'NoPower'):
             live = self.S.LIVE.get(car, {})
             soc, lim = live.get('battery_level'), live.get('charge_limit_soc')
@@ -112,7 +125,7 @@ class Engine:
         cfg = self.cfg()
         if not cfg['enabled']:
             return
-        now = now or time.time()
+        now = self.now = now or time.time()
         now_dt = now_dt or dt.datetime.now()
         for car, live in list(self.S.LIVE.items()):
             self.check_plugged(car, live, cfg, now, now_dt)
@@ -130,6 +143,9 @@ class Engine:
         if not (c['on'] and bad):
             self.since.pop(k, None)
             return
+        if self.S.OWN.one("select 1 x from cmd_log where name in ('charge_stop','charging_amps','sched_charging') and ts > ? limit 1", (now - 6 * 3600,)):
+            self.since.pop(k, None)
+            return                                                           # ai oprit-o tu (sau o regula) de curand: nu e o defectiune
         t0 = self.since.setdefault(k, now)
         if now - t0 >= c['minutes'] * 60 and self.cool('plugged_not_charging:%s' % car, now):
             why = 'nu vine curent (verifică invertorul/siguranța/priza)' if live.get('charging_state') == 'NoPower' else 'încărcarea e oprită (verifică programarea, limita sau curentul)'
@@ -180,8 +196,8 @@ class Engine:
             self.S.log('alerta ploaie: %s' % e)
             return
         if now_p > 0.1 or soon > 0.3:
-            self.rain_alerted[car] = True
-            self.fire('rain_window', '🌧️ Plouă (sau urmează) și un geam e deschis', ('Plouă acum' if now_p > 0.1 else 'Ploaie în următoarele 2 ore') + ' la locația mașinii.', car, now_dt, cfg)
+            if self.fire('rain_window', '🌧️ Plouă (sau urmează) și un geam e deschis', ('Plouă acum' if now_p > 0.1 else 'Ploaie în următoarele 2 ore') + ' la locația mașinii.', car, now_dt, cfg):
+                self.rain_alerted[car] = True                                # marcat doar dupa trimitere: in orele de liniste reincercam
 
 
 def init(S):

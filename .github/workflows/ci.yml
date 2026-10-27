@@ -20,9 +20,9 @@ jobs:
       - name: Install dependencies (the same pins as the Dockerfile)
         run: pip install -r requirements.txt
       - name: Python syntax
-        run: python -m py_compile server.py importer.py tools/telemetry_forwarder.py
+        run: python -m compileall -q server.py importer.py features tools updater
       - name: JavaScript syntax
-        run: for f in static/app.js static/extra.js; do node --check "$f"; done
+        run: for f in static/*.js; do node --check "$f"; done
       - name: Shell scripts and compose file
         run: |
           for f in setup.sh scripts/*.sh; do bash -n "$f"; done
@@ -49,4 +49,4 @@ jobs:
             echo "possible secret committed"; exit 1
           fi
       - name: Docker build
-        run: docker build -t teslamate-ui . && docker build -f Dockerfile.proxy -t teslamate-ui-proxy .
+        run: docker build -t teslamate-ui . && docker build -f Dockerfile.proxy -t teslamate-ui-proxy . && docker build -f Dockerfile.updater -t teslamate-ui-updater .

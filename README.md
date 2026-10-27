@@ -48,12 +48,12 @@ Read-only features (everything except Controls/Climate/Charging control/HomeLink
  phone / browser ──► ui (:4100) ──► TeslaMate Postgres (history)      [your TeslaMate stack]
                         │      └──► TeslaMate MQTT (live state)
                         └──► proxy (:4443, tesla-http-proxy) ──► Tesla Fleet API   [signs commands with your virtual key]
- Tesla / internet ──► ui :4101 (public listener: ONLY the Tesla public key + OAuth callback)
+ Tesla / internet ──► ui :4101 (public listener: the Tesla public key, the OAuth callback and share links)
 ```
 
 * `ui`: dependency-light Python server (`server.py`) + static single-page app (`static/`).
 * `proxy`: Tesla's official [vehicle-command](https://github.com/teslamotors/vehicle-command) HTTP proxy, compiled from source at a pinned tag. It signs commands (required for modern vehicles).
-* No database of its own: history comes from TeslaMate; the app only stores OAuth tokens and notification settings in `./data`.
+* History comes from TeslaMate. The app keeps its own small state in `./data` (OAuth tokens, settings, and `app.db` for service reminders, alerts, tags, places and the optional backup copy).
 
 ## Requirements
 

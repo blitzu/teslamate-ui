@@ -31,6 +31,7 @@ PAGES.journey = {
     let d;
     try { d = await api('/api/journey?car=' + car + jQuery(arg)); } catch (e) { return head + `<div class="empty">${X('Nu pot încărca datele.', 'Cannot load the data.')}</div>`; }
     if (!d.drives.length && !d.charges.length) return head + `<div class="empty">${X('Nicio cursă pentru această alegere.', 'No drives for this choice.')}</div>`;
+    window.__jd = { arg: arg || '', d };                                           // after() reutilizeaza raspunsul (pana la 300 de curse cu puncte)
     const s = d.summary, cu = esc(CU());
     const ev = [];
     d.drives.forEach((x, i) => ev.push({ t: x.start, h: `<a class="item" href="#/drive/${x.id}"><div class="t"><i class="jdot" style="background:${JCOL(i, d.drives.length)}"></i><span>${esc(x.from_)}</span><span class="arr">→</span><span>${esc(x.to)}</span></div><div class="m"><span><b>${nf(x.km, 1)}</b> km</span><span>${jDay(x.start)}</span></div></a>` }));
@@ -50,7 +51,7 @@ PAGES.journey = {
       const tag = $('#jr_tag') && $('#jr_tag').value, a = $('#jr_from').value, b = $('#jr_to').value;
       location.hash = tag ? '#/journey/tag:' + encodeURIComponent(tag) : (a || b) ? '#/journey/range:' + a + '..' + b : '#/journey/filter';
     };
-    api('/api/journey?car=' + car + jQuery(arg)).then((d) => {
+    (window.__jd && window.__jd.arg === (arg || '') ? Promise.resolve(window.__jd.d) : api('/api/journey?car=' + car + jQuery(arg))).then((d) => {
       const el = $('#jmap'); if (!el || !window.L || (!d.drives.length && !d.charges.length)) return;
       if (map) { map.remove(); map = null; }
       map = window.L.map(el, { zoomControl: false }).setView([45.9, 25], 6);
@@ -89,10 +90,11 @@ function selBar(k) {
   let b = $('#selbar');
   if (!SEL.on || SEL.kind !== k) { if (b) b.remove(); return; }
   if (!b) { b = document.createElement('div'); b.id = 'selbar'; document.body.appendChild(b); }
-  const n = SEL.ids.size, ids = [...SEL.ids];
+  const n = SEL.ids.size, ids = [...SEL.ids], typed = ($('#sb_tag') || {}).value || '';
   b.innerHTML = `<div class="row"><b>${n} ${X('selectate', 'selected')}</b><div class="sp"></div>${k === 'drives' ? `<a href="#/journey/ids:${ids.join(',')}" class="${n ? '' : 'off'}" id="sb_map">🗺 ${X('Hartă', 'Map')}</a>` : ''}<a href="#" id="sb_all">${X('Toate de pe pagină', 'All on page')}</a></div>
     <div class="addf" style="margin-top:8px"><label>${X('Tag', 'Tag')}<input id="sb_tag" list="sb_tags" maxlength="30" placeholder="${X('ex. Vacanță Grecia', 'e.g. Greece trip')}"><datalist id="sb_tags">${LF_TAGS.map((t) => `<option value="${esc(t.name)}">`).join('')}</datalist></label></div>
     <div class="links" style="margin-top:8px"><a href="#" id="sb_add">${X('Adaugă tag', 'Add tag')}</a><a href="#" id="sb_rem">${X('Scoate tag', 'Remove tag')}</a></div><div class="toast" id="sb_msg" style="display:none"></div>`;
+  if (typed) $('#sb_tag').value = typed;                                          // tag-ul scris nu se pierde cand alegi alt element
   const map_ = $('#sb_map'); if (map_) map_.onclick = (e) => { if (!n) e.preventDefault(); };
   $('#sb_all').onclick = (e) => { e.preventDefault(); document.querySelectorAll('.item[data-id]').forEach((a) => { SEL.ids.add(+a.dataset.id); a.classList.add('picked'); }); selBar(k); };
   const send = async (add) => {

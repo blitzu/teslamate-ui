@@ -88,11 +88,16 @@ class Updater:
         if me.returncode != 0:
             return me.returncode, me.stderr
         wd, project, files, image = self_info(json.loads(me.stdout))
-        cmd = ['docker', 'run', '--rm', '--entrypoint', 'docker', '--cap-drop', 'ALL', '--cap-add', 'DAC_READ_SEARCH', '--security-opt', 'no-new-privileges:true',
+        name = 'tessie-updater-run-%d' % int(time.time())
+        cmd = ['docker', 'run', '--rm', '--name', name, '--entrypoint', 'docker', '--cap-drop', 'ALL', '--cap-add', 'DAC_READ_SEARCH', '--security-opt', 'no-new-privileges:true',
                '-v', '/var/run/docker.sock:/var/run/docker.sock', '-v', '%s:%s' % (wd, wd), '-w', wd, image, 'compose', '-p', project, '--project-directory', wd]
         for f in files:
             cmd += ['-f', f]
-        r = subprocess.run(cmd + args, capture_output=True, text=True, timeout=CMD_TIMEOUT)
+        try:
+            r = subprocess.run(cmd + args, capture_output=True, text=True, timeout=CMD_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            subprocess.run(['docker', 'rm', '-f', name], capture_output=True, timeout=30)           # containerul ajutator nu trebuie sa ramana in urma si sa se suprapuna cu urmatoarea rulare
+            raise
         return r.returncode, (r.stdout + r.stderr)
 
     def work(self):
@@ -130,6 +135,7 @@ class Updater:
 def make_handler(up):
     class H(BaseHTTPRequestHandler):
         protocol_version = 'HTTP/1.0'
+        timeout = 30                                              # o conexiune care nu trimite nimic nu blocheaza handler-ul (pids_limit mic)
 
         def log_message(self, *a):
             pass

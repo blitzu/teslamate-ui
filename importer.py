@@ -84,6 +84,8 @@ def pick_factor(measured, target):
 class Ctx:
     def __init__(self, cur, car_id):
         self.cur, self.car, self.addr_cache = cur, car_id, {}
+        self.ofac = None                                       # factorul odometru (1 sau 1.609) dedus dintr-o cursa cu date bune; folosit pentru restul
+        self.skipped = 0
         cur.execute('select efficiency from cars where id=%s', (car_id,))
         r = cur.fetchone()
         self.eff = float(r[0]) if r and r[0] else 0.15
@@ -209,9 +211,17 @@ def import_drive(ctx, token, vin, d):
     if len(pts) < 2:
         pts = [dict(timestamp=a, latitude=d['starting_latitude'], longitude=d['starting_longitude'], battery_level=d['starting_battery'], speed=0, odometer=None),
                dict(timestamp=b, latitude=d['ending_latitude'], longitude=d['ending_longitude'], battery_level=d['ending_battery'], speed=0, odometer=None)]
+    if d.get('starting_battery') is None or d.get('ending_battery') is None:
+        ctx.skipped += 1                                                     # fara nivel de baterie nu putem construi cursa
+        return 0
     dist = float(d.get('odometer_distance') or 0)
     odos = [p['odometer'] for p in pts if p.get('odometer') is not None]
-    ofac = pick_factor(odos[-1] - odos[0], dist) if len(odos) > 1 and odos[-1] > odos[0] else 1.0
+    if len(odos) > 1 and odos[-1] > odos[0] and dist:
+        ofac = ctx.ofac = pick_factor(odos[-1] - odos[0], dist)
+    else:
+        ofac = ctx.ofac                                                      # unitate nesigura aici: folosim ce am dedus din celelalte curse (sau nimic)
+        if ofac is None:
+            odos = []
     spds = [p.get('speed') or 0 for p in pts]
     sfac = pick_factor(max(spds), d.get('max_speed'))
     soc0, soc1 = d['starting_battery'], d['ending_battery']
@@ -236,7 +246,7 @@ def import_drive(ctx, token, vin, d):
     for i, p in enumerate(pts):
         f = i / (n - 1)
         ideal = round(ideal0 + (ideal1 - ideal0) * f, 2)
-        o = (p['odometer'] * ofac) if p.get('odometer') is not None else (odo0 + dist * f if odo0 is not None else None)
+        o = (p['odometer'] * ofac) if (odos and p.get('odometer') is not None) else (odo0 + dist * f if odo0 is not None else None)
         soc = p.get('battery_level') if p.get('battery_level') is not None else round(soc0 + (soc1 - soc0) * f)
         rows.append((utc(p.get('timestamp') or a), p['latitude'], p['longitude'], int(round((p.get('speed') or 0) * sfac)), o, ideal, ideal, ideal, soc, soc, car, did))
     import psycopg2.extras
@@ -253,11 +263,14 @@ def import_charge(ctx, c):
     cur, car = ctx.cur, ctx.car
     a, b = c['started_at'], c['ended_at']
     s0, s1 = c['starting_battery'], c['ending_battery']
+    if s0 is None or s1 is None:
+        ctx.skipped += 1
+        return
     i0, i1 = ctx.ideal(s0), ctx.ideal(s1)
     addr = ctx.address(c['latitude'], c['longitude'], c.get('location') or '')
     geo = ctx.geofence(c['latitude'], c['longitude'])
     cur.execute("""insert into positions (date, latitude, longitude, speed, odometer, ideal_battery_range_km, est_battery_range_km, rated_battery_range_km, battery_level, usable_battery_level, car_id)
-        values (%s,%s,%s,0,%s,%s,%s,%s,%s,%s,%s) returning id""", (utc(a), c['latitude'], c['longitude'], c.get('odometer'), i0, i0, i0, s0, s0, car))
+        values (%s,%s,%s,0,%s,%s,%s,%s,%s,%s,%s) returning id""", (utc(a), c['latitude'], c['longitude'], (c['odometer'] * ctx.ofac) if (c.get('odometer') is not None and ctx.ofac) else None, i0, i0, i0, s0, s0, car))
     pid = cur.fetchone()[0]
     ctx.ledger['positions'].append(pid)
     added = float(c.get('energy_added') or 0)
@@ -291,13 +304,13 @@ def run(conn, token, vin, car, progress, cutoff=None, dry_run=False, mode='gaps'
     for i, c in enumerate(charges):
         progress.update(phase='Încărcări %d/%d' % (i + 1, len(charges)), done=len(drives) + i)
         import_charge(ctx, c)
-    res = dict(drives=len(drives), charges=len(charges), positions=npts, addresses=len(ctx.ledger['addresses']), dry_run=dry_run, mode=mode)
+    res = dict(drives=len(drives), charges=len(charges), positions=npts, addresses=len(ctx.ledger['addresses']), skipped=ctx.skipped, dry_run=dry_run, mode=mode)
     if dry_run:
         conn.rollback()
     else:
         ctx.ledger['at'] = time.time()
-        if os.path.isfile(LEDGER):                     # import repetat: jurnalul se completeaza, iar "Anuleaza" scoate tot ce a adus aplicatia
-            with open(LEDGER) as lf:
+        if os.path.isfile(LEDGER) or os.path.isfile(LEDGER + '.pending'):                     # import repetat: jurnalul se completeaza, iar "Anuleaza" scoate tot ce a adus aplicatia
+            with open(LEDGER if os.path.isfile(LEDGER) else LEDGER + '.pending') as lf:
                 old = json.load(lf)
             for k, v in old.items():
                 if isinstance(v, list):

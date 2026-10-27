@@ -22,6 +22,7 @@ PAGES.alerts = {
       ${row('al_pnc_on', X('Conectată dar nu încarcă (cu motivul)', 'Plugged in but not charging (with the reason)'), R.pnc.on, num('al_pnc_min', X('După (min)', 'After (min)'), R.pnc.minutes))}
       ${row('al_np_on', X('Nu e conectată seara, acasă', 'Not plugged in at night, at home'), R.np.on, num('al_np_hour', X('Ora', 'Hour'), R.np.hour) + num('al_np_soc', X('Sub baterie %', 'Below battery %'), R.np.min_soc) + `<label>${X('Locul „acasă” (regex)', 'Home place (regex)')}<input id="al_np_home" value="${esc(R.np.home)}"></label>`)}
       ${row('al_tp_on', X('Presiune scăzută la anvelope', 'Low tyre pressure'), R.tp.on, num('al_tp_bar', X('Sub (bar)', 'Below (bar)'), R.tp.bar, 'step="0.05"'))}
+      ${row('al_tl_on', X('Scurgere lentă la anvelope (zilnic)', 'Slow tyre leak (daily)'), c.tire_leak.on)}
       ${row('al_rw_on', X('Plouă (sau urmează) cu geam deschis', 'Rain (or coming) with a window open'), c.rain_window.on)}
       ${row('al_ch_on', X('Cabină fierbinte în Dog/Camp Mode (critică)', 'Hot cabin in Dog/Camp Mode (critical)'), R.ch.on, num('al_ch_temp', X('Peste (°C)', 'Above (°C)'), R.ch.temp))}
       ${row('al_au_on', X('Trează fără motiv (din paznicul de somn)', 'Awake for no reason (from the sleep guard)'), R.au.on, num('al_au_min', X('Peste (min/zi)', 'Over (min/day)'), R.au.minutes))}
@@ -42,7 +43,7 @@ PAGES.alerts = {
       e.preventDefault(); say(X('Se salvează…', 'Saving…'), 'busy');
       const body = { enabled: ck('al_enabled'), quiet: { on: ck('al_quiet_on'), start: v('al_quiet_start').value, end: v('al_quiet_end').value }, charge_stopped: { on: ck('al_cs_on') },
         plugged_not_charging: { on: ck('al_pnc_on'), minutes: v('al_pnc_min').value }, not_plugged_night: { on: ck('al_np_on'), hour: v('al_np_hour').value, min_soc: v('al_np_soc').value, home: v('al_np_home').value },
-        tpms_low: { on: ck('al_tp_on'), bar: v('al_tp_bar').value }, rain_window: { on: ck('al_rw_on') }, cabin_hot: { on: ck('al_ch_on'), temp: v('al_ch_temp').value }, awake_unexplained: { on: ck('al_au_on'), minutes: v('al_au_min').value } };
+        tpms_low: { on: ck('al_tp_on'), bar: v('al_tp_bar').value }, rain_window: { on: ck('al_rw_on') }, cabin_hot: { on: ck('al_ch_on'), temp: v('al_ch_temp').value }, awake_unexplained: { on: ck('al_au_on'), minutes: v('al_au_min').value }, tire_leak: { on: ck('al_tl_on') } };
       const [ok, j] = await pinPost('/api/alerts/config', body);
       say(ok ? '✓ ' + X('Salvat', 'Saved') : '✗ ' + (j.reason || X('Eroare', 'Error')), ok ? 'ok' : 'bad');
     };

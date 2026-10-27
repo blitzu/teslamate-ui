@@ -21,6 +21,7 @@ jobs:
           awk -v v="$VER" '/^## /{ if (f) exit; if ($2 == v) { f = 1; next } } f' CHANGELOG.md > notes.md
           test -s notes.md || { echo "empty release notes"; exit 1; }
           echo "VER=$VER" >> "$GITHUB_ENV"
+          case "$VER" in *-*) echo "PRE=1" >> "$GITHUB_ENV";; esac     # 1.6.0-rc1: pre-release, never becomes :latest
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - name: Tests
@@ -43,9 +44,7 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           build-args: BUILD_COMMIT=${{ github.sha }}
-          tags: |
-            ${{ env.IMAGE }}:${{ env.VER }}
-            ${{ env.IMAGE }}:latest
+          tags: ${{ env.IMAGE }}:${{ env.VER }}
       - name: Build and push the signing proxy image
         uses: docker/build-push-action@v6
         with:
@@ -53,9 +52,7 @@ jobs:
           file: Dockerfile.proxy
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: |
-            ${{ env.IMAGE }}-proxy:${{ env.VER }}
-            ${{ env.IMAGE }}-proxy:latest
+          tags: ${{ env.IMAGE }}-proxy:${{ env.VER }}
       - name: Build and push the updater image
         uses: docker/build-push-action@v6
         with:
@@ -63,10 +60,14 @@ jobs:
           file: Dockerfile.updater
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: |
-            ${{ env.IMAGE }}-updater:${{ env.VER }}
-            ${{ env.IMAGE }}-updater:latest
+          tags: ${{ env.IMAGE }}-updater:${{ env.VER }}
+      - name: Move :latest to this version (only after all three images were pushed)
+        if: env.PRE == ''
+        run: |
+          for n in "" -proxy -updater; do
+            docker buildx imagetools create -t "$IMAGE$n:latest" "$IMAGE$n:$VER"
+          done
       - name: GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" --title "v$VER" --notes-file notes.md
+        run: gh release create "$GITHUB_REF_NAME" --title "v$VER" --notes-file notes.md ${PRE:+--prerelease}

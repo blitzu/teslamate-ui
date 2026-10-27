@@ -204,7 +204,7 @@ function pageCar() {
 <h2>Detalii</h2><div class="grid">${stats}</div>
 <h2>Ultima cursă · ultima încărcare</h2><div id="last"></div>
 <div class="links"><a href="#/climate">🌡 ${X('Clima', 'Climate')} ›</a></div>
-${S.links && S.links.teslamate ? `<div class="links"><a href="${esc(safeUrl(S.links.teslamate))}" target="_blank" rel="noopener">TeslaMate</a><a href="${esc(safeUrl(S.links.grafana))}" target="_blank" rel="noopener">Grafana</a></div>` : ''}
+${S.links && S.links.teslamate ? `<div class="links"><a href="${esc(safeUrl(S.links.teslamate))}" target="_blank" rel="noopener">TeslaMate</a>${S.links.grafana ? `<a href="${esc(safeUrl(S.links.grafana))}" target="_blank" rel="noopener">Grafana</a>` : ''}</div>` : ''}
 ${S.public_demo ? '<p class="note">' + (LANG === 'en' ? 'Demo with sample data - no real vehicle is connected.' : 'Demonstrație cu date fictive - nicio mașină reală nu este conectată.') + '</p>' : S.demo ? '<p class="note">' + (LANG === 'en' ? 'Demo data. Connect your Tesla account in TeslaMate (' + esc(S.links.teslamate) + ') and every page fills in with real data.' : 'Date demonstrative. Conectează contul Tesla în TeslaMate (' + esc(S.links.teslamate) + ') și toate paginile se umplu singure cu datele reale.') + '</p>' : ''}
 ${S.db_error ? '<p class="note">' + (LANG === 'en' ? 'The TeslaMate database is not responding right now.' : 'Baza de date TeslaMate nu răspunde momentan.') + '</p>' : ''}`;
 }
@@ -303,6 +303,7 @@ async function pageDrive(id) {
   ${sec('Baterie (%)', line(pts.map((p) => [t(p), p[5]]), { color: '#6fd6b8', fx: (x) => new Date(x).toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' }) }))}
   ${sec('Altitudine (m)', line(pts.map((p) => [t(p), p[6]]), { color: '#b69bff', fx: (x) => new Date(x).toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' }) }))}`;
   setTimeout(() => {
+    if (!location.hash.startsWith('#/drive/' + id)) return;                          // s-a navigat intre timp: nu desena traseul acesta in alta pagina
     const el = $('#dmap'); if (!el || !window.L || pts.length < 2) return;
     if (map) { map.remove(); map = null; }
     map = window.L.map(el, { zoomControl: false }).setView([pts[0][1], pts[0][2]], 13);
@@ -314,15 +315,16 @@ async function pageDrive(id) {
     map.fitBounds(pts.map((p) => [p[1], p[2]]), { padding: [24, 24] });
     driveHover(pts, map);
   }, 0);
-  setTimeout(() => tagsBind('drive', +id), 0);
+  setTimeout(() => { if (location.hash.startsWith('#/drive/' + id)) tagsBind('drive', +id); }, 0);
   return html;
 }
 
 async function pageCharge(id) {
   await lfLoadTags();
   const c = await api('/api/charge_row/' + id + '?car=' + car);
-  window.__chrow = c;
   const pts = (await api('/api/charge/' + id)).points, t = (p) => +T(p[0]);
+  if (!location.hash.startsWith('#/charge/' + id)) return '';                       // s-a navigat intre timp: nu lasam editarea pe incarcarea veche
+  window.__chrow = c;
   const fx = (x) => new Date(x).toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' });
   return `<a class="back" href="#/charges">‹ Încărcări</a>
   <div class="top row"><div><h1 style="font-size:21px">${esc(c?.name)}</h1><small>${c ? fdate(T(c.start_date), { weekday: 'long', day: 'numeric', month: 'long' }) + ' · ' + tm(c.start_date) + '–' + tm(c.end_date) : ''}</small></div><div class="sp"></div><span class="badge ${c?.dc ? 'dc' : 'ac'}">${c?.dc ? 'DC' : 'AC'}</span></div>
@@ -341,7 +343,7 @@ let days = 30;
 async function statsBody(embed) {
   const [o, b] = await Promise.all([api('/api/overview?car=' + car + '&days=' + days), api('/api/battery?car=' + car)]);
   const d = o.drives, ch = o.charges;
-  const wh = d.km > 0 ? d.kwh * 1000 / d.km : null;
+  const wh = (d.km_e || 0) > 0 ? d.kwh * 1000 / d.km_e : null;                    // doar km din cursele cu autonomie cunoscuta (cele importate pot lipsi)
   const SM = { online: ['Online', '#6fd6b8'], asleep: ['Doarme', '#7aa8ff'], offline: ['Offline', '#7f8994'] };
   const tot = b.states.reduce((s, x) => s + x.hours, 0) || 1;
   const stateBar = b.states.length ? `<div style="display:flex;height:16px;border-radius:99px;overflow:hidden;margin-top:6px">${b.states.map((x) => `<div title="${esc(x.s)}" style="width:${x.hours / tot * 100}%;background:${(SM[x.s] || ['', '#555'])[1]}"></div>`).join('')}</div>
@@ -396,7 +398,7 @@ async function sendCmd(name, label, arg, tile) {
   try {
     const r = await fetch('/api/cmd/' + name, { method: 'POST', headers: { 'X-Pin': pin, 'Content-Type': 'application/json' }, body: JSON.stringify({ car, arg }) });
     const j = await r.json();
-    if (r.status === 403) { pinClear(); msg(tr('PIN greșit.'), 'bad'); return; }
+    if (r.status === 403 && /PIN/i.test(j.reason || '')) { pinClear(); msg(tr('PIN greșit.'), 'bad'); return; }
     msg(j.ok ? '✓ ' + label + (j.via === 'ble' ? ' · BLE' : '') : '✗ ' + label + (j.reason ? ' — ' + j.reason : ''), j.ok ? 'ok' : 'bad');
   } catch (e) { msg('✗ ' + label + ' — ' + e.message, 'bad'); }
   finally { if (tile) tile.classList.remove('busy'); }
@@ -476,7 +478,8 @@ const ICON = {
 };
 const TABS = [['car', 'Mașină'], ['climate', 'Clima'], ['drives', 'Curse'], ['charges', 'Încărcări'], ['stats', 'Statistici'], ['settings', 'Setări']];
 function renderNav(active) { drawNav(active); }
-let renderSeq = 0;
+let renderSeq = 0, lastRendered = '';
+const PG = (p) => (Object.prototype.hasOwnProperty.call(PAGES, p) ? PAGES[p] : undefined);      // fara nume mostenite (#/constructor)
 const SCROLL = {};                                           // pozitia listelor (Curse / Incarcari / Activitate) cand intri intr-un detaliu
 async function render() {
   const h = location.hash.replace(/^#\/?/, '') || 'car';
@@ -484,9 +487,10 @@ async function render() {
   const prevRoute = route;
   if (['drives', 'charges', 'activity'].includes(prevRoute) && p !== prevRoute) SCROLL[prevRoute] = scrollY;
   route = p;
+  if (window.__updTimer) { clearInterval(window.__updTimer); window.__updTimer = null; }                // sondajul de dupa actualizare nu continua pe alte pagini
   if (p !== 'trip' && typeof stopReplay === 'function') stopReplay();            // si cand reluarea inca se incarca (RP nu e setat)
   if (p !== 'profiler' && typeof pfClose === 'function') pfClose();
-  renderNav(['drive', 'trip'].includes(p) ? 'drives' : p === 'charge' ? 'charges' : p === 'sleep' ? 'parked' : p === 'stats' ? 'activity' : p === 'climate' ? 'car' : (PAGES[p] && PAGES[p].nav) || p);
+  renderNav(['drive', 'trip'].includes(p) ? 'drives' : p === 'charge' ? 'charges' : p === 'sleep' ? 'parked' : p === 'stats' ? 'activity' : p === 'climate' ? 'car' : (PG(p) && PG(p).nav) || p);
   const seq = ++renderSeq;
   document.body.classList.add('busy');                       // pagina veche ramane vizibila, usor estompata, cat se incarca cea noua
   let html = '';
@@ -504,14 +508,15 @@ async function render() {
     else if (p === 'profiler') html = await pageProfiler();
     else if (p === 'auto') html = await pageAuto();
     else if (p === 'settings') html = await pageSettings();
-    else if (PAGES[p]) html = await PAGES[p].render(arg);
+    else if (PG(p)) html = await PG(p).render(arg);
     else if (p === 'climate') html = pageClimate();
     else if (p === 'trip') html = '';
     else { location.replace('#/car'); return; }
   } catch (e) { html = `<div class="empty">${tr('Eroare la încărcare: ')}${esc(e.message)}<br><a href="#" id="retry" style="color:var(--gold)">${X('Reîncearcă', 'Retry')}</a></div>`; }
   if (seq !== renderSeq) return;
   if (map && p !== 'car' && p !== 'drive') { map.remove(); map = null; }
-  const y = scrollY;
+  const y = scrollY, same = lastRendered === location.hash;
+  lastRendered = location.hash;
   setHtml(view, html);
   document.body.classList.remove('busy');
   const rt = $('#retry'); if (rt) rt.onclick = (ev) => { ev.preventDefault(); render(); };
@@ -528,10 +533,10 @@ async function render() {
   if (p === 'profiler') afterProfiler();
   if (p === 'auto') afterAuto();
   if (p === 'settings') afterSettings();
-  if (PAGES[p] && PAGES[p].after) PAGES[p].after(arg);
-  if (p === 'charge') { afterChargeSolar(arg); afterChargeEdit(); afterChargePlace(); }
+  if (PG(p) && PG(p).after) PG(p).after(arg);
+  if (p === 'charge') { afterChargeSolar(arg); afterChargeEdit(); afterChargePlace(); tagsBind('charge', +arg); }
   const back = ['drive', 'charge', 'trip'].includes(prevRoute) && ['drives', 'charges', 'activity'].includes(p) && SCROLL[p] != null;
-  if (p === 'car') scrollTo(0, y); else if (seq === renderSeq && !window.__keep) scrollTo(0, back ? SCROLL[p] : 0);
+  if (p === 'car' || same) scrollTo(0, y); else if (seq === renderSeq && !window.__keep) scrollTo(0, back ? SCROLL[p] : 0);
 }
 addEventListener('hashchange', render);
 
@@ -541,7 +546,14 @@ function carSoon(c) {                                   // redesenare cu throttl
   if (route !== 'car' || !c || c.id !== car) return;
   const now = Date.now(); if (!t) rrFirst = now;
   clearTimeout(t);
-  t = setTimeout(() => { t = null; const y = scrollY; setHtml(view, pageCar()); drawMap($('#map'), c.live); afterCar(); scrollTo(0, y); }, Math.max(0, Math.min(400, 2000 - (now - rrFirst))));
+  t = setTimeout(() => {
+    t = null; if (route !== 'car') return;                                           // s-a plecat din pagina Masina intre timp
+    const y = scrollY, keep = { cmds: ($('#cmds') || {}).innerHTML, last: ($('#last') || {}).innerHTML };
+    setHtml(view, pageCar());
+    if (keep.cmds) setHtml($('#cmds'), keep.cmds);                                 // pana revin cererile, pastram ce era: pagina nu se mai scurteaza si nu sare scroll-ul
+    if (keep.last) setHtml($('#last'), keep.last);
+    drawMap($('#map'), c.live); afterCar(); scrollTo(0, y);
+  }, Math.max(0, Math.min(400, 2000 - (now - rrFirst))));
 }
 function newBuild(n) {                                  // s-a facut deploy cat aplicatia statea suspendata in memorie (iOS): reincarc ca sa nu rulez cod vechi
   const a = S && S.app && S.app.build, b = n && n.app && n.app.build;

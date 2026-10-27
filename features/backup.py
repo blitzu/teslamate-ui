@@ -14,7 +14,7 @@ import sqlite3
 import threading
 import time
 
-TABLES = ['cars', 'addresses', 'geofences', 'drives', 'positions', 'charging_processes', 'charges', 'states', 'updates', 'settings']
+TABLES = ['car_settings', 'cars', 'addresses', 'geofences', 'drives', 'positions', 'charging_processes', 'charges', 'states', 'updates', 'settings']
 APPEND = {'positions', 'charges'}               # randuri imutabile: se copiaza doar ce are id mai mare decat ultimul copiat
 SYNC_EVERY = 600
 KEEP_SNAPSHOTS = 7
@@ -155,8 +155,13 @@ class Backup:
                         if r is not None:
                             res[t] = r
                     except Exception as e:  # noqa
-                        err = '%s: %s' % (t, e)
+                        err = (err + '; ' if err else '') + '%s: %s' % (t, e)
                         self.S.log('backup %s: %s' % (t, e))
+                        try:
+                            if getattr(src, 'cn', None) is not None:
+                                src.cn.rollback()                      # o tranzactie esuata ar strica si tabelele urmatoare
+                        except Exception:  # noqa
+                            pass
             finally:
                 if own:
                     src.__exit__()
@@ -176,16 +181,15 @@ class Backup:
         name = os.path.join(self.snapdir, 'teslamate-%s.db' % dt.date.today().strftime('%Y%m%d'))
         if os.path.exists(name):
             return name
+        part = name + '.part'                                           # se scrie intr-un fisier partial: o cadere la mijloc nu lasa un instantaneu "gata" dar trunchiat
+        os.close(os.open(part, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600))
         with self.db.lock:
-            dst = sqlite3.connect(name)
+            dst = sqlite3.connect(part)
             try:
                 self.db.conn().backup(dst)
             finally:
                 dst.close()
-        try:
-            os.chmod(name, 0o600)
-        except OSError:
-            pass
+        os.replace(part, name)
         snaps = sorted(f for f in os.listdir(self.snapdir) if re.fullmatch(r'teslamate-\d{8}\.db', f))
         for f in snaps[:-KEEP_SNAPSHOTS]:
             try:
@@ -197,13 +201,14 @@ class Backup:
     def status(self):
         row = self.db.one("select v from _status where k='last'")
         last = json.loads(row['v']) if row else None
-        snaps = sorted(os.listdir(self.snapdir)) if os.path.isdir(self.snapdir) else []
+        snaps = sorted(f for f in os.listdir(self.snapdir) if not f.endswith('.part')) if os.path.isdir(self.snapdir) else []
         size = os.path.getsize(self.path) if os.path.exists(self.path) else 0
         return dict(last=last, running=self.running, size=size, snapshots=snaps, every=SYNC_EVERY)
 
     def copy_for_download(self):
         """Copie consistenta intr-un fisier temporar (fisierul viu poate fi modificat in timp ce se descarca)."""
-        tmp = self.path + '.dl-%d' % int(time.time())
+        tmp = self.path + '.dl-%d-%s' % (time.time_ns(), os.urandom(3).hex())
+        os.close(os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))      # contine toata istoria locatiilor: doar proprietarul o citeste
         with self.db.lock:
             dst = sqlite3.connect(tmp)
             try:
@@ -251,7 +256,8 @@ def init(S):
         if what == 'teslamate':
             path, name = B.copy_for_download(), 'teslamate-backup.db'
         elif what == 'app':
-            tmp = S.DATA_DIR + '/app.db.dl-%d' % int(time.time())
+            tmp = S.DATA_DIR + '/app.db.dl-%d-%s' % (time.time_ns(), os.urandom(3).hex())
+            os.close(os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
             with S.OWN.lock:
                 dst = sqlite3.connect(tmp)
                 try:

@@ -25,6 +25,9 @@ def digest(tok):
     return hashlib.sha256(tok.encode()).hexdigest()
 
 
+_HOME_SEEN = {}                                  # id link -> ultima data cand masina era "acasa" (un geofence gol trecator nu trebuie sa-i arate pozitia exacta)
+
+
 def view(share, live, now=None, home=HOME):
     """Ce vede cel care are linkul. Aici se decide ce iese din aplicatie: nimic altceva decat campurile de mai jos."""
     now = now or time.time()
@@ -32,6 +35,12 @@ def view(share, live, now=None, home=HOME):
     state = 'driving' if live.get('shift_state') in ('D', 'R', 'N') else 'parked'
     geo = str(live.get('geofence') or '')
     at_home = bool(share['hide_home']) and bool(re.search(home, geo, re.I))
+    sid = share.get('id') if hasattr(share, 'get') else None
+    if share['hide_home'] and sid is not None:
+        if at_home:
+            _HOME_SEEN[sid] = now
+        elif not geo and now - _HOME_SEEN.get(sid, 0) < 180:
+            at_home = True                                                  # geofence necunoscut chiar dupa ce era acasa: ramane ascuns cateva minute
     out['state'] = 'home' if at_home else state
     if not at_home and live.get('latitude') is not None and live.get('longitude') is not None:
         out['lat'], out['lon'] = round(float(live['latitude']), 5), round(float(live['longitude']), 5)
