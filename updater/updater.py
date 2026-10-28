@@ -111,6 +111,8 @@ class Updater:
             s.update(finished=time.time(), success=True if via_self else None,
                      log=(str(s.get('log') or '') + '\n' + ('updater repornit cu imaginea noua.' if via_self else 'rularea a fost intrerupta (containerul a fost oprit).'))[-4000:])
         self.state.update({k: s[k] for k in ('started', 'finished', 'success', 'log') if k in s}, running=False)
+        if s.get('running'):
+            self.save_state()                                         # fisierul nu mai ramane pe "running": o repornire ulterioara nu mai repeta mesajul
 
     def save_state(self, **extra):
         if not self.state_file:

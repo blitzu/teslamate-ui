@@ -106,6 +106,10 @@ class UpdaterTests(unittest.TestCase):
         st = up.status()
         self.assertEqual((st['running'], st['success']), (False, True))
         self.assertIn('imaginea noua', st['log'])
+        self.assertFalse(json.load(open(sf))['running'])                     # starea corectata e scrisa inapoi in fisier
+        st2 = U.Updater(TOKEN, ['ui'], runner=lambda a: (0, ''), state_file=sf).status()           # alta repornire, mai tarziu
+        self.assertEqual(st2['log'].count('imaginea noua'), 1)
+        self.assertEqual(st2['finished'], st['finished'])
         json.dump(dict(running=True, started=1, finished=0, success=None, log='$ pull'), open(sf, 'w'))     # oprit din alt motiv
         st = U.Updater(TOKEN, ['ui'], runner=lambda a: (0, ''), state_file=sf).status()
         self.assertEqual((st['running'], st['success']), (False, None))

@@ -3,6 +3,11 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.5.5 - 2026-10-28
+
+### Fixes
+- **The updater remembered a finished self-update as still running.** After it replaced its own image it corrected its state only in memory, so the state file stayed on "running" and any later restart (a reboot, for example) wrongly reported "updater restarted with the new image" again. The corrected state is now written back right away. The update itself was never affected.
+
 ## 1.5.4 - 2026-10-27
 
 ### Fixes
