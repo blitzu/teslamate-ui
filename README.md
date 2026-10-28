@@ -119,6 +119,7 @@ Set `NOTIFY_WEBHOOK` — see **[docs/notifications.md](docs/notifications.md)** 
 | Overpass / OpenStreetMap (`overpass-api.de` and mirrors) | “Find the station” button on a charge | the coordinates of that charge, only when you press the button | server |
 | AmpWhere (`ampwhere.com`), **on by default, can be switched off** | station, provider and tariffs for “Find the station” and automatic linking (see [docs/costs.md](docs/costs.md#find-the-station-of-a-charge)) | nothing about you or your car: one anonymous download per day of the station list of each country where you charge; the search is local | server |
 | frankfurter.dev (ECB rates) | EUR and station prices → your currency | only the currency codes | server |
+| Let's Encrypt (`acme-v02.api.letsencrypt.org`), DuckDNS (`www.duckdns.org`), ipify (`api.ipify.org`), only if you turn on *Direct internet access* | HTTPS certificate; DuckDNS keeps your name pointing at your IP; ipify shows your public IP in the status box (own-domain mode only) | your domain name and the ACME requests; the DuckDNS token goes only to DuckDNS; ipify gets an anonymous request | server |
 | open.er-api.com ([Exchange Rate API](https://www.exchangerate-api.com)) | rates for currencies the ECB does not publish (MDL, RSD, UAH…), as a fallback | only the currency codes | server |
 | energy-charts.info | day-ahead (PZU) prices for the PZU report | the dates needed | server |
 | Open-Meteo (server side) | rain-with-window alert | coordinates rounded to 0.1°, only while a window is open | server |

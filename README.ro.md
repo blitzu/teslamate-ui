@@ -118,6 +118,7 @@ Setezi `NOTIFY_WEBHOOK` — vezi **[docs/notifications.md](docs/notifications.md
 | Overpass / OpenStreetMap (`overpass-api.de` și oglinzi) | butonul „Caută stația” de pe o încărcare | coordonatele acelei încărcări, doar când apeși butonul | server |
 | AmpWhere (`ampwhere.com`), **pornit implicit, se poate opri** | stația, furnizorul și tarifele pentru „Caută stația” și asocierea automată (vezi [docs/costs.md](docs/costs.md#find-the-station-of-a-charge)) | nimic despre tine sau mașină: o descărcare anonimă pe zi a listei de stații din fiecare țară în care încarci; căutarea e locală | server |
 | frankfurter.dev (cursuri BCE) | EUR și prețurile stațiilor → moneda ta | doar codurile monedelor | server |
+| Let's Encrypt (`acme-v02.api.letsencrypt.org`), DuckDNS (`www.duckdns.org`), ipify (`api.ipify.org`), doar dacă pornești *Acces direct din internet* | certificatul HTTPS; DuckDNS ține numele tău spre IP-ul tău; ipify arată IP-ul public în caseta de stare (doar la domeniu propriu) | numele domeniului și cererile ACME; tokenul DuckDNS ajunge doar la DuckDNS; ipify primește o cerere anonimă | server |
 | open.er-api.com ([Exchange Rate API](https://www.exchangerate-api.com)) | cursuri pentru monedele pe care BCE nu le publică (MDL, RSD, UAH…), ca rezervă | doar codurile monedelor | server |
 | energy-charts.info | prețurile PZU pentru raportul PZU | datele necesare | server |
 | Open-Meteo (pe server) | alerta „ploaie cu geam deschis” | coordonate rotunjite la 0,1°, doar cât un geam e deschis | server |

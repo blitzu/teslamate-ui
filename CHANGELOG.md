@@ -3,6 +3,12 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.8.0 - 2026-10-28
+
+### New features
+- **Direct internet access with HTTPS (Let's Encrypt), for people without Cloudflare - all from Settings → Security.** Two ways: a free **DuckDNS** subdomain (the app keeps it pointing at your IP and validates with a DNS-01 TXT record: no port 80, nothing to open for validation) or **your own domain** whose IP your ISP or router already keeps up to date (`home.go.ro` from Digi, No-IP, a domain you own; validated with TLS-ALPN-01 on port 443, no DNS access needed, not for CGNAT). The app gets the certificate by itself, renews it when under 30 days are left and serves the whole app over HTTPS on the public port. You only add one router rule (external 443 to the app's public port). It needs the app password and cannot be switched on without it; the HTTPS listener ignores proxy headers, answers only for your domain, checks `Origin`, sends HSTS, limits connections and serves nothing without a password. Full guide: docs/internet-access.md. (While it is on, the public port stops answering plain HTTP - do not use it together with a Cloudflare Tunnel on that port.)
+- **Settings instead of `.env`.** *Addresses allowed from the local network* (`ALLOWED_HOSTS`), *AmpWhere countries* and *Tesla images for the car* (`TESLA_RENDERS`) are now in the interface (the `.env` values still work as defaults), and the `421 Unknown address` message tells you exactly which address was refused and where to add it.
+
 ## 1.7.0 - 2026-10-28
 
 ### New features

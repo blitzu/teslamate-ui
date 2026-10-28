@@ -79,7 +79,16 @@ Sessions made with the app password are bound to that password: **changing the p
 
 ## Host and origin checks
 
-From the local network (requests that did not come through Cloudflare or a proxy) the app only answers when the `Host` header is an IP address, `localhost`, a single-label or `.local`/`.lan` name, the host of `APP_URL`, or listed in `ALLOWED_HOSTS` (comma-separated). A malicious web page that makes its own domain resolve to your home IP (DNS rebinding) is therefore refused with `421`. `POST`s from a browser must carry an `Origin` equal to the page they come from.
+From the local network (requests that did not come through Cloudflare or a proxy) the app only answers when the `Host` header is an IP address, `localhost`, a single-label or `.local`/`.lan` name, the host of `APP_URL`, or listed in **Settings → Security → Addresses allowed from the local network** (`ALLOWED_HOSTS` in `.env` still works). A malicious web page that makes its own domain resolve to your home IP (DNS rebinding) is therefore refused with `421`. `POST`s from a browser must carry an `Origin` equal to the page they come from.
+
+### Opening the app from the internet and getting `421` / "Adresă necunoscută"
+
+If you reach the app through your own domain **without Cloudflare** (for example a router port-forward with a dynamic-DNS name, or a reverse proxy that does not add an `X-Forwarded-For` header), the request looks like it comes from the local network and its `Host`
+(your domain) is not known, so the app answers `421`. The message names the refused address. Fix, all in the app (open it by its IP address): **Settings → Security → Direct internet access → Addresses allowed from the local network**, add exactly that host name (no `https://`, no port),
+or set the same address as **App address** in Settings → Display. Several names are comma-separated.
+
+The simplest way to expose the app without Cloudflare is the built-in **HTTPS with Let's Encrypt + DuckDNS** ([docs/internet-access.md](internet-access.md)): the app gets and renews its own certificate and serves HTTPS by itself, with the right
+host handling, no reverse proxy and no `.env` editing. Do **not** expose port 4100 directly to the internet without TLS.
 
 ## Hardening checklist
 

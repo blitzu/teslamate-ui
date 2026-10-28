@@ -294,6 +294,11 @@ class HttpOpen(Isolated):
 
     def test_host_and_origin_checks(self):
         self.assertEqual(req('GET', '/api/health', headers={'Host': 'evil.example.com'})[0], 421)                  # DNS rebinding
+        st, d, _ = req('GET', '/api/health', headers={'Host': 'masina.exemplu.ro'})
+        self.assertEqual(st, 421)
+        reason = json.loads(d)['reason']
+        self.assertIn('masina.exemplu.ro', reason)                                                            # mesajul spune ce adresa a fost refuzata
+        self.assertIn('Adrese permise', reason)
         self.assertEqual(req('GET', '/api/health', headers={'Host': '192.168.1.5:4100'})[0], 503)                  # IP: acceptat (503 = fara DB in test)
         self.assertEqual(req('GET', '/api/health', headers={'Host': 'casa'})[0], 503)                              # nume simplu: acceptat
         self.assertNotEqual(req('GET', '/api/health', headers={'Host': 'masina.exemplu.ro', 'Cf-Ray': 'x'})[0], 421)   # prin Cloudflare nu se verifica

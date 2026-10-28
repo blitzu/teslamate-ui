@@ -1888,8 +1888,8 @@ def _vehicle_data(car, force=False):
 # ---------------------------------------------------------------- configurare din aplicatie (/data/config.json; suprascrie valorile din .env)
 CFGFILE = DATA_DIR + '/config.json'
 CFG = {}
-CFG_SECRETS = ('fleet_secret', 'pin', 'ha_token', 'notify_webhook', 'app_password', 'tessie_token', 'update_token', 'telegram_token')
-CFG_KEYS = CFG_SECRETS + ('telegram_chat', 'update_check', 'update_webhook', 'app_url', 'price_grid', 'fleet_id', 'fleet_domain', 'fleet_base', 'ha_url', 'ha_prefix', 'ha_ble', 'ha_grid', 'ha_pv', 'currency', 'ampwhere', 'ice_l100', 'fuel_type', 'fuel_price', 'fuel_country', 'link_tm', 'link_gf', 'acc_team', 'acc_aud', 'acc_email', 'roles')
+CFG_SECRETS = ('fleet_secret', 'pin', 'ha_token', 'notify_webhook', 'app_password', 'tessie_token', 'update_token', 'telegram_token', 'duck_token')
+CFG_KEYS = CFG_SECRETS + ('telegram_chat', 'update_check', 'update_webhook', 'app_url', 'price_grid', 'fleet_id', 'fleet_domain', 'fleet_base', 'ha_url', 'ha_prefix', 'ha_ble', 'ha_grid', 'ha_pv', 'currency', 'ampwhere', 'ampwhere_country', 'tesla_renders', 'allowed_hosts', 'inet_on', 'inet_mode', 'inet_domain', 'duck_domain', 'duck_token', 'inet_staging', 'inet_email', 'ice_l100', 'fuel_type', 'fuel_price', 'fuel_country', 'link_tm', 'link_gf', 'acc_team', 'acc_aud', 'acc_email', 'roles')
 EU_BASE = 'https://fleet-api.prd.eu.vn.cloud.tesla.com'
 _tz = os.environ.get('TZ', '') or 'UTC'
 LOCAL_TZ = _tz if re.fullmatch(r'[A-Za-z0-9_+\-/]{1,40}', _tz) else 'UTC'      # zilele din statistici se grupeaza pe ora locala, nu UTC
@@ -1958,7 +1958,9 @@ def cfg_public():
         notify=dict(webhook_set=bool(NHOOK)), tessie=dict(token_set=bool(cget('tessie_token', 'TESSIE_TOKEN'))),
         telegram=dict(token_set=bool(cget('telegram_token', 'TELEGRAM_TOKEN')), chat=cget('telegram_chat', 'TELEGRAM_CHAT', '')),
         update=dict(check=update_cfg_on(), webhook=cget('update_webhook', 'UPDATE_WEBHOOK', ''), token_set=bool(cget('update_token', 'UPDATE_TOKEN', '')), private=APP_VERSION.endswith('-private')),
-        display=dict(app_url=APPURL, price_grid=cget('price_grid', 'PRICE_GRID', ''), currency=CURRENCY, ampwhere=str(cget('ampwhere', 'AMPWHERE', '1')).strip().lower() in ('1', 'true', 'yes', 'on'), ice_l100=cget('ice_l100', 'ICE_L100', ''), fuel_type=fuel_conf()['type'], fuel_price=cget('fuel_price', 'FUEL_PRICE', ''), fuel_country=fuel_conf()['country'], teslamate=LINKS['teslamate'], grafana=LINKS['grafana']),
+        display=dict(app_url=APPURL, price_grid=cget('price_grid', 'PRICE_GRID', ''), currency=CURRENCY, ampwhere_country=cget('ampwhere_country', 'AMPWHERE_COUNTRY', 'auto'), tesla_renders=str(cget('tesla_renders', 'TESLA_RENDERS', '0')).lower() in ('1', 'true', 'yes', 'on'), ampwhere=str(cget('ampwhere', 'AMPWHERE', '1')).strip().lower() in ('1', 'true', 'yes', 'on'), ice_l100=cget('ice_l100', 'ICE_L100', ''), fuel_type=fuel_conf()['type'], fuel_price=cget('fuel_price', 'FUEL_PRICE', ''), fuel_country=fuel_conf()['country'], teslamate=LINKS['teslamate'], grafana=LINKS['grafana']),
+        inet=dict(on=str(cget('inet_on', 'INET_ON', '0')).lower() in ('1', 'true'), mode=cget('inet_mode', 'INET_MODE', 'duckdns'), own_domain=cget('inet_domain', 'INET_DOMAIN', ''), domain=cget('duck_domain', 'DUCK_DOMAIN', ''), token_set=bool(cget('duck_token', 'DUCK_TOKEN', '')),
+                  staging=str(cget('inet_staging', 'INET_STAGING', '0')).lower() in ('1', 'true'), email=cget('inet_email', 'INET_EMAIL', ''), allowed_hosts=cget('allowed_hosts', 'ALLOWED_HOSTS', '')),
         access=dict(team=ACCESS['team'], aud=ACCESS['aud'], email=ACCESS['email'], roles=str(cget('roles', 'ROLES')), password_set=bool(AUTH['pw'])))
 
 
@@ -2019,17 +2021,50 @@ def cfg_update(b):
             errs.append('parola trebuie să aibă minim 12 caractere')
         if k == 'fleet_base' and v and v not in (EU_BASE, 'https://fleet-api.prd.na.vn.cloud.tesla.com', 'https://fleet-api.prd.cn.vn.cloud.tesla.cn'):
             errs.append('regiune invalidă')
+        if k in ('inet_on', 'inet_staging') and v not in ('', '0', '1'):
+            errs.append('%s invalid' % k)
+        if k == 'inet_mode' and v not in ('', 'duckdns', 'own'):
+            errs.append('mod invalid')
+        if k == 'inet_domain' and v and v != '__clear__':
+            v = re.sub(r'^https?://', '', v.strip().lower()).split('/')[0].split(':')[0].strip('.')
+            if not re.fullmatch(r'([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62}', v) or re.fullmatch(r'[0-9.]+', v):
+                errs.append('domeniu invalid: scrie numele complet, fără https:// (ex. casa.go.ro)')
+        if k == 'duck_domain' and v and v != '__clear__':
+            v = re.sub(r'^https?://', '', v.strip().lower()).strip('/')
+            v = v[:-len('.duckdns.org')] if v.endswith('.duckdns.org') else v
+            if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,62}', v):
+                errs.append('DuckDNS: scrie doar numele subdomeniului (ex. masina pentru masina.duckdns.org)')
+        if k == 'duck_token' and v and v != '__clear__' and not re.fullmatch(r'[0-9a-fA-F-]{30,40}', v):
+            errs.append('token DuckDNS invalid (arată ca xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)')
+        if k == 'inet_email' and v and v != '__clear__' and not re.fullmatch(r'[^@\s]{1,64}@[^@\s]{1,200}\.[A-Za-z]{2,}', v):
+            errs.append('e-mail invalid')
+        if k == 'allowed_hosts' and v and v != '__clear__':
+            hosts = [x.strip().lower() for x in re.split(r'[,\s;]+', v) if x.strip()]
+            if any(not re.fullmatch(r'[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?', x) for x in hosts):
+                errs.append('adrese permise: nume de domenii separate prin virgulă, fără https:// și fără port')
+            v = ','.join(hosts)
+        if k == 'ampwhere_country' and v and v != '__clear__':
+            parts = [x.strip().lower() for x in re.split(r'[,\s;]+', v) if x.strip()]
+            if parts != ['auto'] and any(x not in ('ro', 'bg', 'lt', 'gr', 'hu', 'cz', 'sk', 'hr', 'si', 'it', 'cy', 'md', 'tr', 'rs') for x in parts):
+                errs.append('țări AmpWhere: auto sau coduri precum ro,hu')
+            v = ','.join(parts)
+        if k == 'tesla_renders' and v not in ('', '0', '1'):
+            errs.append('tesla_renders invalid')
         if k == 'roles' and v and any((':' not in x or x.split(':')[1].strip() not in ('admin', 'family', 'viewer')) for x in v.split(',')):
             errs.append('roluri: email:family,email2:viewer')
         if len(v) > 600:
             errs.append('%s prea lung' % k)
         new[k] = v
+    if str(new.get('inet_on', '')) == '1' and not (new.get('app_password') or os.environ.get('APP_PASSWORD', '')):
+        errs.append('Setează întâi o parolă pentru acces din internet (mai sus) — fără ea aplicația nu se expune pe internet')
     if errs:
         return False, '; '.join(errs)
     CFG.clear()
     CFG.update(new)
     cfg_save()
     apply_config()
+    if INET:
+        threading.Thread(target=INET.apply, daemon=True).start()          # porneste / opreste HTTPS-ul si actualizarea DuckDNS dupa schimbarea setarilor
     if fuel_conf()['type'] != 'manual':
         threading.Thread(target=fuel_fetch, daemon=True).start()          # pret nou imediat dupa schimbarea tipului/tarii
     return True, ''
@@ -3101,7 +3136,7 @@ COMPOSITOR = {
 def compositor_url(c, view=None):
     """Poza 3/4 a masinii de la configuratorul Tesla (decupata pe masina), pentru Model 3 / Model Y; None pentru restul modelelor."""
     k = COMPOSITOR.get(str(c.get('model') or '').upper())
-    if not k or os.environ.get('TESLA_RENDERS', '0') != '1':           # 0 = nu cerem imagini de la Tesla (implicit in versiunea publica)
+    if not k or str(cget('tesla_renders', 'TESLA_RENDERS', '0')).lower() not in ('1', 'true', 'yes', 'on'):           # 0 = nu cerem imagini de la Tesla (implicit in versiunea publica)
         return None
     paint = k['paints'].get(str(c.get('color') or ''), k['fallback'])
     return ('https://static-assets.tesla.com/configurator/compositor?context=design_studio_2&options=%s,%s,%s,%s&view=%s&model=%s&size=1920&bkba_opt=1&crop=1200,700,370,230&overlay=0&'
@@ -3181,6 +3216,8 @@ PUBLIC_ROUTES = []               # fn(handler, cale, parametri) -> (cod, corp, c
 CTX = threading.local()          # CTX.actor = cine a dat comanda (user:rol / rule:id / system)
 OWN = None                       # baza de date proprie (features.store.Store), setata de features.load()
 PLACES = None                    # features.places: match(lat, lon) -> loc salvat cu pret pe kWh
+INET = None                       # features.inet: HTTPS direct din internet (Let's Encrypt + DuckDNS)
+INET_TLS = None                   # contextul TLS al listenerului public (pus de features.inet); None = HTTP simplu
 STATION_LINK = None                # features.stations: asociaza o incarcare cu statia ei (doar daca exista o sursa de statii)
 DRIVECOST = None                  # features.drivecost: annotate(car, curse) adauga costul electric / termic / echivalentul in l/100 km
 TAGS = None                      # features.tags: ids(kind, nume) si attach(kind, randuri) pentru filtrarea/afisarea tag-urilor
@@ -3235,6 +3272,16 @@ DB_PREFIXES = ('/api/drive/', '/api/drive_row/', '/api/trip/', '/api/charge/', '
 PINF = {}                       # ip -> [momente cu PIN gresit]
 PIN_LOCK = threading.Lock()
 FAILS_LOCK = threading.Lock()
+
+
+def allowed_hosts():
+    """Numele cu care se poate deschide aplicatia din reteaua locala (pe langa IP-uri, localhost, .local...): Setari -> Securitate (sau ALLOWED_HOSTS), adresa aplicatiei si domeniul DuckDNS."""
+    out = {x.strip().lower() for x in re.split(r'[,\s;]+', str(cget('allowed_hosts', 'ALLOWED_HOSTS', ''))) if x.strip()}
+    if APPURL:
+        out.add((urlparse(APPURL).hostname or '').lower())
+    if INET and INET.fqdn():
+        out.add(INET.fqdn())
+    return out
 
 
 class H(BaseHTTPRequestHandler):
@@ -3300,10 +3347,12 @@ class H(BaseHTTPRequestHandler):
         host = host.strip('[]')
         if not host or re.fullmatch(r'[0-9.]+', host) or ':' in host or '.' not in host or host == 'localhost' or host.endswith(('.localhost', '.local', '.lan', '.home.arpa', '.internal')):
             return True
-        allowed = {x.strip().lower() for x in str(os.environ.get('ALLOWED_HOSTS', '')).split(',') if x.strip()}
-        if APPURL:
-            allowed.add((urlparse(APPURL).hostname or '').lower())
-        return host in allowed
+        return host in allowed_hosts()
+
+    def host_msg(self):
+        """Mesajul pentru 421: spune ce adresa a fost refuzata si cum se rezolva (ALLOWED_HOSTS in .env + docker compose up -d, sau APP_URL in Setari)."""
+        h = re.sub(r'[^A-Za-z0-9.:\[\]-]', '', (self.headers.get('Host') or '').strip())[:100] or '?'
+        return 'Adresa „%s” nu e permisă. Adaug-o în Setări → Securitate → Adrese permise (deschide aplicația prin IP-ul serverului), sau setează „Adresa aplicației” în Setări → Afișare.' % h
 
     def origin_ok(self):
         """POST din browser: Origin (daca exista) trebuie sa fie chiar aplicatia. Prin Cloudflare Host poate fi rescris de tunel, deci acolo nu se verifica."""
@@ -3433,7 +3482,7 @@ class H(BaseHTTPRequestHandler):
         a = {k: v[0] for k, v in parse_qs(u.query).items()}
         p = u.path
         if not self.host_ok():
-            return self.send_json(dict(error='host', reason='Adresă necunoscută. Adaugă-o în ALLOWED_HOSTS sau intră prin IP.'), 421)
+            return self.send_json(dict(error='host', reason=self.host_msg()), 421)
         if p == '/login':
             return self.page(200, login_html(self.lang()))
         if p == '/logout':
@@ -3502,7 +3551,7 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         u = urlparse(self.path)
         if not self.host_ok():
-            return self.send_json(dict(ok=False, reason='Adresă necunoscută. Adaugă-o în ALLOWED_HOSTS sau intră prin IP.'), 421)
+            return self.send_json(dict(ok=False, reason=self.host_msg()), 421)
         if not self.origin_ok():
             return self.send_json(dict(ok=False, reason='Origine interzisă.'), 403)
         if u.path == '/api/profiler/ingest':
@@ -3863,8 +3912,133 @@ class PublicH(BaseHTTPRequestHandler):
         return self.out(405, 'method not allowed')
 
 
+class HS(H):
+    """Handler al listenerului HTTPS direct din internet (Setari -> Securitate -> Acces direct din internet): aceeasi aplicatie, dar fara incredere in nicio informatie din cerere:
+    antetele Cloudflare / X-Forwarded-For se ignora, IP-ul clientului e cel al conexiunii, Host-ul trebuie sa fie domeniul tau, Origin-ul se verifica, iar fara parola nu se serveste nimic.
+    Pe langa aplicatie raspunde si la rutele publice (cheia Tesla, callback-ul OAuth, linkurile de partajare)."""
+    out = PublicH.out
+
+    def via_internet(self):
+        return True
+
+    def client_ip(self):
+        return self.client_address[0]
+
+    def host_ok(self):
+        h = (self.headers.get('Host') or '').strip().lower()
+        host = h.rsplit(':', 1)[0] if (':' in h and not h.startswith('[')) else h
+        return bool(host) and host in allowed_hosts()
+
+    def origin_ok(self):
+        o = self.headers.get('Origin')
+        return not o or (urlparse(o).netloc or '').lower() == (self.headers.get('Host') or '').strip().lower()
+
+    def end_headers(self):
+        self.send_header('Strict-Transport-Security', 'max-age=15552000')
+        super().end_headers()
+
+    def do_GET(self):
+        u = urlparse(self.path)
+        if not self.host_ok():
+            return self.send_json(dict(error='host', reason=self.host_msg()), 421)
+        if u.path in ('/.well-known/appspecific/com.tesla.3p.public-key.pem', '/auth/callback'):
+            return PublicH.do_GET(self)
+        a = {k: v[0] for k, v in parse_qs(u.query).items()}
+        for fn in list(PUBLIC_ROUTES):
+            try:
+                r = fn(self, u.path, a)
+            except Exception as e:  # noqa
+                log('ruta publica: %s' % e)
+                return self.out(500, 'eroare')
+            if r:
+                return self.out(*r)
+        return H.do_GET(self)
+
+
+class TlsServer(ThreadingHTTPServer):
+    """Server HTTPS pentru internet: handshake-ul TLS se face in firul conexiunii (cu timeout), nu in bucla de accept, si numarul de conexiuni simultane e limitat."""
+    daemon_threads = True
+    request_queue_size = 64
+    max_conn = 80
+
+    def __init__(self, addr, handler, holder):
+        super().__init__(addr, handler)
+        self.holder = holder
+        self.sem = threading.BoundedSemaphore(self.max_conn)
+
+    def process_request(self, request, client_address):
+        if not self.sem.acquire(blocking=False):
+            return self.shutdown_request(request)                       # prea multe conexiuni deschise: refuzam
+        try:
+            super().process_request(request, client_address)
+        except Exception:  # noqa
+            self.sem.release()
+            raise
+
+    def finish_request(self, request, client_address):
+        try:
+            request.settimeout(15)
+            tls = self.holder.ctx.wrap_socket(request, server_side=True)
+        except Exception:  # noqa
+            self.sem.release()
+            return                                                      # handshake esuat (client vechi, scanner...): nimic de raportat
+        try:
+            if tls.selected_alpn_protocol() == 'acme-tls/1' or getattr(self.holder, 'challenge_only', False):
+                return                                                  # validare Let's Encrypt (TLS-ALPN-01) sau emitere in curs: handshake-ul a fost tot raspunsul, aplicatia nu se serveste
+            self.RequestHandlerClass(tls, client_address, self)
+        finally:
+            try:
+                self.linger_close(tls)
+            finally:
+                self.sem.release()
+
+    @staticmethod
+    def linger_close(tls):
+        """Inchidere "cu asteptare": FIN dupa raspuns, apoi golim ce mai trimite clientul (de ex. corpul unui POST respins devreme cu 401/403/421) si abia apoi inchidem. Fara asta, date
+        necitite la close() fac TCP sa trimita RST si clientul poate pierde raspunsul."""
+        try:
+            tls.shutdown(socket.SHUT_WR)
+            tls.settimeout(1.0)
+            left = 262144
+            while left > 0:
+                c = tls.recv(8192)
+                if not c:
+                    break
+                left -= len(c)
+        except (OSError, ssl.SSLError):
+            pass
+        finally:
+            try:
+                tls.close()
+            except OSError:
+                pass
+
+
+PUBLIC = dict(srv=None, mode='http')
+
+
 def serve_public():
-    ThreadingHTTPServer(('0.0.0.0', int(os.environ.get('PUBLIC_PORT', '4101'))), PublicH).serve_forever()
+    """Portul public: HTTP simplu cu rutele publice (implicit) sau HTTPS cu aplicatia intreaga, daca features.inet are un certificat gata (public_restart() il reporneste in celalalt mod)."""
+    port = int(os.environ.get('PUBLIC_PORT', '4101'))
+    PUBLIC['stop'] = False
+    while not PUBLIC.get('stop'):
+        holder = INET_TLS if (INET_TLS is not None and getattr(INET_TLS, 'ctx', None) is not None) else None
+        srv = TlsServer(('0.0.0.0', port), HS, holder) if holder else ThreadingHTTPServer(('0.0.0.0', port), PublicH)
+        PUBLIC.update(srv=srv, mode='tls' if holder else 'http')
+        log('port public %d: %s' % (port, 'HTTPS (acces direct din internet)' if holder else 'HTTP (rute publice)'), flush=True)
+        try:
+            srv.serve_forever()
+        finally:
+            srv.server_close()
+        if not PUBLIC.get('stop'):
+            time.sleep(0.3)
+
+
+def public_restart():
+    """Opreste listenerul public; serve_public() il porneste din nou in modul potrivit (HTTP / HTTPS)."""
+    s = PUBLIC.get('srv')
+    if s:
+        threading.Thread(target=s.shutdown, daemon=True).start()
 
 
 cfg_load()

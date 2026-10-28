@@ -3,7 +3,7 @@ ca rezultatul sa nu depinda de ordinea in care ruleaza testele."""
 import unittest
 
 ATTRS = ('notify', 'http', 'q', 'run_command', '_run_command', '_get_text', 'CURRENCY', 'APP_VERSION', 'FUELFILE', 'METAFILE', 'UPDFILE', 'CFGFILE',
-         'UPD_TOKEN_FILE', 'NHOOK', 'rule_exec', 'rules_load', 'LOCAL_TZ', '_charges_rows', 'cget', 'LA_CLEAR_GAP', 'ha_state', 'live_apply', 'vin_for', 'notify_clear', 'charge_cost_prompt', 'FXFILE')
+         'UPD_TOKEN_FILE', 'NHOOK', 'rule_exec', 'rules_load', 'LOCAL_TZ', '_charges_rows', 'cget', 'LA_CLEAR_GAP', 'ha_state', 'live_apply', 'vin_for', 'notify_clear', 'charge_cost_prompt', 'FXFILE', 'INET', 'INET_TLS', 'DEMO_ONLY', 'APPURL')
 DICTS = ('CFG', 'HA', 'UPD', 'LA', 'AUTH', 'LIVE', 'SESS', 'BLE_SEEN', 'TEL_WINDOWS', 'TEL_VIN_CAR', 'FX_CACHE')
 
 

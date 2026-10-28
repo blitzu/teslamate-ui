@@ -43,7 +43,7 @@ services:
       - ./data:/data          # OAuth tokens, notification settings, optional car.png
     ports:
       - "${UI_BIND:-0.0.0.0}:${UI_PORT:-4100}:4100"        # the app (LAN). Do NOT expose this port to the internet without protection. UI_BIND=127.0.0.1 keeps it on this host only.
-      - "${PUBLIC_PORT:-4101}:4101"    # public listener: Tesla's public key, the OAuth callback and live-location share links (/share/<token>); point your HTTPS domain here
+      - "${PUBLIC_PORT:-4101}:4101"    # public listener: Tesla's public key, the OAuth callback and live-location share links (/share/<token>); point your HTTPS domain here. With Settings -> Security -> Direct internet access (Let's Encrypt + DuckDNS) this same port serves the whole app over HTTPS: forward your router's external port 443 to it
     networks:
       - default
       - teslamate
