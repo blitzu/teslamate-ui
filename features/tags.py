@@ -162,6 +162,10 @@ def init(S):
             extra = [c for c in S.charges(car, 600, 0, None, None, None, list(tagged_ch)) if c['id'] not in have]
             chs += extra
         keep, stops, summ = build(ds, chs, tagged_ch)
+        if S.DRIVECOST:
+            S.DRIVECOST.annotate(car, ds)
+            from .trips import cost_of
+            summ.update(cost_of(ds))                                          # costul energiei (FIFO), echivalent in l/100 km, cost termic
         per = max(40, MAX_POINTS // max(1, len(ds)))
         out = []
         for d in ds:

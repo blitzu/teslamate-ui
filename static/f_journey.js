@@ -41,6 +41,7 @@ PAGES.journey = {
     return head + `<div class="map big" id="jmap" style="height:56vh;min-height:320px"></div>
       <div class="jlegend"><span><i class="jdot" style="background:${JCOL(0, 2)}"></i>${X('început', 'start')}</span><span><i class="jdot" style="background:${JCOL(1, 2)}"></i>${X('sfârșit', 'end')}</span><span>⚡ ${X('încărcare', 'charge')}</span><span>⏸ ${X('oprire', 'stop')}</span></div>
       <h2>${X('Rezumat', 'Summary')}</h2><div class="grid g3">${stat(X('Distanță', 'Distance'), nf(s.km, 1), 'km')}${stat(X('Timp la volan', 'Driving time'), hm(s.drive_min))}${stat(X('Consum', 'Used'), nf(s.kwh, 1), 'kWh')}${stat(X('Curse', 'Drives'), nf(s.drives))}${stat(X('Încărcări', 'Charges'), nf(s.charges))}${stat(X('Energie încărcată', 'Charged'), nf(s.charged_kwh, 1), 'kWh')}${stat(X('Cost încărcări', 'Charging cost'), nf(s.cost, 2), CU())}${stat(X('Opriri', 'Stops'), nf(s.stops))}${stat(X('Perioadă', 'Period'), s.start ? fdate(T(s.start), { day: 'numeric', month: 'short' }) + ' – ' + fdate(T(s.end), { day: 'numeric', month: 'short' }) : '—')}</div>
+      ${driveCostCard(s, X('Cost energie', 'Energy cost'))}
       ${d.truncated ? `<p class="note">${X('Am afișat primele 300 de curse din perioadă. Restrânge intervalul pentru restul.', 'Showing the first 300 drives of the period. Narrow the range for the rest.')}</p>` : ''}
       <h2>${X('Pe scurt, în ordine', 'In order')}</h2>${ev.map((x) => x.h).join('')}`;
   },

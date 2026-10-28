@@ -1,7 +1,7 @@
 """Trimitere de notificari pe Telegram (bot propriu). Tokenul si chat-ul se seteaza din Setari (secret in config.json). Alegi ce tipuri de mesaje merg pe Telegram."""
 import json
 
-DEFAULT_KINDS = dict(alert=True, maint=True, report=True, app_update=True, low_batt=False, update=False, charge_done=False, plugged=False, door=False, rule=False, handoff=True, test=True)
+DEFAULT_KINDS = dict(alert=True, maint=True, report=True, app_update=True, low_batt=False, update=False, charge_done=False, charge_cost=False, plugged=False, door=False, rule=False, handoff=True, test=True)
 
 
 def init(S):

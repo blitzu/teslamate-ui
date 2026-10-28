@@ -1353,5 +1353,67 @@ class TyreDatesTests(Isolated):
         self.assertEqual(self.rows(), {})
 
 
+class ProviderListTests(Isolated):
+    def test_lists_every_provider_used_so_far_sorted_once(self):
+        S.METAFILE = os.path.join(tempfile.mkdtemp(), 'meta.json')
+        S.PROV_CACHE.clear()
+        base = dict(start_date='2026-10-01T10:00:00', end_date='2026-10-01T11:00:00', charge_energy_added=10, charge_energy_used=11, cost=None, tariff=None, lat=None, lon=None)
+        S._charges_rows = lambda car, lim, off, *a, **k: [dict(base, id=1, name='Supercharger Pitesti'), dict(base, id=2, name='Acasa'), dict(base, id=3, name='Supercharger Sibiu'),
+                                                        dict(base, id=4, name='Parcare Mall X'), dict(base, id=5, name='Acasa')]
+        S.meta_update(4, dict(provider='Ionity'))
+        self.assertEqual(S.provider_list(1), ['Acasă', 'Ionity', 'Tesla Supercharger'])
+
+
+class ChargeCostPromptTests(Isolated):
+    def setUp(self):
+        self.sent = []
+        S.notify = lambda kind, title, msg, data=None, log=True: self.sent.append((kind, title, msg, data))
+        S.METAFILE = os.path.join(tempfile.mkdtemp(), 'meta.json')
+        S.OWN.kv_set(S.COST_ASKED, [])
+        S.nset_save(dict(S.NDEFAULT))
+        S.LIVE[1] = dict(display_name='Tesla')
+        self.row = dict(id=77, start_date='2026-10-28T08:00:00', end_date=dt.datetime.utcnow().replace(microsecond=0).isoformat(), charge_energy_added=21.4, charge_energy_used=22.5,
+                        cost=None, tariff=None, start_soc=35, end_soc=80, name='Supercharger Pitesti', lat=None, lon=None, dc=True, power_max=150, duration_min=30)
+        S._charges_rows = lambda car, lim, off, *a, **k: [dict(self.row)]
+
+    def test_asks_for_the_cost_when_the_price_is_unknown(self):
+        self.assertTrue(S.charge_cost_check(1))
+        self.assertEqual(len(self.sent), 1)
+        kind, title, msg, data = self.sent[0]
+        self.assertEqual(kind, 'charge_cost')
+        self.assertIn('21.4 kWh', msg)
+        self.assertEqual(data['path'], '#/charge/77')
+
+    def test_only_once_per_charge(self):
+        S.charge_cost_check(1)
+        S.charge_cost_check(1)
+        self.assertEqual(len(self.sent), 1)
+
+    def test_known_price_or_manual_cost_needs_no_question(self):
+        self.row['cost'] = 12.5
+        self.assertTrue(S.charge_cost_check(1))
+        self.assertEqual(self.sent, [])
+        self.row.update(id=78, cost=None)
+        S.meta_update(78, dict(cost=9.0))
+        self.assertTrue(S.charge_cost_check(1))
+        self.assertEqual(self.sent, [])
+
+    def test_waits_while_the_charge_is_not_closed_and_respects_the_switch(self):
+        self.row['end_date'] = (dt.datetime.utcnow() - dt.timedelta(hours=3)).isoformat()        # ultima incarcare inchisa e veche: a noastra inca nu apare
+        self.assertFalse(S.charge_cost_check(1))
+        self.row['end_date'] = dt.datetime.utcnow().isoformat()
+        S.nset_save(dict(S.NDEFAULT, charge_cost=False))
+        self.assertTrue(S.charge_cost_check(1))
+        self.assertEqual(self.sent, [])
+
+    def test_prompt_starts_only_when_a_charge_really_ends(self):
+        starts = []
+        S.charge_cost_prompt = lambda car: starts.append(car)
+        S.notify_check(1, 'charging_state', 'Charging', 'Complete')
+        S.notify_check(1, 'charging_state', 'Starting', 'Charging')
+        S.notify_check(1, 'charging_state', 'Charging', 'Stopped')
+        self.assertEqual(starts, [1, 1])
+
+
 if __name__ == '__main__':
     unittest.main()

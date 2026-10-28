@@ -3,6 +3,14 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.6.0 - 2026-10-28
+
+### New features
+- **Cost of every drive.** The drive list and the drive page now show what the drive cost, calculated from the *price of the energy it actually used*: every charge adds its kWh at its own price and drives use the oldest energy first (FIFO), so the money of a charge ends up on the drives that used it. Energy from before the first charge in TeslaMate came from the factory and is free. The drive page also shows the average price per kWh used, the **petrol equivalent in l/100 km** (what a litre-based car would have to burn to cost the same, at that day's fuel price), the cost **with a petrol car** and the saving (these two need the petrol car's consumption in Settings → Display). A `~` means part of the energy comes from charges without a price. How it works: docs/costs.md. The **comparison with a petrol car in Stats and in the weekly/monthly reports** now uses the same drive costs, so the electric cost matches the drives and trips lists (before it was the average price of the charges in the period × the kWh used).
+- **Energy cost on trips too.** The Trips list shows each trip's cost (with the period total on top), and the trip page and the map page (Journey) have the same cost card: cost, average price per kWh used, petrol equivalent in l/100 km, cost with a petrol car and the saving.
+- **Provider dropdown.** On a charge, *Provider* is now a list with every provider used so far (set by you or recognised from the place), *Automatic*, and *➕ New provider…* to type a new name.
+- **"How much did it cost?" notification after a charge.** When a charge ends and no price is known for it (no manual cost, tariff or saved place price), the app sends a notification that opens that charge so you can enter the cost, which also makes the drive costs exact. It is sent once per charge and disappears once you enter the cost. Switch: Settings → Notifications (also a kind for web push, off by default for Telegram).
+
 ## 1.5.6 - 2026-10-28
 
 ### Fixes

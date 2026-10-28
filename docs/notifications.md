@@ -6,6 +6,7 @@ The server watches TeslaMate's MQTT stream and raises these events:
 |---|---|
 | `plugged` — Cable connected | `plugged_in` goes false → true |
 | `charge_done` — Charging complete | `charging_state` becomes `Complete` |
+| `charge_cost` — How much did it cost? | a charge ended, TeslaMate closed it and no price is known for it (no manual cost, tariff or saved place price); the notification opens that charge so you can enter the cost. Sent once per charge; Settings → Notifications has a switch |
 | `door` — Door / trunk open | a door, trunk, frunk or window opens **while the car is locked**, or stays open for more than 5 minutes while parked |
 
 Each event is stored in an in-app history (Car page → Notifications, last 60) and, if `NOTIFY_WEBHOOK` is set, POSTed as JSON:

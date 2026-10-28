@@ -251,7 +251,7 @@ const tagChips = (t) => (t || []).map((x) => `<span class="tg">${esc(x)}</span>`
 function driveItem(d) {
   const wh = d.distance > 0 && d.kwh != null ? d.kwh * 1000 / d.distance : null;
   return `<a class="item" data-id="${d.id}" href="#/drive/${d.id}"><div class="t"><span>${esc(d.start_name)}</span><span class="arr">→</span><span>${esc(d.end_name)}</span>${tagChips(d.tags)}</div>
-  <div class="m"><span><b>${nf(d.distance, 1)}</b> km</span><span><b>${hm(d.duration_min)}</b></span><span><b>${nf(d.kwh, 1)}</b> kWh</span><span><b>${nf(wh)}</b> Wh/km</span><span>${tm(d.start_date)}–${tm(d.end_date)}</span><span class="soc">${nf(d.start_soc)}% → ${nf(d.end_soc)}%</span></div></a>`;
+  <div class="m"><span><b>${nf(d.distance, 1)}</b> km</span><span><b>${hm(d.duration_min)}</b></span><span><b>${nf(d.kwh, 1)}</b> kWh</span><span><b>${nf(wh)}</b> Wh/km</span>${driveCostChip(d)}<span>${tm(d.start_date)}–${tm(d.end_date)}</span><span class="soc">${nf(d.start_soc)}% → ${nf(d.end_soc)}%</span></div></a>`;
 }
 function chargeItem(c) {
   return `<a class="item" data-id="${c.id}" href="#/charge/${c.id}"><div class="t"><span>${esc(c.name)}</span><span class="badge ${c.dc ? 'dc' : 'ac'}">${c.dc ? 'DC' : 'AC'}</span>${c.provider && c.provider !== c.name ? `<span class="prov">${esc(c.provider)}</span>` : ''}${tagChips(c.tags)}</div>
@@ -297,6 +297,7 @@ async function pageDrive(id) {
   <div class="links" style="margin:8px 2px"><a href="#/journey/trip:${id}">🗺 ${X('Hartă: traseu, încărcări și opriri', 'Map: route, charges and stops')}</a>${gmLink(d?.start_lat, d?.start_lon, X('Plecare în Google Maps', 'Start in Google Maps'))}${gmLink(d?.end_lat, d?.end_lon, X('Sosire în Google Maps', 'Arrival in Google Maps'))}</div>
   <div class="map big" id="dmap"></div>
   <h2>Rezumat</h2><div class="grid g3">${stat('Distanță', nf(d?.distance, 1), 'km')}${stat('Durată', hm(d?.duration_min))}${stat('Consum', nf(d?.kwh, 1), 'kWh')}${stat('Eficiență', nf(wh), 'Wh/km')}${stat('Viteză max', nf(d?.speed_max), 'km/h')}${stat('Putere max', nf(d?.power_max), 'kW')}${stat('Baterie', nf(d?.start_soc) + '→' + nf(d?.end_soc), '%')}${stat('Temp. ext.', nf(d?.outside_temp_avg, 1), '°C')}${stat('Urcare', nf(d?.ascent), 'm')}</div>
+  ${driveCostCard(d)}
   ${driveEvents(dd.events)}
   ${tagsCard('drive', +id, d?.tags)}
   <div class="toast" aria-live="polite" id="dtip">${X('Atinge un grafic ca să vezi punctul pe hartă.', 'Touch a chart to see the point on the map.')}</div>

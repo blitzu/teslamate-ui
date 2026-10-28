@@ -8,6 +8,21 @@ def parse(s):
     return dt.datetime.fromisoformat(s) if s else None
 
 
+def cost_of(g):
+    """Costul energiei unei calatorii = suma costurilor curselor (campurile puse de drivecost.annotate); None daca nicio cursa nu are cost."""
+    c = [d for d in g if d.get('cost_ev') is not None]
+    if not c:
+        return dict(cost_ev=None, price_kwh=None, cost_est=None, cost_ice=None, ice_saving=None, eq_l100=None)
+    cost, km = sum(d['cost_ev'] for d in c), sum(d.get('distance') or 0 for d in c)
+    kwh = sum(d.get('kwh') or 0 for d in c)
+    litres = sum(d['cost_ev'] / d['fuel_price'] for d in c if d.get('fuel_price'))
+    ice = [d['cost_ice'] for d in c if d.get('cost_ice') is not None]
+    n_ice = len(ice) == len(c)
+    return dict(cost_ev=round(cost, 2), price_kwh=round(cost / kwh, 3) if kwh else None, cost_est=any(d.get('cost_est') for d in c),
+                cost_ice=round(sum(ice), 2) if n_ice else None, ice_saving=round(sum(ice) - cost, 2) if n_ice else None,
+                eq_l100=round(litres / km * 100, 2) if km > 0 and all(d.get('fuel_price') for d in c) else None)
+
+
 def group(drives, charges, gap):
     """drives: lista de curse (cu start_date/end_date ISO); charges: incarcari; gap: timedelta. Intoarce calatoriile, cele mai noi primele."""
     ds = sorted((d for d in drives if d.get('end_date')), key=lambda d: d['start_date'])
@@ -30,7 +45,7 @@ def group(drives, charges, gap):
             n = y.get('start_name')
             if n and n != '—' and n not in stops:
                 stops.append(n)
-        out.append(dict(id=g[0]['id'], start=g[0]['start_date'], end=g[-1]['end_date'], n_drives=len(g), km=round(km, 1), drive_min=round(sum(d.get('duration_min') or 0 for d in g)),
+        out.append(dict(**cost_of(g), id=g[0]['id'], start=g[0]['start_date'], end=g[-1]['end_date'], n_drives=len(g), km=round(km, 1), drive_min=round(sum(d.get('duration_min') or 0 for d in g)),
                         total_min=round((b - a).total_seconds() / 60), kwh=round(kwh, 1), wh_km=round(kwh * 1000 / km) if km > 0 and kwh else None,
                         start_name=g[0].get('start_name'), end_name=g[-1].get('end_name'), stops=stops[:6], speed_max=max((d.get('speed_max') or 0 for d in g), default=0),
                         n_charges=len(ch), charge_kwh=round(sum(c.get('charge_energy_added') or 0 for c in ch), 1),
@@ -55,11 +70,13 @@ def init(S):
         since = (dt.datetime.utcnow() - dt.timedelta(days=days)).isoformat()
         car = int(a.get('car', 1))
         if hc is False:
-            drives = [d for d in S.DEMO['drives']]
+            drives = [dict(d) for d in S.DEMO['drives']]
             charges = S.decorate([dict(c) for c in S.DEMO['charges']])
         else:
             drives = S.drives(car, 5000, 0, dt.datetime.fromisoformat(since))
             charges = S.charges(car, 3000, 0, None, dt.datetime.fromisoformat(since))
+        if S.DRIVECOST:
+            S.DRIVECOST.annotate(car, drives, hc is False)
         trips = group(drives, charges, S.TRIP_GAP)
         return dict(gap_h=int(S.TRIP_GAP.total_seconds() // 3600), trips=trips)
 

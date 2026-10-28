@@ -355,6 +355,21 @@ def meta_update(cid, body):
     return e
 
 
+PROV_CACHE = {}
+
+
+def provider_list(car, demo=False):
+    """Toti furnizorii folositi pana acum (setati manual sau dedusi din locatie), in ordine alfabetica: pentru lista din pagina incarcarii."""
+    k = (car, demo)
+    hit = PROV_CACHE.get(k)
+    if hit and time.time() - hit[0] < 30:
+        return hit[1]
+    rows = decorate([dict(c) for c in DEMO['charges']] if demo else _charges_rows(car, 5000, 0))
+    out = sorted({r['provider'] for r in rows if r.get('provider')}, key=str.casefold)
+    PROV_CACHE[k] = (time.time(), out)
+    return out
+
+
 def decorate(rows):
     """Adauga furnizorul (manual sau dedus din locatie) si costul efectiv: manual > real (energie din retea) > TeslaMate."""
     m = meta_load()
@@ -636,7 +651,7 @@ def fuel_info():
                 source='fuel-prices.eu (Monitorul Prețurilor Carburanților)' if fc['country'].lower() == 'romania' else 'fuel-prices.eu')
 
 
-def ice_calc(by_day, ev_kwh, ev_cost, kwh_charged, l100=None, book=None, manual=None):
+def ice_calc(by_day, ev_kwh, ev_cost, kwh_charged, l100=None, book=None, manual=None, ev_total=None):
     """Compara km parcursi cu o masina termica: litri = km/100 x l/100km, la pretul combustibilului din fiecare zi (stocat zilnic)."""
     fc = fuel_conf()
     l100 = fc['l100'] if l100 is None else l100
@@ -662,7 +677,9 @@ def ice_calc(by_day, ev_kwh, ev_cost, kwh_charged, l100=None, book=None, manual=
         days.append(dict(day=x['day'], km=round(km, 1), price=round(p, 3), cost=round(lit * p, 2), kind=kind))
     all_km = sum((x.get('km') or 0) for x in by_day)
     ev = None
-    if kwh_charged and ev_cost is not None and ev_kwh and km_tot > 0 and all_km > 0:
+    if ev_total is not None and km_tot > 0 and all_km > 0:
+        ev = round(ev_total * min(1.0, km_tot / all_km), 2)                            # suma costurilor curselor (FIFO), la fel ca in lista de curse
+    elif kwh_charged and ev_cost is not None and ev_kwh and km_tot > 0 and all_km > 0:
         ev = round(ev_kwh * ev_cost / kwh_charged * min(1.0, km_tot / all_km), 2)      # EV pe aceleasi zile ca termica (cele fara pret nu intra in niciuna)
     avg = round(cost / liters, 3) if liters else None
     return dict(enabled=True, type=fc['type'], l100=l100, currency=CURRENCY, km=round(km_tot, 1), liters=round(liters, 1), cost=round(cost, 2), avg_price=avg,
@@ -1047,7 +1064,13 @@ def overview(car, days):
     except Exception as e:  # noqa
         log('overview cost:', e, flush=True)
     odo = q("select max(odometer) odo from positions where car_id=%s", (car,))
-    ice = ice_calc(byday, d['kwh'], ch.get('cost_eff', ch['cost']), ch.get('kwh_c', ch['kwh']))
+    ev_total = None
+    if DRIVECOST:
+        try:
+            ev_total = DRIVECOST.total(car, [r['id'] for r in q("select id from drives where car_id=%s and start_date>=%s and end_date is not null", (car, since))])
+        except Exception as e:  # noqa
+            log('cost curse (stats):', e, flush=True)
+    ice = ice_calc(byday, d['kwh'], ch.get('cost_eff', ch['cost']), ch.get('kwh_c', ch['kwh']), ev_total=ev_total)
     return dict(days=days, drives=d, charges=ch, by_day=byday, charge_by_day=chday, odometer=(odo[0]['odo'] if odo else None), ice=ice)
 
 
@@ -2409,7 +2432,7 @@ def imp_action(car, body):
 NFILE = DATA_DIR + '/notify.json'
 NHOOK = os.environ.get('NOTIFY_WEBHOOK', '')
 APPURL = os.environ.get('APP_URL', '').rstrip('/')
-KIND_ROUTE = dict(plugged='#/charges', charge_done='#/charges', door='#/car', update='#/car', low_batt='#/car', rule='#/auto', live='#/car', test='#/notifications', app_update='#/settings')
+KIND_ROUTE = dict(plugged='#/charges', charge_done='#/charges', charge_cost='#/charges', door='#/car', update='#/car', low_batt='#/car', rule='#/auto', live='#/car', test='#/notifications', app_update='#/settings')
 
 
 KIND_ACTIONS = {           # butoane pe notificarile obisnuite (Live Activity nu are butoane); executate de automatizarea din HA prin ESP32 BLE
@@ -2421,7 +2444,7 @@ KIND_ACTIONS = {           # butoane pe notificarile obisnuite (Live Activity nu
 
 def app_link(kind='live'):
     return (APPURL + '/' + KIND_ROUTE.get(kind, '#/car')) if APPURL else None
-NDEFAULT = dict(plugged=True, charge_done=True, door=True, update=True, low_batt=True, live=True, live_drive=False, actions=True, app_update=True, away_only=False)
+NDEFAULT = dict(plugged=True, charge_done=True, charge_cost=True, door=True, update=True, low_batt=True, live=True, live_drive=False, actions=True, app_update=True, away_only=False)
 AWAY_KINDS = ('plugged', 'door')                                    # cu "doar in afara casei": notificarile astea (si cardurile 'open'/'plugged') nu se trimit cat masina e acasa
 
 
@@ -2509,7 +2532,54 @@ def notify_clear_check(car, key, new):
         notify_clear('tesla_low_batt', 'low_batt')
 
 
+COST_ASKED = 'cost_asked'                                            # id-urile incarcarilor pentru care am cerut deja costul (kv in baza proprie)
+
+
+def charge_cost_check(car):
+    """True cand s-a terminat treaba (notificare trimisa sau nu mai e nevoie); False cat timp incarcarea nu e inchisa de TeslaMate."""
+    if not nset_load().get('charge_cost', True):
+        return True
+    rows = _charges_rows(car, 1, 0)
+    if not rows or not rows[0].get('end_date') or (dt.datetime.utcnow() - _dtp(rows[0]['end_date'])).total_seconds() > 40 * 60:
+        return False                                               # ultima incarcare inchisa e veche: a noastra nu s-a inchis inca
+    r = rows[0]
+    asked = OWN.kv_get(COST_ASKED, []) or []
+    if r['id'] in asked:
+        return True
+    OWN.kv_set(COST_ASKED, (asked + [r['id']])[-50:])
+    r = decorate([r])[0]
+    if r.get('cost_manual') is not None or r.get('cost_eff') is not None or not (r.get('charge_energy_added') or 0) > 0.5:
+        return True                                                # costul se stie deja (tarif / loc salvat / manual) sau incarcare neglijabila
+    nm = (LIVE.get(car, {}) or {}).get('display_name') or 'Tesla'
+    soc = ' (%s%% → %s%%)' % (r['start_soc'], r['end_soc']) if r.get('start_soc') is not None and r.get('end_soc') is not None else ''
+    msg = '%s: +%s kWh%s la %s. Atinge ca să introduci costul — îl folosesc la costul curselor.' % (nm, nf1(r['charge_energy_added']), soc, r.get('name') or 'locație necunoscută')
+    data = dict(path='#/charge/%s' % r['id'])
+    if APPURL:
+        data.update(url=APPURL + '/#/charge/%s' % r['id'], tag='tesla_charge_cost')
+    notify('charge_cost', '💶 Cât a costat încărcarea?', msg, data)
+    return True
+
+
+def charge_cost_prompt(car):
+    """Dupa o incarcare: cand TeslaMate o inchide (cu cateva zeci de secunde intarziere) si nu are niciun pret pentru ea, notificare cu link direct la incarcarea respectiva."""
+    def run():
+        try:
+            for _ in range(9):
+                time.sleep(45)
+                if charge_cost_check(car):
+                    return
+        except Exception as e:  # noqa
+            log('cost incarcare:', e, flush=True)
+    threading.Thread(target=run, daemon=True).start()
+
+
+def nf1(x):
+    return ('%.1f' % float(x)).rstrip('0').rstrip('.')
+
+
 def notify_check(car, key, old, new):
+    if key == 'charging_state' and old == 'Charging' and new in ('Complete', 'Stopped', 'Disconnected') and nset_load().get('charge_cost', True):
+        charge_cost_prompt(car)
     if key in ('charging_state', 'plugged_in', 'battery_level', 'shift_state', 'doors_open', 'trunk_open', 'frunk_open', 'windows_open', 'locked', 'charge_limit_soc', 'time_to_full_charge'):
         la_poke(car)
     if old is None or old == new:
@@ -3032,6 +3102,7 @@ PUBLIC_ROUTES = []               # fn(handler, cale, parametri) -> (cod, corp, c
 CTX = threading.local()          # CTX.actor = cine a dat comanda (user:rol / rule:id / system)
 OWN = None                       # baza de date proprie (features.store.Store), setata de features.load()
 PLACES = None                    # features.places: match(lat, lon) -> loc salvat cu pret pe kWh
+DRIVECOST = None                  # features.drivecost: annotate(car, curse) adauga costul electric / termic / echivalentul in l/100 km
 TAGS = None                      # features.tags: ids(kind, nume) si attach(kind, randuri) pentru filtrarea/afisarea tag-urilor
 
 
@@ -3431,7 +3502,10 @@ class H(BaseHTTPRequestHandler):
                     cid = int(body.get('id'))
                     if not q('select 1 from charging_processes where id=%s', (cid,)):
                         return self.send_json(dict(ok=False, reason='Încărcare inexistentă'), 404)
-                    return self.send_json(dict(ok=True, meta=meta_update(cid, body)))
+                    meta = meta_update(cid, body)
+                    if meta.get('cost') is not None:
+                        notify_clear('tesla_charge_cost', 'charge_cost')           # costul a fost introdus: notificarea nu mai are rost
+                    return self.send_json(dict(ok=True, meta=meta))
                 except (TypeError, ValueError) as e:
                     return self.send_json(dict(ok=False, reason='Valoare invalidă (%s)' % e), 400)
             if u.path == '/api/fuel/refresh':
@@ -3492,9 +3566,11 @@ class H(BaseHTTPRequestHandler):
         lim, off = min(int(a.get('limit', 40)), 200), int(a.get('offset', 0))
         if p == '/api/drives':
             if demo:
-                return DEMO['drives'][off:off + lim]
+                return DRIVECOST.annotate(car, [dict(x) for x in DEMO['drives'][off:off + lim]], True) if DRIVECOST else DEMO['drives'][off:off + lim]
             lo, hi, ids = list_filters(a, 'drive')
             rows = drives(car, lim, off, lo, hi, ids)
+            if DRIVECOST:
+                DRIVECOST.annotate(car, rows)
             return TAGS.attach('drive', rows) if TAGS else rows
         if p.startswith('/api/drive/'):
             did = int(p.rsplit('/', 1)[1])
@@ -3515,12 +3591,15 @@ class H(BaseHTTPRequestHandler):
                 raise NotFound()
             if TAGS and not demo:
                 TAGS.attach('charge', rows)
+            rows[0]['providers'] = provider_list(car, demo)
             return rows[0]
         if p.startswith('/api/drive_row/'):
             did = int(p.rsplit('/', 1)[1])
-            rows = [x for x in DEMO['drives'] if x['id'] == did] if demo else drives_by_ids(car, [did])
+            rows = [dict(x) for x in DEMO['drives'] if x['id'] == did] if demo else drives_by_ids(car, [did])
             if not rows:
                 raise NotFound()
+            if DRIVECOST:
+                DRIVECOST.annotate(car, rows, demo)
             if TAGS and not demo:
                 TAGS.attach('drive', rows)
             return rows[0]

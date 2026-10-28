@@ -79,7 +79,8 @@ def init(S):
         for d in drives:
             k = local_day(d['start_date'])
             by_day[k] = by_day.get(k, 0) + (d['distance'] or 0)
-        ice = S.ice_calc([dict(day=k, km=v) for k, v in sorted(by_day.items())], kwh_d, cost, kwh_c) if by_day else dict(enabled=False)
+        ev_total = S.DRIVECOST.total(car, [d['id'] for d in drives]) if S.DRIVECOST and drives else None
+        ice = S.ice_calc([dict(day=k, km=v) for k, v in sorted(by_day.items())], kwh_d, cost, kwh_c, ev_total=ev_total) if by_day else dict(enabled=False)
         longest = max(drives, key=lambda d: d['distance'] or 0) if drives else None
         eff = [d for d in drives if d['kwh'] and d['kwh'] > 0 and (d['distance'] or 0) >= 10]
         best = min(eff, key=lambda d: d['kwh'] / d['distance']) if eff else None

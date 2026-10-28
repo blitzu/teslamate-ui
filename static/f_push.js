@@ -6,7 +6,7 @@ const pushKey = (k) => Uint8Array.from(atob(k.replace(/-/g, '+').replace(/_/g, '
 async function pushSub() { if (!PUSH_OK) return null; try { const reg = await navigator.serviceWorker.getRegistration(); return reg ? await reg.pushManager.getSubscription() : null; } catch (e) { return null; } }
 const pushLS = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { /* ignore */ } return null; };
 const PUSH_KINDS = () => ({ alert: X('Alerte', 'Alerts'), maint: X('Reamintiri service', 'Service reminders'), report: X('Rapoarte', 'Reports'), app_update: X('Versiune nouă a aplicației', 'New app version'), low_batt: X('Baterie scăzută', 'Low battery'),
-  update: X('Update software mașină', 'Car software update'), charge_done: X('Încărcare terminată', 'Charge finished'), plugged: X('Cablu conectat', 'Plug-in'), door: X('Uși/portbagaj deschise', 'Doors/trunk open'), rule: X('Reguli automate', 'Automation rules'), handoff: X('Predare mașină', 'Car handoff'), test: X('Teste', 'Tests') });
+  update: X('Update software mașină', 'Car software update'), charge_done: X('Încărcare terminată', 'Charge finished'), charge_cost: X('Costul încărcării', 'Charge cost'), plugged: X('Cablu conectat', 'Plug-in'), door: X('Uși/portbagaj deschise', 'Doors/trunk open'), rule: X('Reguli automate', 'Automation rules'), handoff: X('Predare mașină', 'Car handoff'), test: X('Teste', 'Tests') });
 
 /* sugestie pe pagina Masina, pana se activeaza notificarile pe acest telefon */
 let pushState = pushLS('push_on') === '1' ? 'on' : 'unknown';

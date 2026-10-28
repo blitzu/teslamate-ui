@@ -142,11 +142,11 @@ async function afterNotif() {
   const box = $('#notif'); if (!box || S.public_demo) { if (box) box.innerHTML = ''; return; }
   let n; try { n = await api('/api/notify'); } catch (e) { return; }
   const st = n.settings || {};
-  setHtml(box, `<div class="card">${sw('n_plugged', st.plugged, tr('Cablu conectat'))}${sw('n_charge_done', st.charge_done, tr('Încărcare terminată'))}${sw('n_door', st.door, tr('Ușă / portbagaj deschise'))}${sw('n_update', st.update, X('Update software disponibil', 'Software update available'))}${sw('n_low_batt', st.low_batt, X('Baterie sub 20% la parcare', 'Battery below 20% while parked'))}${sw('n_away_only', st.away_only, X('Fără notificări de stare acasă (cablu conectat, uși/frunk deschise, carduri „deschis” și „conectată”) — doar în afara casei', 'No status notifications at home (cable, doors/frunk, "open" and "plugged" cards) — only away from home'))}${sw('n_live', st.live, X('Live Activity pe iPhone (încărcare, ușă deschisă, conectată)', 'iPhone Live Activity (charging, open door, plugged in)'))}${sw('n_live_drive', st.live_drive, X('Live Activity și în timpul condusului', 'Live Activity while driving'))}${sw('n_actions', st.actions, X('Butoane de comandă pe notificări (deblochează cablul, oprește încărcarea, încuie)', 'Command buttons on notifications (release cable, stop charging, lock)'))}${sw('n_app_update', st.app_update, X('Versiune nouă a aplicației', 'New app version'))}
+  setHtml(box, `<div class="card">${sw('n_plugged', st.plugged, tr('Cablu conectat'))}${sw('n_charge_done', st.charge_done, tr('Încărcare terminată'))}${sw('n_charge_cost', st.charge_cost, X('După încărcare: „Cât a costat?” (dacă nu se știe prețul)', 'After a charge: “How much did it cost?” (when the price is unknown)'))}${sw('n_door', st.door, tr('Ușă / portbagaj deschise'))}${sw('n_update', st.update, X('Update software disponibil', 'Software update available'))}${sw('n_low_batt', st.low_batt, X('Baterie sub 20% la parcare', 'Battery below 20% while parked'))}${sw('n_away_only', st.away_only, X('Fără notificări de stare acasă (cablu conectat, uși/frunk deschise, carduri „deschis” și „conectată”) — doar în afara casei', 'No status notifications at home (cable, doors/frunk, "open" and "plugged" cards) — only away from home'))}${sw('n_live', st.live, X('Live Activity pe iPhone (încărcare, ușă deschisă, conectată)', 'iPhone Live Activity (charging, open door, plugged in)'))}${sw('n_live_drive', st.live_drive, X('Live Activity și în timpul condusului', 'Live Activity while driving'))}${sw('n_actions', st.actions, X('Butoane de comandă pe notificări (deblochează cablul, oprește încărcarea, încuie)', 'Command buttons on notifications (release cable, stop charging, lock)'))}${sw('n_app_update', st.app_update, X('Versiune nouă a aplicației', 'New app version'))}
     ${n.hook ? '' : `<p class="note" style="margin:8px 0 0">${X('Telefonul nu e legat încă (lipsește NOTIFY_WEBHOOK) — notificările apar doar aici.', 'Phone not linked yet (NOTIFY_WEBHOOK missing) — notifications only show here.')}</p>`}
     <div class="links"><a href="#" id="ntest">${tr('Trimite test')}</a></div>
     <div id="nlist">${(n.events || []).slice(0, 40).map((e) => `<div class="row nrow"><div><b>${esc(e.title)}</b><small>${esc(e.msg)}</small></div><div class="sp"></div><span class="mut" style="font-size:11.5px">${ago(e.t)}</span></div>`).join('') || `<p class="note" style="margin:8px 0 0">${tr('Nicio notificare încă.')}</p>`}</div></div>`);
-  ['plugged', 'charge_done', 'door', 'update', 'low_batt', 'away_only', 'live', 'live_drive', 'actions', 'app_update'].forEach((k) => { const e = $('#n_' + k); if (e) e.onchange = () => fetch('/api/notify/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [k]: e.checked }) }); });
+  ['plugged', 'charge_done', 'charge_cost', 'door', 'update', 'low_batt', 'away_only', 'live', 'live_drive', 'actions', 'app_update'].forEach((k) => { const e = $('#n_' + k); if (e) e.onchange = () => fetch('/api/notify/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [k]: e.checked }) }); });
   const t = $('#ntest'); if (t) t.onclick = async (ev) => { ev.preventDefault(); await fetch('/api/notify/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); setTimeout(afterNotif, 400); };
 }
 
@@ -1151,11 +1151,12 @@ function drawChargeList() {
 async function afterChargeEdit() {
   const box = $('#chedit'), c = window.__chrow; if (!box || !c) return;
   if (!chRows.length) { try { chRows = await fetchCharges(); } catch (x) { /* ignore */ } }
-  const cu = esc(CU()), provs = [...new Set(chRows.map((r) => r.provider).filter(Boolean))].sort();
+  const cu = esc(CU()), provs = [...new Set([...(c.providers || []), ...chRows.map((r) => r.provider), c.provider_set ? c.provider : ''].filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const eff = c.cost_real ?? c.cost;
   setHtml(box, `<h2>${X('Cost și furnizor', 'Cost & provider')}</h2><div class="card">
     <div class="addf"><label>${X('Cost total', 'Total cost')} (${cu})<input id="ce_cost" type="number" inputmode="decimal" step="0.01" min="0" value="${c.cost_manual ?? ''}" placeholder="${eff != null ? nf(eff, 2) : ''}"></label>
-      <label>${X('Furnizor', 'Provider')}<input id="ce_prov" list="ce_provs" maxlength="40" value="${esc(c.provider_set ? c.provider : '')}" placeholder="${esc(c.provider || 'ex. Ionity')}"><datalist id="ce_provs">${provs.map((p) => `<option value="${esc(p)}">`).join('')}</datalist></label></div>
+      <label>${X('Furnizor', 'Provider')}<select id="ce_prov"><option value="">${X('Automat', 'Automatic')}${c.provider && !c.provider_set ? ' (' + esc(c.provider) + ')' : ''}</option>${provs.map((p) => `<option value="${esc(p)}" ${c.provider_set && p === c.provider ? 'selected' : ''}>${esc(p)}</option>`).join('')}<option value="__new__">➕ ${X('Furnizor nou…', 'New provider…')}</option></select></label>
+      <label id="ce_newl" style="display:none;grid-column:1/-1">${X('Nume furnizor nou', 'New provider name')}<input id="ce_provnew" maxlength="40" placeholder="ex. Ionity" autocomplete="off"></label></div>
     <div class="links"><a href="#" id="ce_save">${X('Salvează', 'Save')}</a>${c.cost_manual != null || c.provider_set ? `<a href="#" id="ce_clear">${X('Șterge modificările', 'Clear changes')}</a>` : ''}</div>
     <div class="toast" aria-live="polite" id="ce_msg">${X('Costul introdus înlocuiește costul TeslaMate și estimarea, în listă și în statistici. Se salvează doar în această aplicație, nu în TeslaMate. Lasă gol ca să revii la cost automat.', 'The cost you enter replaces the TeslaMate cost and the estimate in the list and in the statistics. It is stored only in this app, not in TeslaMate. Leave empty to go back to the automatic cost.')}</div></div>`);
   const say = (t, cls) => { const m = $('#ce_msg'); if (m) { m.textContent = t; m.className = 'toast ' + (cls || ''); } };
@@ -1164,7 +1165,13 @@ async function afterChargeEdit() {
     const [ok, j] = await pinPost('/api/charge/meta', Object.assign({ id: c.id }, body));
     if (ok) { say('✓ ' + X('Salvat', 'Saved'), 'ok'); setTimeout(render, 600); } else say('✗ ' + (j.reason || X('Eroare', 'Error')), 'bad');
   };
-  const sv = $('#ce_save'); if (sv) sv.onclick = (ev) => { ev.preventDefault(); send({ cost: $('#ce_cost').value, provider: $('#ce_prov').value }); };
+  const ps = $('#ce_prov'); if (ps) ps.onchange = () => { const nw = $('#ce_newl'), on = ps.value === '__new__'; nw.style.display = on ? '' : 'none'; if (on) $('#ce_provnew').focus(); };
+  const sv = $('#ce_save'); if (sv) sv.onclick = (ev) => {
+    ev.preventDefault();
+    const nw = ps.value === '__new__', prov = nw ? $('#ce_provnew').value.trim() : ps.value;
+    if (nw && !prov) { say(X('Scrie numele noului furnizor.', 'Type the name of the new provider.'), 'bad'); return; }
+    send({ cost: $('#ce_cost').value, provider: prov });
+  };
   const cl = $('#ce_clear'); if (cl) cl.onclick = (ev) => { ev.preventDefault(); send({ cost: '', provider: '' }); };
 }
 function costStats(ch, d) {

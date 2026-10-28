@@ -13,7 +13,7 @@ import urllib.request
 from urllib.parse import urlparse
 
 HOSTS = re.compile(r'^(fcm\.googleapis\.com|updates\.push\.services\.mozilla\.com|[\w.-]+\.push\.apple\.com|web\.push\.apple\.com|[\w.-]+\.notify\.windows\.com|push\.services\.mozilla\.com)$')
-DEFAULT_KINDS = dict(alert=True, maint=True, report=True, app_update=True, low_batt=True, update=True, charge_done=True, plugged=True, door=True, rule=True, handoff=True, test=True)
+DEFAULT_KINDS = dict(alert=True, maint=True, report=True, app_update=True, low_batt=True, update=True, charge_done=True, charge_cost=True, plugged=True, door=True, rule=True, handoff=True, test=True)
 
 
 def b64u(b):
@@ -118,7 +118,7 @@ def init(S):
     def sink(kind, title, msg, data):
         if not kinds().get(kind) or not S.OWN.one('select 1 x from push_subs limit 1'):
             return
-        deliver(dict(title=title, body=msg, kind=kind, tag='tesla_' + kind + ('_%08x' % zlib.crc32(title.encode('utf-8')) if kind in ('alert', 'rule', 'maint') else ''), path=S.KIND_ROUTE.get(kind, '#/car')), urgency='high' if kind in ('alert', 'rule') else 'normal', role='admin' if kind in ADMIN_ONLY else None)
+        deliver(dict(title=title, body=msg, kind=kind, tag='tesla_' + kind + ('_%08x' % zlib.crc32(title.encode('utf-8')) if kind in ('alert', 'rule', 'maint') else ''), path=(data or {}).get('path') or S.KIND_ROUTE.get(kind, '#/car')), urgency='high' if kind in ('alert', 'rule') else 'normal', role='admin' if kind in ADMIN_ONLY else None)
 
     S.NOTIFY_SINKS.append(sink)
     S.PUSH_DELIVER = deliver
