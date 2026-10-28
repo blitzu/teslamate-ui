@@ -105,7 +105,7 @@ Set `NOTIFY_WEBHOOK` — see **[docs/notifications.md](docs/notifications.md)** 
 ## Customising
 
 * **Car picture:** drop a top-down transparent PNG of your car at `./data/car.png` (a generic drawing is used otherwise; the seat buttons on the Climate page are positioned for a typical sedan top view).
-* **Currency:** `CURRENCY` in `.env` (cost comes from the prices you set in TeslaMate).
+* **Currency:** `CURRENCY` in `.env` (e.g. `CURRENCY=RON`; cost comes from the prices you set in TeslaMate) or in the app under Settings → Display. The value set in the app wins. After editing `.env` run `docker compose up -d` (`restart` does not re-read it).
 * **Public demo with fictional data:** `docker compose --profile demo up -d demo` (port 4102, no database, no keys, commands disabled).
 
 ## External services: what is sent and when

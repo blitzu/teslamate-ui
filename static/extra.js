@@ -720,7 +720,8 @@ function afterSettings() {
   });
   view.querySelectorAll('[data-save]').forEach((b) => b.onclick = async (e) => {
     e.preventDefault(); const k = b.dataset.save, body = {};
-    FIELDS[k].forEach((id) => { const el = document.getElementById(id); if (el) body[id] = el.value; });
+    const was = (el) => el.tagName === 'SELECT' ? ((el.querySelector('option[selected]') || el.options[0] || {}).value ?? '') : el.defaultValue;
+    FIELDS[k].forEach((id) => { const el = document.getElementById(id); if (el && (k !== 'display' || el.value !== was(el))) body[id] = el.value; });      // Afisare: doar ce ai schimbat - altfel valorile implicite afisate (ex. moneda €) s-ar salva si ar acoperi .env
     if (k === 'ha') body.ha_ble = document.getElementById('ha_ble').checked ? '1' : '0';
     if (k === 'updates') body.update_check = document.getElementById('update_check').checked ? '1' : '0';
     say(k, X('Se salvează…', 'Saving…'), 'busy');

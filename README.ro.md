@@ -104,7 +104,7 @@ Setezi `NOTIFY_WEBHOOK` — vezi **[docs/notifications.md](docs/notifications.md
 ## Personalizare
 
 * **Poza mașinii:** pune un PNG transparent, văzut de sus, la `./data/car.png` (altfel se folosește un desen generic).
-* **Moneda:** `CURRENCY` în `.env` (costul vine din prețurile setate în TeslaMate).
+* **Moneda:** `CURRENCY` în `.env` (de ex. `CURRENCY=RON`; costul vine din prețurile setate în TeslaMate) sau în aplicație, la Setări → Afișare. Valoarea din aplicație are prioritate. După ce schimbi `.env` rulează `docker compose up -d` (`restart` nu îl recitește).
 * **Demo public cu date fictive:** `docker compose --profile demo up -d demo` (port 4102, fără bază de date și chei, comenzile oprite).
 
 ## Servicii externe: ce se trimite și când

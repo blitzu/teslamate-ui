@@ -3,6 +3,11 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.5.6 - 2026-10-28
+
+### Fixes
+- **The currency (and other Display settings) could get stuck on the default.** Settings → Display is pre-filled with the values in use, including the default currency `€`, and saving that section (even just to change the app address) sent *all* of them back. The app then stored `€` and kept it above `CURRENCY=RON` in `.env`, so the euro never went away. Now only the fields you actually change are saved. **If you are already affected**, open Settings → Display, type your currency (for example `RON`) and save once; the value is then kept.
+
 ## 1.5.5 - 2026-10-28
 
 ### Fixes
