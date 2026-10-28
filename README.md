@@ -116,7 +116,10 @@ Set `NOTIFY_WEBHOOK` — see **[docs/notifications.md](docs/notifications.md)** 
 | OpenStreetMap tiles (`tile.openstreetmap.org`) | map background | tile coordinates (and your IP address, as with any web map) | browser |
 | Open-Meteo (`api.open-meteo.com`, `archive-api.open-meteo.com`) | weather in the route replay | latitude/longitude rounded to 0.1° and the date | browser |
 | fuel-prices.eu | daily national fuel price for the ICE-car comparison | only the country name | server |
-| frankfurter.dev (ECB rates) | EUR → your currency | only the currency code | server |
+| Overpass / OpenStreetMap (`overpass-api.de` and mirrors) | “Find the station” button on a charge | the coordinates of that charge, only when you press the button | server |
+| AmpWhere (`ampwhere.com`), **on by default, can be switched off** | station, provider and tariffs for “Find the station” and automatic linking (see [docs/costs.md](docs/costs.md#find-the-station-of-a-charge)) | nothing about you or your car: one anonymous download per day of the station list of each country where you charge; the search is local | server |
+| frankfurter.dev (ECB rates) | EUR and station prices → your currency | only the currency codes | server |
+| open.er-api.com ([Exchange Rate API](https://www.exchangerate-api.com)) | rates for currencies the ECB does not publish (MDL, RSD, UAH…), as a fallback | only the currency codes | server |
 | energy-charts.info | day-ahead (PZU) prices for the PZU report | the dates needed | server |
 | Open-Meteo (server side) | rain-with-window alert | coordinates rounded to 0.1°, only while a window is open | server |
 | Telegram Bot API, browser push services (Google/Mozilla/Apple/Microsoft) | Telegram and Web Push notifications, only if you enable them | the notification text (push: encrypted) | server |

@@ -16,6 +16,33 @@ Every session gets a provider: the one you typed, otherwise one guessed from the
 Ionity, Renovatio, Enel X, MOL, OMV, Petrom, Kaufland, Lidl, ...). In **Charges**, pick a period (all / 30 / 90 days / 1 year) and a provider
 chip: the summary shows the number of sessions, **total kWh, total cost and the average cost per kWh** for the filter.
 
+## Find the station of a charge
+
+On a charge, **🔎 Find the station** looks for the charging station at the place of the charge and suggests the provider and, when known, the tariffs. Picking one **saves immediately**
+(no Save button): the provider, the station name and its tariffs. Your cost is never touched by this; it stays what you entered (or what TeslaMate / your saved places say).
+
+* **Tariffs.** A station can have several (AC and DC, or different powers). They appear as buttons, the one matching your charge (AC/DC, closest power) is marked ✓. Pick another with one tap,
+  or type your own **manual tariff** per kWh. The page then shows what the charge would have cost at that tariff (kWh × price) next to your real cost, which is handy when charging was free.
+  **Remove the link** clears it.
+* **Providers.** The provider of the linked station is used in the lists and filters, unless you set one yourself on the charge (that always wins).
+* **Sources.** **AmpWhere** first (on by default; switch it off in Settings → Display → *Station lookup* or with `AMPWHERE=0`): much richer data, with a price per kWh for almost every charger.
+  When it is off, has no station nearby or is unreachable, the lookup uses **OpenStreetMap** (via Overpass): operator and sometimes a price tag; in that case the coordinates of that one charge are sent
+  when you press the button, and results are cached for a day.
+* **About AmpWhere.** It is not an official, documented API: we use the same request their public map makes (no key, no guarantees, we are not affiliated) and it may change or stop working at any time
+  (then the lookup falls back to OpenStreetMap). Their terms forbid bulk downloads, so the maintainer asked first, describing this open-source project and its use (cost tracking only), and the owner of AmpWhere replied that calling the API is fine with him. The app downloads the country's station list **once a day at most**, keeps it in `/data`, identifies itself in the User-Agent, stops for 24 h if the
+  server refuses, and does the search **locally**, so none of your coordinates leave your server. The prices are today's, not the ones of the day of your charge. The data belongs to AmpWhere and the
+  charge point operators; please respect their terms.
+* **Countries.** AmpWhere covers Romania, Bulgaria, Lithuania, Greece, Hungary, the Czech Republic, Slovakia, Croatia, Slovenia, Italy, Cyprus, Moldova, Turkey and Serbia. By default (`AMPWHERE_COUNTRY=auto`)
+  the app downloads **only the countries where you actually charged** (decided from the coordinates of the charge, so a trip to Hungary adds Hungary's list of ~170 KB; Romania's is ~5.6 MB), each at most
+  once a day. Set `AMPWHERE_COUNTRY=ro,hu` to fix the list instead. Prices come in the currency of the station and are only offered as an estimated cost when it matches your currency.
+* **Currency.** Pick the currency of the app from a list in Settings → Display (the old free-text value still works). Station prices in another currency (forint, koruna, lira, euro…) are
+  **converted automatically** to it, with the ECB rate from [frankfurter.dev](https://frankfurter.dev) and, for currencies the ECB does not publish (MDL, RSD, UAH…), the free
+  [Exchange Rate API](https://www.exchangerate-api.com) (*Rates By Exchange Rate API*). Rates are cached for 12 hours (and the last known one is used if the service is down); only currency codes are sent.
+  The original price stays visible next to the converted one, e.g. `4.21 RON/kWh (289 HUF)`. The conversion is done when you look the station up or when it is linked, so a stored tariff keeps the rate of that day.
+* **Automatic link.** With AmpWhere on (the default), every new charge is linked to the nearest station (within 150 m) when TeslaMate closes it. **The first time the app runs with a station source
+  available (so, right after you update), the charges you already have are linked in the background, once**; charges at home or without a station nearby stay as they are, and your costs are never touched.
+  An administrator can redo it with `POST /api/stations/autolink` (add `"force": true` to also redo the ones already linked).
+
 ## Cost of each drive
 
 Every drive (in the list and on the drive page) shows what it cost, the equivalent in petrol litres and, if you set the petrol car's consumption, what it would have cost with a petrol car.

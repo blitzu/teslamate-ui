@@ -77,5 +77,8 @@ Notification-only rules: speed over N km/h, enters or leaves a TeslaMate geofenc
 |---|---|---|---|
 | Open-Meteo | rain-with-window alert | coordinates rounded to 0.1° | server |
 | energy-charts.info, frankfurter.dev | PZU report | the dates needed; the currency code | server |
+| frankfurter.dev (ECB), open.er-api.com | converting station prices to your currency | only the currency codes | server |
+| Overpass (OpenStreetMap) | “Find the station” | the coordinates of one charge, only when you press the button | server |
+| AmpWhere (on by default, can be switched off) | station tariffs, see docs/costs.md | nothing: one anonymous download per day of the station list of each country where you charge | server |
 | Telegram Bot API | Telegram notifications | the notification text | server |
 | Google / Mozilla / Apple / Microsoft push services | Web Push | an encrypted payload (RFC 8291) | server |

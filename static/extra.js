@@ -650,7 +650,7 @@ async function pageSettings() {
     + f(X('Roluri (email:rol, separate prin virgulă; roluri: admin, family, viewer)', 'Roles (email:role, comma-separated; roles: admin, family, viewer)'), 'roles', ac.roles, { ph: 'sotia@example.com:family' })
     + (ac.password_set ? `<button type="button" class="btn" id="logout_all" style="margin-top:10px">${X('Deconectează toate dispozitivele', 'Sign out all devices')}</button><small class="ch">${X('Sesiunile cu parolă de pe telefoane și calculatoare expiră imediat; se cere din nou parola.', 'Password sessions on phones and computers end immediately; the password is asked again.')}</small>` : ''), 'access')}
   ${G('data')}${ext('data')}
-  ${G('general')}${sec2(X('Afișare', 'Display'), f(X('Adresa aplicației (se deschide la atingerea notificării)', 'App address (opened when you tap a notification)'), 'app_url', dp.app_url, { ph: 'https://car.example.com' }) + f(X('Consum mașină termică de comparație (l/100 km)', 'Comparison ICE car consumption (l/100 km)'), 'ice_l100', dp.ice_l100, { ph: '7.5' }) + `<label class="cf">${X('Combustibil pentru comparație', 'Fuel for comparison')}<select id="fuel_type"><option value="euro95" ${dp.fuel_type === 'euro95' ? 'selected' : ''}>${X('Benzină (Euro 95) — preț automat zilnic', 'Petrol (Euro 95) — automatic daily price')}</option><option value="diesel" ${dp.fuel_type === 'diesel' ? 'selected' : ''}>${X('Motorină — preț automat zilnic', 'Diesel — automatic daily price')}</option><option value="manual" ${dp.fuel_type === 'manual' ? 'selected' : ''}>${X('Preț manual', 'Manual price')}</option></select></label>` + f(X('Preț manual combustibil (pe litru)', 'Manual fuel price (per litre)'), 'fuel_price', dp.fuel_price, { ph: '7.50' }) + f(X('Țara pentru prețul automat (fuel-prices.eu)', 'Country for the automatic price (fuel-prices.eu)'), 'fuel_country', dp.fuel_country, { ph: 'Romania' }) + f(X('Monedă (lângă costul încărcărilor)', 'Currency (next to charging cost)'), 'currency', dp.currency) + f(X('Preț energie din rețea / kWh (opțional)', 'Grid energy price / kWh (optional)'), 'price_grid', dp.price_grid, { ph: '1.10', hint: X('Folosit pentru „Cost real estimat”. Gol = tariful locației din TeslaMate.', 'Used for “Estimated real cost”. Empty = the location tariff from TeslaMate.') }) + f('URL TeslaMate', 'link_tm', dp.teslamate, { ph: 'http://…:4000' }) + f('URL Grafana', 'link_gf', dp.grafana, { ph: 'http://…:3000' }), 'display')}
+  ${G('general')}${sec2(X('Afișare', 'Display'), f(X('Adresa aplicației (se deschide la atingerea notificării)', 'App address (opened when you tap a notification)'), 'app_url', dp.app_url, { ph: 'https://car.example.com' }) + f(X('Consum mașină termică de comparație (l/100 km)', 'Comparison ICE car consumption (l/100 km)'), 'ice_l100', dp.ice_l100, { ph: '7.5' }) + `<label class="cf">${X('Combustibil pentru comparație', 'Fuel for comparison')}<select id="fuel_type"><option value="euro95" ${dp.fuel_type === 'euro95' ? 'selected' : ''}>${X('Benzină (Euro 95) — preț automat zilnic', 'Petrol (Euro 95) — automatic daily price')}</option><option value="diesel" ${dp.fuel_type === 'diesel' ? 'selected' : ''}>${X('Motorină — preț automat zilnic', 'Diesel — automatic daily price')}</option><option value="manual" ${dp.fuel_type === 'manual' ? 'selected' : ''}>${X('Preț manual', 'Manual price')}</option></select></label>` + f(X('Preț manual combustibil (pe litru)', 'Manual fuel price (per litre)'), 'fuel_price', dp.fuel_price, { ph: '7.50' }) + f(X('Țara pentru prețul automat (fuel-prices.eu)', 'Country for the automatic price (fuel-prices.eu)'), 'fuel_country', dp.fuel_country, { ph: 'Romania' }) + curSelect(dp.currency) + `<label class="cf">${X('Căutare stații: AmpWhere (neoficial)', 'Station lookup: AmpWhere (unofficial)')}<select id="ampwhere"><option value="0" ${dp.ampwhere ? '' : 'selected'}>${X('Oprit — doar OpenStreetMap', 'Off — OpenStreetMap only')}</option><option value="1" ${dp.ampwhere ? 'selected' : ''}>${X('Pornit — o descărcare pe zi (~6 MB) de la ampwhere.com, căutarea rămâne locală', 'On — one download a day (~6 MB) from ampwhere.com, the search stays local')}</option></select></label>` + f(X('Preț energie din rețea / kWh (opțional)', 'Grid energy price / kWh (optional)'), 'price_grid', dp.price_grid, { ph: '1.10', hint: X('Folosit pentru „Cost real estimat”. Gol = tariful locației din TeslaMate.', 'Used for “Estimated real cost”. Empty = the location tariff from TeslaMate.') }) + f('URL TeslaMate', 'link_tm', dp.teslamate, { ph: 'http://…:4000' }) + f('URL Grafana', 'link_gf', dp.grafana, { ph: 'http://…:3000' }), 'display')}
   ${sec2(X('Versiune și actualizări', 'Version & updates'),
     `<div class="grid">${stat(X('Versiune instalată', 'Installed version'), 'v' + esc(ver.version || '?') + (ver.commit ? ' · ' + esc(ver.commit) : ''))}${stat(X('Ultima versiune', 'Latest version'), ver.private ? X('build local', 'local build') : (ver.latest ? 'v' + esc(ver.latest) : '—'))}</div>`
     + (ver.newer ? `<div class="card" style="border:1px solid #6fd6b866;margin-top:10px"><b style="color:var(--mint)">${X('Versiune nouă disponibilă', 'New version available')}: v${esc(ver.latest)}</b><pre class="notes">${esc(ver.notes || '')}</pre>
@@ -682,7 +682,7 @@ function afterSettings() {
     });
   }).catch(() => {});
   const FIELDS = { pin: ['pin'], fleet: ['fleet_id', 'fleet_secret', 'fleet_domain', 'fleet_base'], ha: ['ha_url', 'ha_token', 'ha_prefix', 'ha_grid', 'ha_pv'], notify: ['notify_webhook'],
-    access: ['app_password', 'acc_team', 'acc_aud', 'acc_email', 'roles'], tessie: ['tessie_token'], updates: ['update_webhook', 'update_token'], display: ['app_url', 'ice_l100', 'fuel_type', 'fuel_price', 'fuel_country', 'currency', 'price_grid', 'link_tm', 'link_gf'] };
+    access: ['app_password', 'acc_team', 'acc_aud', 'acc_email', 'roles'], tessie: ['tessie_token'], updates: ['update_webhook', 'update_token'], display: ['app_url', 'ice_l100', 'fuel_type', 'fuel_price', 'fuel_country', 'currency', 'ampwhere', 'price_grid', 'link_tm', 'link_gf'] };
   const say = (k, t, cls) => { const m = document.getElementById('cm-' + k); if (m) { m.style.display = ''; m.textContent = t; m.className = 'toast ' + (cls || ''); } };
   const call = async (path, body, k) => {
     const pinSet = (window.__pinSet !== false);
@@ -1078,7 +1078,15 @@ function openPhoto(L, o) {
 
 
 /* ---------- Incarcari: filtru pe furnizor + totaluri, cost editabil, comparatie cu o masina termica ---------- */
-const CU = () => { const c = S.currency; return tr(!c || /^(lei|ron)$/i.test(c) ? 'lei' : c); };       // "LEI"/"RON" se afiseaza ca "lei"
+const CURRENCIES = [['RON', 'lei', 'Leu'], ['EUR', '€', 'Euro'], ['USD', '$', 'US Dollar'], ['GBP', '£', 'Pound'], ['PLN', 'zł', 'Złoty'], ['CZK', 'Kč', 'Koruna'], ['HUF', 'Ft', 'Forint'],
+  ['BGN', 'лв', 'Lev'], ['CHF', 'CHF', 'Franc'], ['SEK', 'kr', 'Krona'], ['DKK', 'kr', 'Krone'], ['NOK', 'kr', 'Krone'], ['ISK', 'kr', 'Króna'], ['TRY', '₺', 'Lira'], ['MDL', 'MDL', 'Leu moldovenesc'],
+  ['RSD', 'RSD', 'Dinar'], ['UAH', '₴', 'Hryvnia'], ['AUD', 'A$', 'Australian Dollar'], ['CAD', 'C$', 'Canadian Dollar'], ['JPY', '¥', 'Yen'], ['CNY', 'CN¥', 'Yuan'], ['INR', '₹', 'Rupee'],
+  ['BRL', 'R$', 'Real'], ['MXN', 'MX$', 'Peso'], ['ZAR', 'R', 'Rand'], ['ILS', '₪', 'Shekel'], ['AED', 'AED', 'Dirham']];
+const CURSYM = Object.fromEntries(CURRENCIES.map(([c, s]) => [c, s]));
+const CURLEG = { lei: 'RON', '€': 'EUR', '$': 'USD', '£': 'GBP', 'zł': 'PLN', 'kč': 'CZK', ft: 'HUF', 'лв': 'BGN', '₺': 'TRY' };       // valorile vechi (simbolul scris de mana)
+const curCode = (v) => { const u = String(v || '').trim(); return CURSYM[u.toUpperCase()] ? u.toUpperCase() : (CURLEG[u.toLowerCase()] || ''); };
+const CU = () => { const c = S.currency; if (!c) return tr('lei'); const u = String(c).trim().toUpperCase(); return tr(CURSYM[u] || (/^(lei|ron)$/i.test(c) ? 'lei' : c)); };       // codul ales din lista -> simbolul lui
+const curSelect = (v) => { const cur = curCode(v); return `<label class="cf">${X('Monedă (lângă costul încărcărilor)', 'Currency (next to charging cost)')}<select id="currency">${CURRENCIES.map(([c, s, n]) => `<option value="${c}" ${c === cur ? 'selected' : ''}>${c} — ${esc(s)} · ${esc(n)}</option>`).join('')}${v && !cur ? `<option value="${esc(v)}" selected>${esc(v)}</option>` : ''}</select></label>`; };       // "LEI"/"RON" se afiseaza ca "lei"
 let chF = { p: null, d: 0 }, chRows = [], chKeys = [];
 async function pinPost(path, body) {
   let pin = pinGet();
@@ -1157,13 +1165,58 @@ async function afterChargeEdit() {
     <div class="addf"><label>${X('Cost total', 'Total cost')} (${cu})<input id="ce_cost" type="number" inputmode="decimal" step="0.01" min="0" value="${c.cost_manual ?? ''}" placeholder="${eff != null ? nf(eff, 2) : ''}"></label>
       <label>${X('Furnizor', 'Provider')}<select id="ce_prov"><option value="">${X('Automat', 'Automatic')}${c.provider && !c.provider_set ? ' (' + esc(c.provider) + ')' : ''}</option>${provs.map((p) => `<option value="${esc(p)}" ${c.provider_set && p === c.provider ? 'selected' : ''}>${esc(p)}</option>`).join('')}<option value="__new__">➕ ${X('Furnizor nou…', 'New provider…')}</option></select></label>
       <label id="ce_newl" style="display:none;grid-column:1/-1">${X('Nume furnizor nou', 'New provider name')}<input id="ce_provnew" maxlength="40" placeholder="ex. Ionity" autocomplete="off"></label></div>
-    <div class="links"><a href="#" id="ce_save">${X('Salvează', 'Save')}</a>${c.cost_manual != null || c.provider_set ? `<a href="#" id="ce_clear">${X('Șterge modificările', 'Clear changes')}</a>` : ''}</div>
+    <div class="links"><a href="#" id="ce_save">${X('Salvează', 'Save')}</a>${c.lat != null && c.lon != null ? `<a href="#" id="ce_find">🔎 ${X('Caută stația', 'Find the station')}</a>` : ''}${c.cost_manual != null || c.provider_set ? `<a href="#" id="ce_clear">${X('Șterge modificările', 'Clear changes')}</a>` : ''}</div>
+    <div id="ce_sv"></div>
+    <div id="ce_st"></div>
     <div class="toast" aria-live="polite" id="ce_msg">${X('Costul introdus înlocuiește costul TeslaMate și estimarea, în listă și în statistici. Se salvează doar în această aplicație, nu în TeslaMate. Lasă gol ca să revii la cost automat.', 'The cost you enter replaces the TeslaMate cost and the estimate in the list and in the statistics. It is stored only in this app, not in TeslaMate. Leave empty to go back to the automatic cost.')}</div></div>`);
   const say = (t, cls) => { const m = $('#ce_msg'); if (m) { m.textContent = t; m.className = 'toast ' + (cls || ''); } };
   const send = async (body) => {
     say(X('Se salvează…', 'Saving…'), 'busy');
     const [ok, j] = await pinPost('/api/charge/meta', Object.assign({ id: c.id }, body));
     if (ok) { say('✓ ' + X('Salvat', 'Saved'), 'ok'); setTimeout(render, 600); } else say('✗ ' + (j.reason || X('Eroare', 'Error')), 'bad');
+  };
+  const kwhUsed = c.charge_energy_used || c.charge_energy_added || 0;
+  const tarTxt = (t) => (t.kind === 'manual' ? X('Manual', 'Manual') : (t.kind ? t.kind.toUpperCase() : '')) + (t.power ? ' ' + nf(t.power) + ' kW' : '') + ' · ' + nf(t.price, 2) + ' ' + esc(t.cur || CU()) + '/kWh' + (t.per_h ? ' · +' + nf(t.per_h, 2) + '/h' : '') + (t.orig_cur ? ' (' + nf(t.orig_price, 2) + ' ' + esc(t.orig_cur) + ')' : '');
+  const saveSt = async (body, msg) => {                                      // alegerea statiei / tarifului se salveaza singura, fara butonul Salvează
+    say(X('Se salvează…', 'Saving…'), 'busy');
+    const [ok, j] = await pinPost('/api/charge/meta', Object.assign({ id: c.id }, body));
+    if (ok) { say('✓ ' + (msg || X('Salvat', 'Saved')), 'ok'); setTimeout(render, 600); } else say('✗ ' + (j.reason || X('Eroare', 'Error')), 'bad');
+  };
+  const stBox = $('#ce_sv');
+  if (stBox && c.station) {
+    const s = c.station, sel = s.tariffs[s.sel], val = sel && kwhUsed ? sel.price * kwhUsed : null;
+    stBox.innerHTML = `<div class="note" style="margin:12px 0 4px"><b>📍 ${esc(s.name || '—')}</b>${s.provider ? ' · ' + esc(s.provider) : ''}${s.auto ? ' · ' + X('asociată automat', 'linked automatically') : ''}${s.address ? `<br><small>${esc(s.address)}</small>` : ''}</div>
+      <div class="pchips">${s.tariffs.map((t, i) => `<button class="pchip ${i === s.sel ? 'on' : ''}" data-tsel="${i}">${tarTxt(t)}</button>`).join('')}<button class="pchip ${s.sel < 0 ? 'on' : ''}" data-tsel="-1">${X('Fără tarif', 'No tariff')}</button></div>
+      ${val != null ? `<p class="note" style="margin:6px 0 0">${X('La tariful ales', 'At the chosen tariff')}: <b>${nf(val, 2)} ${cu}</b> (${nf(kwhUsed, 1)} kWh × ${nf(sel.price, 2)}). ${X('Costul tău rămâne cel de mai sus.', 'Your cost stays as entered above.')}</p>` : ''}
+      <div class="addf" style="margin-top:8px"><label>${X('Tarif manual', 'Manual tariff')} (${cu}/kWh)<input id="ce_tman" type="number" inputmode="decimal" step="0.01" min="0"></label></div>
+      <div class="links"><a href="#" id="ce_tmanb">${X('Folosește tariful manual', 'Use the manual tariff')}</a><a href="#" id="ce_stclear">${X('Elimină asocierea', 'Remove the link')}</a></div>`;
+    stBox.querySelectorAll('[data-tsel]').forEach((b) => b.onclick = () => saveSt({ station: Object.assign({}, s, { sel: +b.dataset.tsel, auto: false }) }));
+    $('#ce_tmanb').onclick = (e) => {
+      e.preventDefault(); const v = parseFloat(String($('#ce_tman').value).replace(',', '.'));
+      if (!(v >= 0)) { say(X('Scrie tariful pe kWh.', 'Type the price per kWh.'), 'bad'); return; }
+      const tariffs = s.tariffs.filter((t) => t.kind !== 'manual').concat([{ kind: 'manual', price: v, per_h: 0, cur: CU(), power: 0, n: 0 }]);
+      saveSt({ station: Object.assign({}, s, { tariffs, sel: tariffs.length - 1, auto: false }) });
+    };
+    $('#ce_stclear').onclick = (e) => { e.preventDefault(); saveSt({ station: '' }, X('Asociere eliminată', 'Link removed')); };
+  }
+  const fd = $('#ce_find'); if (fd) fd.onclick = async (ev) => {
+    ev.preventDefault();
+    const out = $('#ce_st'); out.innerHTML = `<p class="note">${X('Caut stația…', 'Looking for the station…')}</p>`;
+    let j; try { j = await api('/api/station?id=' + c.id + '&car=' + car); } catch (e) { j = { ok: false, reason: X('Căutarea a eșuat.', 'The search failed.') }; }
+    if (!j.ok) { out.innerHTML = `<p class="note">✗ ${esc(j.reason || '')}</p>`; return; }
+    const L = j.candidates || [];
+    if (!L.length) { out.innerHTML = `<p class="note">${X(`Nicio stație în raza de ${j.radius} m (${j.source || 'OpenStreetMap'}). Poți scrie furnizorul cu „➕ Furnizor nou…”.`, `No station within ${j.radius} m (${j.source || 'OpenStreetMap'}). You can type the provider with “➕ New provider…”.`)}</p>`; return; }
+    const fee = (f) => f === 'yes' ? X('cu plată', 'paid') : f === 'no' ? X('gratuit', 'free') : '';
+    out.innerHTML = `<p class="note">${j.prices_now ? X(`Din ${esc(j.source)}, cele mai apropiate primele. Prețurile sunt cele de acum (nu din ziua încărcării) și s-ar putea să se fi schimbat.`, `From ${esc(j.source)}, nearest first. The prices are today’s (not from the day of the charge) and may have changed since.`) : X('Din OpenStreetMap, cele mai apropiate primele. Datele sunt completate de utilizatori și pot fi greșite sau vechi.', 'From OpenStreetMap, nearest first. The data is crowd-sourced and may be wrong or out of date.')} ${X('Alegerea stației se salvează automat (costul rămâne cel introdus de tine).', 'Choosing a station saves automatically (your cost stays as entered).')}</p>` + L.map((s, i) => `<div class="item" style="cursor:default"><div class="t"><span>${esc(s.name || s.operator || s.network || '—')}</span>${s.provider ? `<span class="prov">${esc(s.provider)}</span>` : ''}</div>
+      <div class="m"><span><b>${nf(s.dist)}</b> m</span>${!(s.tariffs || []).length && s.price_text ? `<span><b>${esc(s.price_text)}</b></span>` : ''}${fee(s.fee) && !(s.tariffs || []).length ? `<span>${fee(s.fee)}</span>` : ''}${s.capacity ? `<span>${esc(s.capacity)} ${X('prize', 'plugs')}</span>` : ''}${s.hours ? `<span>${esc(s.hours)}</span>` : ''}${s.address ? `<span>${esc(s.address)}</span>` : ''}</div>
+      ${(s.tariffs || []).length ? `<div class="pchips">${s.tariffs.map((t, k) => `<button class="pchip ${k === s.matched ? 'on' : ''}" data-pick="${i}:${k}">${tarTxt(t)}${k === s.matched ? ' ✓' : ''}</button>`).join('')}</div><p class="note" style="margin:4px 0 0">${X('Alege tariful ca să asociezi stația (✓ = cel potrivit încărcării tale).', 'Pick a tariff to link the station (✓ = the one matching your charge).')}</p>`
+        : `<div class="links"><a href="#" data-pick="${i}:-1">${X('Alege această stație', 'Choose this station')}</a></div>`}
+      ${s.cost_est != null ? `<div class="links"><a href="#" data-stc="${i}">${X('Completează costul estimat', 'Fill in the estimated cost')} ${nf(s.cost_est, 2)} ${cu}</a></div>` : ''}</div>`).join('');
+    out.querySelectorAll('[data-pick]').forEach((a) => a.onclick = (e) => {
+      e.preventDefault(); const [i, k] = a.dataset.pick.split(':').map(Number), s = L[i];
+      saveSt({ provider: s.provider || '', station: { name: s.name || s.operator || s.network || '', provider: s.provider || '', address: s.address || '', tariffs: s.tariffs || [], sel: k, auto: false, src: j.source || '' } }, X('Stație salvată', 'Station saved'));
+    });
+    out.querySelectorAll('[data-stc]').forEach((a) => a.onclick = (e) => { e.preventDefault(); $('#ce_cost').value = L[+a.dataset.stc].cost_est; say(X('Cost completat — apasă Salvează.', 'Cost filled in — press Save.'), 'ok'); });
   };
   const ps = $('#ce_prov'); if (ps) ps.onchange = () => { const nw = $('#ce_newl'), on = ps.value === '__new__'; nw.style.display = on ? '' : 'none'; if (on) $('#ce_provnew').focus(); };
   const sv = $('#ce_save'); if (sv) sv.onclick = (ev) => {

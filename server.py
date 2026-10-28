@@ -262,7 +262,46 @@ PROV_AUTO = [(r'supercharger', 'Tesla Supercharger'), (r'acas|home', 'Acasă'), 
              (r'fastned', 'Fastned'), (r'allego', 'Allego'), (r'shell', 'Shell Recharge'), (r'virta', 'Virta'), (r'nelion', 'Nelion'), (r'plugpoint|plug point', 'PlugPoint'),
              (r'rompetrol', 'Rompetrol'), (r'lukoil', 'Lukoil'), (r'socar', 'Socar'), (r'electra', 'Electra'), (r'atlante', 'Atlante')]
 CUR_CODES = {'lei': 'RON', 'ron': 'RON', '€': 'EUR', 'eur': 'EUR', '$': 'USD', 'usd': 'USD', '£': 'GBP', 'gbp': 'GBP', 'zł': 'PLN', 'pln': 'PLN', 'kč': 'CZK', 'czk': 'CZK',
-             'ft': 'HUF', 'huf': 'HUF', 'лв': 'BGN', 'bgn': 'BGN', 'chf': 'CHF', 'sek': 'SEK', 'dkk': 'DKK', 'nok': 'NOK'}
+             'ft': 'HUF', 'huf': 'HUF', 'лв': 'BGN', 'bgn': 'BGN', 'chf': 'CHF', 'sek': 'SEK', 'dkk': 'DKK', 'nok': 'NOK',
+             **{c.lower(): c for c in ('ISK', 'TRY', 'MDL', 'RSD', 'UAH', 'AUD', 'CAD', 'JPY', 'CNY', 'INR', 'BRL', 'MXN', 'ZAR', 'ILS', 'AED')}, '₺': 'TRY'}
+FXFILE = DATA_DIR + '/fx_rates.json'      # {"EUR>RON": [moment, curs]}
+FX_TTL = 12 * 3600
+FX_CACHE = {}
+
+
+def fx_rate(frm, to):
+    """Cursul frm -> to: ECB prin frankfurter.dev, iar pentru monedele pe care BCE nu le publica (MDL, RSD, UAH...) open.er-api.com. Tinut 12 h in memorie si pe disc;
+    la eroare, ultimul curs cunoscut. Se trimit doar codurile monedelor. None daca nu exista niciun curs."""
+    frm, to = str(frm or '').strip().upper(), str(to or '').strip().upper()
+    if not (re.fullmatch(r'[A-Z]{3}', frm) and re.fullmatch(r'[A-Z]{3}', to)):
+        return None
+    if frm == to:
+        return 1.0
+    k = '%s>%s' % (frm, to)
+    now = time.time()
+    hit = FX_CACHE.get(k) or (_json_file(FXFILE, {}) or {}).get(k)
+    if hit:
+        FX_CACHE[k] = tuple(hit)
+        if now - hit[0] < FX_TTL:
+            return float(hit[1])
+    rate = None
+    try:
+        rate = float(json.loads(_get_text('https://api.frankfurter.dev/v1/latest?base=%s&symbols=%s' % (frm, to), 15))['rates'][to])
+    except Exception:  # noqa
+        try:
+            j = json.loads(_get_text('https://open.er-api.com/v6/latest/' + frm, 15))
+            if j.get('result') == 'success':
+                rate = float(j['rates'][to])
+        except Exception as e:  # noqa
+            log('curs %s:' % k, str(e)[:80], flush=True)
+    if rate and rate > 0:
+        FX_CACHE[k] = (now, rate)
+        with MLOCK:
+            d = _json_file(FXFILE, {}) or {}
+            d[k] = [now, rate]
+            _json_save(FXFILE, dict(list(d.items())[-60:]))
+        return rate
+    return float(hit[1]) if hit else None
 FUEL_STATE = dict(last=0, err='')
 
 
@@ -326,6 +365,32 @@ def meta_load():
     return _json_file(METAFILE, {})
 
 
+def station_clean(st):
+    """Statia asociata unei incarcari: nume, furnizor, adresa si tarifele ei (AC/DC...), plus tariful ales (sel). Valorile sunt curatate si limitate; None = sterge."""
+    if not st:
+        return None
+    if not isinstance(st, dict):
+        raise ValueError('statie invalida')
+    clean = lambda x, n: re.sub(r'[<>"\r\n]', '', str(x or '')).strip()[:n]
+    tar = []
+    for t in (st.get('tariffs') or [])[:8]:
+        if not isinstance(t, dict):
+            continue
+        price = float(t.get('price') or 0)
+        if not (0 <= price < 1000):
+            raise ValueError('tarif invalid')
+        kind = str(t.get('kind') or '').lower()
+        tar.append(dict(kind=kind if kind in ('ac', 'dc', 'manual') else '', price=round(price, 3), per_h=round(max(0.0, min(1000.0, float(t.get('per_h') or 0))), 2),
+                        orig_price=round(max(0.0, min(100000.0, float(t.get('orig_price') or 0))), 3), orig_cur=clean(t.get('orig_cur'), 5),
+                        cur=clean(t.get('cur'), 5), power=round(max(0.0, min(2000.0, float(t.get('power') or 0)))), n=int(max(0, min(999, int(t.get('n') or 0))))))
+    sel = int(st.get('sel', -1))
+    out = dict(name=clean(st.get('name'), 80), provider=clean(st.get('provider'), 40), address=clean(st.get('address'), 120), tariffs=tar, sel=sel if -1 <= sel < len(tar) else -1,
+               auto=bool(st.get('auto')), src=clean(st.get('src'), 20))
+    if not out['name'] and not out['provider']:
+        raise ValueError('statie fara nume')
+    return out
+
+
 def meta_update(cid, body):
     """Seteaza/sterge costul total si furnizorul unei incarcari (cheie lipsa = neschimbat; '' sau null = sterge)."""
     cid = str(int(cid))
@@ -347,6 +412,12 @@ def meta_update(cid, body):
                 e['provider'] = p
             else:
                 e.pop('provider', None)
+        if 'station' in body:
+            st = station_clean(body['station'])
+            if st:
+                e['station'] = st
+            else:
+                e.pop('station', None)
         if e:
             m[cid] = e
         else:
@@ -376,8 +447,9 @@ def decorate(rows):
     for r in rows:
         e = m.get(str(r['id'])) or {}
         r['cost_manual'] = e.get('cost')
+        r['station'] = e.get('station')
         r['provider_set'] = bool(e.get('provider'))
-        r['provider'] = e.get('provider') or provider_auto(r.get('name'))
+        r['provider'] = e.get('provider') or (e.get('station') or {}).get('provider') or provider_auto(r.get('name'))      # manual > statia asociata > dedus din numele locului
         r['cost_place'] = r['place_name'] = r['place_price'] = None
         if PLACES and r.get('lat') is not None and r.get('lon') is not None:         # loc salvat cu pret pe kWh: kWh x pret (acelasi kWh ca la TeslaMate: consumati din retea, altfel adaugati)
             pl = PLACES.match(r['lat'], r['lon'])
@@ -621,7 +693,9 @@ def fuel_fetch():
         if code == 'EUR':
             rate = 1.0
         elif code:
-            rate = float(json.loads(_get_text('https://api.frankfurter.dev/v1/latest?base=EUR&symbols=' + code))['rates'][code])
+            rate = fx_rate('EUR', code)
+            if not rate:
+                raise ValueError('curs EUR -> %s indisponibil' % code)
         day = local_today().isoformat()
         with MLOCK:
             data = _json_file(FUELFILE, {})
@@ -1815,7 +1889,7 @@ def _vehicle_data(car, force=False):
 CFGFILE = DATA_DIR + '/config.json'
 CFG = {}
 CFG_SECRETS = ('fleet_secret', 'pin', 'ha_token', 'notify_webhook', 'app_password', 'tessie_token', 'update_token', 'telegram_token')
-CFG_KEYS = CFG_SECRETS + ('telegram_chat', 'update_check', 'update_webhook', 'app_url', 'price_grid', 'fleet_id', 'fleet_domain', 'fleet_base', 'ha_url', 'ha_prefix', 'ha_ble', 'ha_grid', 'ha_pv', 'currency', 'ice_l100', 'fuel_type', 'fuel_price', 'fuel_country', 'link_tm', 'link_gf', 'acc_team', 'acc_aud', 'acc_email', 'roles')
+CFG_KEYS = CFG_SECRETS + ('telegram_chat', 'update_check', 'update_webhook', 'app_url', 'price_grid', 'fleet_id', 'fleet_domain', 'fleet_base', 'ha_url', 'ha_prefix', 'ha_ble', 'ha_grid', 'ha_pv', 'currency', 'ampwhere', 'ice_l100', 'fuel_type', 'fuel_price', 'fuel_country', 'link_tm', 'link_gf', 'acc_team', 'acc_aud', 'acc_email', 'roles')
 EU_BASE = 'https://fleet-api.prd.eu.vn.cloud.tesla.com'
 _tz = os.environ.get('TZ', '') or 'UTC'
 LOCAL_TZ = _tz if re.fullmatch(r'[A-Za-z0-9_+\-/]{1,40}', _tz) else 'UTC'      # zilele din statistici se grupeaza pe ora locala, nu UTC
@@ -1884,7 +1958,7 @@ def cfg_public():
         notify=dict(webhook_set=bool(NHOOK)), tessie=dict(token_set=bool(cget('tessie_token', 'TESSIE_TOKEN'))),
         telegram=dict(token_set=bool(cget('telegram_token', 'TELEGRAM_TOKEN')), chat=cget('telegram_chat', 'TELEGRAM_CHAT', '')),
         update=dict(check=update_cfg_on(), webhook=cget('update_webhook', 'UPDATE_WEBHOOK', ''), token_set=bool(cget('update_token', 'UPDATE_TOKEN', '')), private=APP_VERSION.endswith('-private')),
-        display=dict(app_url=APPURL, price_grid=cget('price_grid', 'PRICE_GRID', ''), currency=CURRENCY, ice_l100=cget('ice_l100', 'ICE_L100', ''), fuel_type=fuel_conf()['type'], fuel_price=cget('fuel_price', 'FUEL_PRICE', ''), fuel_country=fuel_conf()['country'], teslamate=LINKS['teslamate'], grafana=LINKS['grafana']),
+        display=dict(app_url=APPURL, price_grid=cget('price_grid', 'PRICE_GRID', ''), currency=CURRENCY, ampwhere=str(cget('ampwhere', 'AMPWHERE', '1')).strip().lower() in ('1', 'true', 'yes', 'on'), ice_l100=cget('ice_l100', 'ICE_L100', ''), fuel_type=fuel_conf()['type'], fuel_price=cget('fuel_price', 'FUEL_PRICE', ''), fuel_country=fuel_conf()['country'], teslamate=LINKS['teslamate'], grafana=LINKS['grafana']),
         access=dict(team=ACCESS['team'], aud=ACCESS['aud'], email=ACCESS['email'], roles=str(cget('roles', 'ROLES')), password_set=bool(AUTH['pw'])))
 
 
@@ -2537,12 +2611,17 @@ COST_ASKED = 'cost_asked'                                            # id-urile 
 
 def charge_cost_check(car):
     """True cand s-a terminat treaba (notificare trimisa sau nu mai e nevoie); False cat timp incarcarea nu e inchisa de TeslaMate."""
-    if not nset_load().get('charge_cost', True):
-        return True
     rows = _charges_rows(car, 1, 0)
     if not rows or not rows[0].get('end_date') or (dt.datetime.utcnow() - _dtp(rows[0]['end_date'])).total_seconds() > 40 * 60:
         return False                                               # ultima incarcare inchisa e veche: a noastra nu s-a inchis inca
     r = rows[0]
+    if STATION_LINK:
+        try:
+            STATION_LINK(r)                                                # incarcarea tocmai inchisa: asociaz-o cu statia (furnizor + tarife), fara sa atingi costul; nu depinde de notificare
+        except Exception as e:  # noqa
+            log('asociere statie:', str(e)[:100], flush=True)
+    if not nset_load().get('charge_cost', True):
+        return True
     asked = OWN.kv_get(COST_ASKED, []) or []
     if r['id'] in asked:
         return True
@@ -2578,7 +2657,7 @@ def nf1(x):
 
 
 def notify_check(car, key, old, new):
-    if key == 'charging_state' and old == 'Charging' and new in ('Complete', 'Stopped', 'Disconnected') and nset_load().get('charge_cost', True):
+    if key == 'charging_state' and old == 'Charging' and new in ('Complete', 'Stopped', 'Disconnected'):
         charge_cost_prompt(car)
     if key in ('charging_state', 'plugged_in', 'battery_level', 'shift_state', 'doors_open', 'trunk_open', 'frunk_open', 'windows_open', 'locked', 'charge_limit_soc', 'time_to_full_charge'):
         la_poke(car)
@@ -3102,6 +3181,7 @@ PUBLIC_ROUTES = []               # fn(handler, cale, parametri) -> (cod, corp, c
 CTX = threading.local()          # CTX.actor = cine a dat comanda (user:rol / rule:id / system)
 OWN = None                       # baza de date proprie (features.store.Store), setata de features.load()
 PLACES = None                    # features.places: match(lat, lon) -> loc salvat cu pret pe kWh
+STATION_LINK = None                # features.stations: asociaza o incarcare cu statia ei (doar daca exista o sursa de statii)
 DRIVECOST = None                  # features.drivecost: annotate(car, curse) adauga costul electric / termic / echivalentul in l/100 km
 TAGS = None                      # features.tags: ids(kind, nume) si attach(kind, randuri) pentru filtrarea/afisarea tag-urilor
 

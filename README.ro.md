@@ -115,7 +115,10 @@ Setezi `NOTIFY_WEBHOOK` — vezi **[docs/notifications.md](docs/notifications.md
 | OpenStreetMap (`tile.openstreetmap.org`) | fundalul hărții | coordonatele dalelor (și adresa ta IP, ca la orice hartă web) | browser |
 | Open-Meteo | vremea în reluarea traseului | latitudine/longitudine rotunjite la 0,1° și data | browser |
 | fuel-prices.eu | prețul zilnic al combustibilului pentru comparația cu mașina termică | doar numele țării | server |
-| frankfurter.dev (cursuri BCE) | EUR → moneda ta | doar codul monedei | server |
+| Overpass / OpenStreetMap (`overpass-api.de` și oglinzi) | butonul „Caută stația” de pe o încărcare | coordonatele acelei încărcări, doar când apeși butonul | server |
+| AmpWhere (`ampwhere.com`), **pornit implicit, se poate opri** | stația, furnizorul și tarifele pentru „Caută stația” și asocierea automată (vezi [docs/costs.md](docs/costs.md#find-the-station-of-a-charge)) | nimic despre tine sau mașină: o descărcare anonimă pe zi a listei de stații din fiecare țară în care încarci; căutarea e locală | server |
+| frankfurter.dev (cursuri BCE) | EUR și prețurile stațiilor → moneda ta | doar codurile monedelor | server |
+| open.er-api.com ([Exchange Rate API](https://www.exchangerate-api.com)) | cursuri pentru monedele pe care BCE nu le publică (MDL, RSD, UAH…), ca rezervă | doar codurile monedelor | server |
 | energy-charts.info | prețurile PZU pentru raportul PZU | datele necesare | server |
 | Open-Meteo (pe server) | alerta „ploaie cu geam deschis” | coordonate rotunjite la 0,1°, doar cât un geam e deschis | server |
 | Telegram Bot API, servicii push ale browserelor | notificări Telegram și Web Push, doar dacă le pornești | textul notificării (push: criptat) | server |

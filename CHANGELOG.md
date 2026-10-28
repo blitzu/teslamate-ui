@@ -3,6 +3,14 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.7.0 - 2026-10-28
+
+### New features
+- **🔎 Find the station of a charge.** A button on the charge page finds the charging station at that place and suggests the provider, its **AC and DC tariffs** and the tariff matching your charge. Choosing a station **saves immediately** (no Save button); you can switch tariff with one tap or type a **manual tariff**, and the page shows what the charge would have cost at that tariff next to your real cost (useful when charging was free). Your cost is never changed by this. The provider of the linked station is used in lists and filters unless you set one yourself.
+- **Station sources.** It uses **AmpWhere** first (**on by default**; switch it off in Settings → Display → Station lookup or with `AMPWHERE=0`): richer data with a price per kWh, for **all 14 countries AmpWhere covers** (Romania, Bulgaria, Lithuania, Greece, Hungary, Czech Republic, Slovakia, Croatia, Slovenia, Italy, Cyprus, Moldova, Turkey, Serbia): only the countries where you actually charge are downloaded (`AMPWHERE_COUNTRY=auto`, or a fixed list like `ro,hu`). When it is off or has nothing nearby, it uses **OpenStreetMap** (the coordinates of one charge are sent when you press the button). It is not an official, documented API (same request their public map makes; no key, no guarantees, not affiliated; the owner of AmpWhere told the maintainer he has no problem with it), so it can change or stop working (then OpenStreetMap is used). It downloads each country list **once a day at most**, searches **locally** (your coordinates never leave your server), identifies itself and backs off for a day if refused. Details and the responsibility note: docs/costs.md.
+- **Currency from a list, prices converted automatically.** The app currency is now picked from a list (Settings → Display; old free-text values keep working). Station prices in any other currency are **converted to it automatically** (ECB rates; MDL, RSD, UAH and the like via Exchange Rate API, cached 12 h) and shown with the original price in brackets, e.g. `4.21 RON/kWh (289 HUF)`; the estimated cost uses the converted price. Only currency codes are sent.
+- **Automatic link.** New charges are linked to their station when TeslaMate closes them, and **on the first start after updating, your existing charges are linked automatically in the background, once** (charges at home or without a station nearby stay as they are; your costs are never touched). An administrator can redo it any time with `POST /api/stations/autolink`.
+
 ## 1.6.0 - 2026-10-28
 
 ### New features
