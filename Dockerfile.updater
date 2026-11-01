@@ -1,4 +1,4 @@
-FROM alpine:3.22
+FROM alpine:3.24
 # Updater minimal: python (stdlib) + docker CLI cu plugin compose. Are nevoie de socket-ul Docker; vezi docs/updates.md.
 RUN apk add --no-cache python3 docker-cli docker-cli-compose
 COPY updater/updater.py /usr/local/bin/updater.py
