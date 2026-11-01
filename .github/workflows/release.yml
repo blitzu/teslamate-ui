@@ -38,7 +38,7 @@ jobs:
       - name: Image names (lowercase)
         run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
       - name: Build and push the app image (amd64 + arm64)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
@@ -46,7 +46,7 @@ jobs:
           build-args: BUILD_COMMIT=${{ github.sha }}
           tags: ${{ env.IMAGE }}:${{ env.VER }}
       - name: Build and push the signing proxy image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.proxy
@@ -54,7 +54,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ env.IMAGE }}-proxy:${{ env.VER }}
       - name: Build and push the updater image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.updater
