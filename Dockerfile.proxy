@@ -5,6 +5,6 @@ RUN git clone https://github.com/teslamotors/vehicle-command /src && cd /src && 
 WORKDIR /src
 RUN go build -o /out/tesla-http-proxy ./cmd/tesla-http-proxy
 
-FROM alpine:3.22
+FROM alpine:3.24
 COPY --from=build /out/tesla-http-proxy /usr/local/bin/tesla-http-proxy
 ENTRYPOINT ["tesla-http-proxy"]
