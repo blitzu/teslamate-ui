@@ -2971,6 +2971,9 @@ def ble_state_sync(car=1):
     """O trecere: citeste din HA starea frunk/portbagaj/incuietori BLE si o aplica daca a aparut o schimbare (sau la prima citire, daca difera de ce stim)."""
     if not (ha_ok() and HA['ble']) or not LIVE.get(car):
         return 0
+    door = ha_state('binary_sensor.%s_door_driver_front' % HA['prefix'])
+    if door and door.get('state') in ('unknown', 'unavailable'):
+        return 0                                                      # placa tocmai a pornit (firmware nou / restart) si nu a citit inca masina: cover-urile arata implicit "open", nu e starea reala
     n = 0
     for tpl, key, vals in BLE_CLOSURES:
         eid = tpl % HA['prefix']

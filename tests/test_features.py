@@ -771,7 +771,7 @@ class BleStateTests(Isolated):
         S.LIVE.clear()
         S.LIVE[1] = dict(frunk_open=False, trunk_open=False, locked=True, battery_level=80)
         self.ha = {'cover.tesla_ble_frunk': dict(state='closed', last_changed='t0'), 'cover.tesla_ble_trunk': dict(state='closed', last_changed='t0'),
-                   'lock.tesla_ble_doors': dict(state='locked', last_changed='t0')}
+                   'lock.tesla_ble_doors': dict(state='locked', last_changed='t0'), 'binary_sensor.tesla_ble_door_driver_front': dict(state='off', last_changed='t0')}
         S.ha_state = lambda eid: self.ha.get(eid)
         self.applied = []
         S.live_apply = lambda car, key, val: (self.applied.append((key, val)), S.LIVE[car].__setitem__(key, val))
@@ -792,6 +792,21 @@ class BleStateTests(Isolated):
         self.ha['cover.tesla_ble_frunk'] = dict(state='unavailable', last_changed='t0')
         self.assertEqual(S.ble_state_sync(), 1)
         self.assertEqual(self.applied, [('locked', False)])
+
+    def test_a_freshly_flashed_board_that_has_not_read_the_car_is_not_believed(self):
+        self.ha['binary_sensor.tesla_ble_door_driver_front'] = dict(state='unknown', last_changed='t9')                 # dupa firmware nou: senzorii "unknown", cover-urile "open" implicit
+        self.ha['cover.tesla_ble_frunk'] = dict(state='open', last_changed='t9')
+        self.ha['cover.tesla_ble_trunk'] = dict(state='open', last_changed='t9')
+        self.assertEqual(S.ble_state_sync(), 0)
+        self.assertEqual((self.applied, S.LIVE[1]['frunk_open'], S.LIVE[1]['trunk_open']), ([], False, False))
+        self.ha['binary_sensor.tesla_ble_door_driver_front'] = dict(state='off', last_changed='t10')                    # a citit masina: de acum valorile sunt cele reale
+        self.ha['cover.tesla_ble_frunk'] = dict(state='closed', last_changed='t10')
+        self.ha['cover.tesla_ble_trunk'] = dict(state='closed', last_changed='t10')
+        S.ble_state_sync()
+        self.assertEqual(S.LIVE[1]['frunk_open'], False)
+        del self.ha['binary_sensor.tesla_ble_door_driver_front']                                                         # firmware fara senzorul de usi: nu blocam functia
+        self.ha['cover.tesla_ble_frunk'] = dict(state='open', last_changed='t11')
+        self.assertEqual(S.ble_state_sync(), 1)
 
     def test_nothing_without_ble_or_without_a_known_car(self):
         S.HA['ble'] = False

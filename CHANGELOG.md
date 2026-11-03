@@ -3,6 +3,11 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.9.1 - unreleased
+
+### Fixes
+- **The frunk, the trunk, the windows and the charge port showed as open after the ESP32 BLE board was reflashed.** A freshly started esphome-tesla-ble board has not read the car yet: its door sensors are `unknown` and its covers report "open" as a placeholder, and the app took that for the real state. The app now ignores the BLE closures and the lock until the board has read the car (door sensor known); if your firmware has no door sensor, nothing changes.
+
 ## 1.9.0 - 2026-11-03
 
 ### New features
