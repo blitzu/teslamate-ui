@@ -25,10 +25,10 @@ Aplicație web pentru telefon (PWA), în stilul [Tessie](https://tessie.com), co
 | **Copie de siguranță TeslaMate** | Oglindă SQLite locală a curselor, pozițiilor, încărcărilor și stărilor (nu șterge niciodată, instantanee zilnice, unealtă de restaurare) — [docs/features.md](docs/features.md) |
 | **Alerte și paznic de somn** | Încărcare oprită, cablu conectat dar nu încarcă, presiune mică, ploaie cu geam deschis, cabină fierbinte, pierdere de aer din cauciuc; de ce a stat mașina trează |
 | **Întreținere și anvelope** | Memento-uri (km/luni, RCA/ITP/vinietă), seturi de anvelope cu kilometraj și istoric de presiune, urmărirea actualizărilor software (Wh/km înainte/după) |
-| **Călătorii și rapoarte** | Curse grupate în călătorii; rapoarte săptămânale/lunare; „cât ar fi costat pe piața PZU” |
+| **Călătorii și rapoarte** | Curse grupate în călătorii, cu timeline interactiv și comparare a până la trei călătorii; rapoarte săptămânale/lunare; „cât ar fi costat pe piața PZU” |
 | **Notificări oriunde** | Bot Telegram și Web Push nativ (fără Home Assistant, merge și pe PWA iPhone) |
 | **Ecran pentru mașină** | `/incar.html`: pagină mare, doar pentru afișare, pentru browserul mașinii sau o tabletă pe perete |
-| **Link de urmărire live** | Link public cu expirare, hartă și ETA, revocabil, ascunde casa |
+| **Link de urmărire live** | Link public cu expirare, hartă și ETA (opțional cu două călătorii salvate pentru comparare), revocabil, ascunde casa |
 | **Predare mașină și reguli de zonă** | Valet/Guest/limită de viteză cu cronometru și raport; alerte de viteză, zonă și program |
 | **Partajare** | Roluri pentru utilizatorii Cloudflare Access: `admin`, `family` (doar comenzi uzuale), `viewer` (doar citire) |
 | **PWA** | Adaugi pe ecranul principal în iOS/Android; rulează ca aplicație de sine stătătoare |

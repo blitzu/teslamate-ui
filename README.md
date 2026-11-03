@@ -32,10 +32,10 @@ A mobile-first, [Tessie](https://tessie.com)-style web app (installable PWA) on 
 | **Backup of TeslaMate data** | Local SQLite mirror of your drives, positions, charges and states (never deletes, daily snapshots, restore tool) - [docs/features.md](docs/features.md) |
 | **Alerts & sleep guard** | Charging stopped, plugged but not charging, low tyre pressure, rain with a window open, hot cabin, tyre leak; why the car stayed awake |
 | **Maintenance & tyres** | Service reminders (km/months, RCA/ITP/vignette presets), tyre sets with mileage and pressure history, software update tracker (Wh/km before/after) |
-| **Trips & reports** | Drives grouped into trips; weekly/monthly reports; "what would it have cost on the day-ahead market (PZU)" |
+| **Trips & reports** | Drives grouped into trips, with an interactive timeline and side-by-side comparison of up to three trips; weekly/monthly reports; "what would it have cost on the day-ahead market (PZU)" |
 | **Notifications everywhere** | Telegram bot and native Web Push (no Home Assistant needed, works on iPhone PWA) |
 | **In-car screen** | `/incar.html`: big display-only page for the car browser or a wall tablet |
-| **Live-location link** | Expiring public link with map and ETA, revocable, hides your home |
+| **Live-location link** | Expiring public link with map and ETA (optionally with two saved trips to compare against), revocable, hides your home |
 | **Car handoff & zone rules** | Valet/Guest/speed limit with a timer and a report; speed/zone/schedule alerts |
 | **Sharing** | Roles for Cloudflare Access users: `admin`, `family` (everyday commands only), `viewer` (read-only) |
 | **PWA** | Add to Home Screen on iOS/Android; works as a standalone app |

@@ -886,6 +886,66 @@ class ShareTests(Isolated):
         finally:
             os.environ.pop('SHARE_BASE', None)
 
+    def test_compact_trip_keeps_stops_in_place_and_has_no_place_names(self):
+        import datetime as dt
+        t0 = dt.datetime(2026, 1, 1, 10, 0)
+        a = [[(t0 + dt.timedelta(minutes=i)).isoformat(), 45 + i * .009, 26, 60, 20, 80 - i * .5, 100] for i in range(11)]
+        b = [[(t0 + dt.timedelta(minutes=30 + i)).isoformat(), 45.09 + i * .009, 26, 60, 20, 70 - i * .5, 100] for i in range(11)]
+        data = dict(segments=[dict(drive=dict(start_name='Acasa', end_name='X'), points=a), dict(drive=dict(start_name='X', end_name='Y'), points=b)], stops=[dict(kind='charge', name='Ionity')])
+        c = SHR.compact(data)
+        self.assertEqual((c['dur'], round(c['km'])), (40 * 60, 20))
+        self.assertNotIn('Acasa', json.dumps(c))
+        self.assertNotIn('Ionity', json.dumps(c))
+        mid = [p for p in c['pts'] if 600 < p[0] < 1800]
+        self.assertEqual(len(mid), 2)                                                          # oprirea: un punct la inceput si unul la sfarsit, aceeasi pozitie, viteza 0
+        self.assertTrue(all(p[3] == 0 and abs(p[1] - 45.09) < 1e-4 for p in mid))
+        self.assertTrue(all(p[0] < q[0] for p, q in zip(c['pts'], c['pts'][1:])))              # timpul creste strict
+        cut = SHR.compact(data, 0.6)
+        self.assertGreater(cut['pts'][0][5], 0.5)                                              # capetele taiate: nu mai incepe exact acasa
+        self.assertLess(cut['pts'][-1][5], c['km'] - 0.5)
+        self.assertIsNone(SHR.compact(dict(segments=[]), 0))
+        self.assertLessEqual(len(SHR.compact(data, 0, cap=20)['pts']), 22)
+
+    def test_view_gives_elapsed_time_only_while_driving_and_away_from_home(self):
+        live = dict(latitude=44.1, longitude=26.1, shift_state='D', geofence=None)
+        self.assertEqual(SHR.view(self.sh(), live, now=1000, drive_start=400)['elapsed_s'], 600)
+        self.assertNotIn('elapsed_s', SHR.view(self.sh(), dict(live, shift_state=None), now=1000, drive_start=400))
+        self.assertNotIn('elapsed_s', SHR.view(self.sh(), dict(live, geofence='Acasă'), now=1000, drive_start=400))
+        self.assertNotIn('elapsed_s', SHR.view(self.sh(), live, now=1000))
+
+    def test_share_with_comparison_trips(self):
+        S.OWN.run('delete from shares')
+        os.environ['SHARE_BASE'] = 'https://pub.example.com'
+
+        class H:
+            headers = {'CF-Connecting-IP': '7.7.7.7'}
+            client_address = ('1.1.1.1', 1)
+        try:
+            create, _ = S.route_lookup('POST', '/api/share/create')
+            for bad in (['x'], [0], [2 ** 40]):
+                with self.assertRaises(ValueError):
+                    create(None, dict(hours=1, trips=bad))
+            tid = S.DEMO['drives'][0]['id']
+            tok = create(None, dict(hours=1, trips=[tid, tid, 99999]))['url'].rsplit('/', 1)[1]
+            self.assertEqual(json.loads(S.OWN.one('select trips from shares')['trips']), [tid, tid])               # maxim doua
+            pub = S.PUBLIC_ROUTES[-1]
+            d = json.loads(pub(H(), '/share/' + tok + '/data', {})[1])
+            self.assertEqual(d['ntrips'], 2)
+            code, body, ct, _ = pub(H(), '/share/' + tok + '/trips', {})
+            self.assertEqual((code, ct), (200, 'application/json'))
+            j = json.loads(body)
+            self.assertTrue(j['ok'] and 1 <= len(j['trips']) <= 2)
+            self.assertTrue(all(len(p) == 6 for p in j['trips'][0]['pts']))
+            self.assertTrue(not ({'start_name', 'end_name', 'name'} & set(j['trips'][0])))
+            t2 = create(None, dict(hours=1))['url'].rsplit('/', 1)[1]
+            self.assertNotIn('ntrips', json.loads(pub(H(), '/share/' + t2 + '/data', {})[1]))                     # fara comparatii: nimic nou in raspuns
+            self.assertEqual(json.loads(pub(H(), '/share/' + t2 + '/trips', {})[1])['trips'], [])
+            self.assertEqual(pub(H(), '/share/' + 'B' * 43 + '/trips', {})[0], 404)
+            S.OWN.run('update shares set expires=?', (time.time() - 1,))
+            self.assertEqual(pub(H(), '/share/' + tok + '/trips', {})[0], 410)
+        finally:
+            os.environ.pop('SHARE_BASE', None)
+
     def test_page_sends_a_referer_to_the_tile_server(self):
         html = open(os.path.join(S.STATIC, 'share.html'), encoding='utf-8').read()
         self.assertNotIn('no-referrer', html)                                  # OSM blocheaza cererile de dale fara Referer ("Access blocked" 403)

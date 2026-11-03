@@ -1184,22 +1184,32 @@ async function afterChargeEdit() {
     const [ok, j] = await pinPost('/api/charge/meta', Object.assign({ id: c.id }, body));
     if (ok) { say('✓ ' + (msg || X('Salvat', 'Saved')), 'ok'); setTimeout(render, 600); } else say('✗ ' + (j.reason || X('Eroare', 'Error')), 'bad');
   };
+  const costAt = (t) => (t && kwhUsed && t.price >= 0 ? { cost: Math.round(t.price * kwhUsed * 100) / 100 } : {});   // tariful ales => costul incarcarii = kWh x tarif (alegerea o faci tu, deci inlocuieste costul de pana atunci)
   const stBox = $('#ce_sv');
   if (stBox && c.station) {
     const s = c.station, sel = s.tariffs[s.sel], val = sel && kwhUsed ? sel.price * kwhUsed : null;
     stBox.innerHTML = `<div class="note" style="margin:12px 0 4px"><b>📍 ${esc(s.name || '—')}</b>${s.provider ? ' · ' + esc(s.provider) : ''}${s.auto ? ' · ' + X('asociată automat', 'linked automatically') : ''}${s.address ? `<br><small>${esc(s.address)}</small>` : ''}</div>
       <div class="pchips">${s.tariffs.map((t, i) => `<button class="pchip ${i === s.sel ? 'on' : ''}" data-tsel="${i}">${tarTxt(t)}</button>`).join('')}<button class="pchip ${s.sel < 0 ? 'on' : ''}" data-tsel="-1">${X('Fără tarif', 'No tariff')}</button></div>
-      ${val != null ? `<p class="note" style="margin:6px 0 0">${X('La tariful ales', 'At the chosen tariff')}: <b>${nf(val, 2)} ${cu}</b> (${nf(kwhUsed, 1)} kWh × ${nf(sel.price, 2)}). ${X('Costul tău rămâne cel de mai sus.', 'Your cost stays as entered above.')}</p>` : ''}
+      ${val != null ? `<p class="note" style="margin:6px 0 0">${X('La tariful ales', 'At the chosen tariff')}: <b>${nf(val, 2)} ${cu}</b> (${nf(kwhUsed, 1)} kWh × ${nf(sel.price, 2)}). ${X('Costul încărcării se calculează din tariful ales.', 'The charge cost is calculated from the chosen tariff.')}</p>` : ''}
       <div class="addf" style="margin-top:8px"><label>${X('Tarif manual', 'Manual tariff')} (${cu}/kWh)<input id="ce_tman" type="number" inputmode="decimal" step="0.01" min="0"></label></div>
       <div class="links"><a href="#" id="ce_tmanb">${X('Folosește tariful manual', 'Use the manual tariff')}</a><a href="#" id="ce_stclear">${X('Elimină asocierea', 'Remove the link')}</a></div>`;
-    stBox.querySelectorAll('[data-tsel]').forEach((b) => b.onclick = () => saveSt({ station: Object.assign({}, s, { sel: +b.dataset.tsel, auto: false }) }));
+    stBox.querySelectorAll('[data-tsel]').forEach((b) => b.onclick = () => saveSt(Object.assign({ station: Object.assign({}, s, { sel: +b.dataset.tsel, auto: false }) }, costAt(s.tariffs[+b.dataset.tsel]))));
     $('#ce_tmanb').onclick = (e) => {
       e.preventDefault(); const v = parseFloat(String($('#ce_tman').value).replace(',', '.'));
       if (!(v >= 0)) { say(X('Scrie tariful pe kWh.', 'Type the price per kWh.'), 'bad'); return; }
       const tariffs = s.tariffs.filter((t) => t.kind !== 'manual').concat([{ kind: 'manual', price: v, per_h: 0, cur: CU(), power: 0, n: 0 }]);
-      saveSt({ station: Object.assign({}, s, { tariffs, sel: tariffs.length - 1, auto: false }) });
+      saveSt(Object.assign({ station: Object.assign({}, s, { tariffs, sel: tariffs.length - 1, auto: false }) }, costAt(tariffs[tariffs.length - 1])), kwhUsed ? X('Tarif salvat, cost calculat', 'Tariff saved, cost calculated') : '');
     };
     $('#ce_stclear').onclick = (e) => { e.preventDefault(); saveSt({ station: '' }, X('Asociere eliminată', 'Link removed')); };
+  } else if (stBox && kwhUsed) {                                            // fara statie asociata: tarif pe kWh scris de tine => cost = kWh x tarif
+    stBox.innerHTML = `<div class="addf" style="margin-top:12px"><label>${X('Tarif', 'Tariff')} (${cu}/kWh)<input id="ce_tman" type="number" inputmode="decimal" step="0.01" min="0"></label></div>
+      <div class="links"><a href="#" id="ce_tmanb">${X('Calculează costul din tarif', 'Calculate the cost from the tariff')}</a></div>
+      <p class="note" style="margin:6px 0 0">${nf(kwhUsed, 1)} kWh × ${X('tariful tău', 'your tariff')}</p>`;
+    $('#ce_tmanb').onclick = (e) => {
+      e.preventDefault(); const v = parseFloat(String($('#ce_tman').value).replace(',', '.'));
+      if (!(v >= 0)) { say(X('Scrie tariful pe kWh.', 'Type the price per kWh.'), 'bad'); return; }
+      send(costAt({ price: v }));
+    };
   }
   const fd = $('#ce_find'); if (fd) fd.onclick = async (ev) => {
     ev.preventDefault();
@@ -1209,14 +1219,14 @@ async function afterChargeEdit() {
     const L = j.candidates || [];
     if (!L.length) { out.innerHTML = `<p class="note">${X(`Nicio stație în raza de ${j.radius} m (${j.source || 'OpenStreetMap'}). Poți scrie furnizorul cu „➕ Furnizor nou…”.`, `No station within ${j.radius} m (${j.source || 'OpenStreetMap'}). You can type the provider with “➕ New provider…”.`)}</p>`; return; }
     const fee = (f) => f === 'yes' ? X('cu plată', 'paid') : f === 'no' ? X('gratuit', 'free') : '';
-    out.innerHTML = `<p class="note">${j.prices_now ? X(`Din ${esc(j.source)}, cele mai apropiate primele. Prețurile sunt cele de acum (nu din ziua încărcării) și s-ar putea să se fi schimbat.`, `From ${esc(j.source)}, nearest first. The prices are today’s (not from the day of the charge) and may have changed since.`) : X('Din OpenStreetMap, cele mai apropiate primele. Datele sunt completate de utilizatori și pot fi greșite sau vechi.', 'From OpenStreetMap, nearest first. The data is crowd-sourced and may be wrong or out of date.')} ${X('Alegerea stației se salvează automat (costul rămâne cel introdus de tine).', 'Choosing a station saves automatically (your cost stays as entered).')}</p>` + L.map((s, i) => `<div class="item" style="cursor:default"><div class="t"><span>${esc(s.name || s.operator || s.network || '—')}</span>${s.provider ? `<span class="prov">${esc(s.provider)}</span>` : ''}</div>
+    out.innerHTML = `<p class="note">${j.prices_now ? X(`Din ${esc(j.source)}, cele mai apropiate primele. Prețurile sunt cele de acum (nu din ziua încărcării) și s-ar putea să se fi schimbat.`, `From ${esc(j.source)}, nearest first. The prices are today’s (not from the day of the charge) and may have changed since.`) : X('Din OpenStreetMap, cele mai apropiate primele. Datele sunt completate de utilizatori și pot fi greșite sau vechi.', 'From OpenStreetMap, nearest first. The data is crowd-sourced and may be wrong or out of date.')} ${X('Alegerea stației și a tarifului se salvează automat, iar costul se calculează din tarif.', 'Choosing a station and tariff saves automatically, and the cost is calculated from the tariff.')}</p>` + L.map((s, i) => `<div class="item" style="cursor:default"><div class="t"><span>${esc(s.name || s.operator || s.network || '—')}</span>${s.provider ? `<span class="prov">${esc(s.provider)}</span>` : ''}</div>
       <div class="m"><span><b>${nf(s.dist)}</b> m</span>${!(s.tariffs || []).length && s.price_text ? `<span><b>${esc(s.price_text)}</b></span>` : ''}${fee(s.fee) && !(s.tariffs || []).length ? `<span>${fee(s.fee)}</span>` : ''}${s.capacity ? `<span>${esc(s.capacity)} ${X('prize', 'plugs')}</span>` : ''}${s.hours ? `<span>${esc(s.hours)}</span>` : ''}${s.address ? `<span>${esc(s.address)}</span>` : ''}</div>
       ${(s.tariffs || []).length ? `<div class="pchips">${s.tariffs.map((t, k) => `<button class="pchip ${k === s.matched ? 'on' : ''}" data-pick="${i}:${k}">${tarTxt(t)}${k === s.matched ? ' ✓' : ''}</button>`).join('')}</div><p class="note" style="margin:4px 0 0">${X('Alege tariful ca să asociezi stația (✓ = cel potrivit încărcării tale).', 'Pick a tariff to link the station (✓ = the one matching your charge).')}</p>`
         : `<div class="links"><a href="#" data-pick="${i}:-1">${X('Alege această stație', 'Choose this station')}</a></div>`}
       ${s.cost_est != null ? `<div class="links"><a href="#" data-stc="${i}">${X('Completează costul estimat', 'Fill in the estimated cost')} ${nf(s.cost_est, 2)} ${cu}</a></div>` : ''}</div>`).join('');
     out.querySelectorAll('[data-pick]').forEach((a) => a.onclick = (e) => {
       e.preventDefault(); const [i, k] = a.dataset.pick.split(':').map(Number), s = L[i];
-      saveSt({ provider: s.provider || '', station: { name: s.name || s.operator || s.network || '', provider: s.provider || '', address: s.address || '', tariffs: s.tariffs || [], sel: k, auto: false, src: j.source || '' } }, X('Stație salvată', 'Station saved'));
+      saveSt(Object.assign({ provider: s.provider || '', station: { name: s.name || s.operator || s.network || '', provider: s.provider || '', address: s.address || '', tariffs: s.tariffs || [], sel: k, auto: false, src: j.source || '' } }, costAt((s.tariffs || [])[k])), X('Stație salvată', 'Station saved'));
     });
     out.querySelectorAll('[data-stc]').forEach((a) => a.onclick = (e) => { e.preventDefault(); $('#ce_cost').value = L[+a.dataset.stc].cost_est; say(X('Cost completat — apasă Salvează.', 'Cost filled in — press Save.'), 'ok'); });
   };

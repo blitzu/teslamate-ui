@@ -13,12 +13,18 @@ html, body { height: 100%; margin: 0; background: #0b0d10; color: #eceff3; font:
 #card { position: absolute; z-index: 1000; left: 12px; right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); background: #14181dee; border-radius: 16px; padding: 14px 16px; backdrop-filter: blur(8px); max-width: 480px; margin: 0 auto; }
 #card b { font-size: 22px; display: block; }
 #card span { color: #9aa5b1; font-size: 14px; }
+#cmp:empty { display: none; }
+#cmp { margin-top: 8px; border-top: 1px solid #ffffff18; padding-top: 6px; }
+.cr { display: flex; gap: 8px; align-items: baseline; font-size: 13px; padding: 2px 0; }
+.cr:before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--c); flex: none; align-self: center; }
+.cr b { font-size: 13px; display: inline; white-space: nowrap; }
+.cr span { color: #c3cbd4; font-size: 13px; }
 .dot { width: 14px; height: 14px; border-radius: 50%; background: #6fd6b8; border: 3px solid #fff; box-shadow: 0 0 0 4px #6fd6b855; }
 </style>
 </head>
 <body>
 <div id="map"></div>
-<div id="card"><b id="t1">Se încarcă…</b><span id="t2"></span></div>
+<div id="card"><b id="t1">Se încarcă…</b><span id="t2"></span><div id="cmp"></div></div>
 <script src="/share/leaflet.js"></script>
 <script src="/share/app.js"></script>
 </body>

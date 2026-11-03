@@ -1,8 +1,10 @@
 """Link public de urmarire in timp real ("sunt in drum, ajung la 14:30"): o pagina cu harta, valabila putin timp, pe care o poti retrage oricand.
 Se serveste de pe portul PUBLIC (acelasi domeniu public ca Fleet, fara Cloudflare Access), deci tokenul e singura aparare: 32 de octeti aleatori, in baza se tine doar amprenta lui,
 expira (max 48 h), se revoca, e limitat ca frecventa de cereri. Pagina primeste doar pozitia/ETA/destinatia permise; implicit ascunde pozitia cand esti in geofence-ul de acasa."""
+import datetime as dt
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -25,10 +27,54 @@ def digest(tok):
     return hashlib.sha256(tok.encode()).hexdigest()
 
 
+def _hav(a, b, c, d):
+    r = math.pi / 180
+    x, y = (c - a) * r, (d - b) * r
+    h = math.sin(x / 2) ** 2 + math.cos(a * r) * math.cos(c * r) * math.sin(y / 2) ** 2
+    return 12742 * math.asin(min(1, math.sqrt(h)))
+
+
+def _ts(x):
+    d = x if isinstance(x, dt.datetime) else dt.datetime.fromisoformat(str(x))
+    return (d if d.tzinfo else d.replace(tzinfo=dt.timezone.utc)).timestamp()               # TeslaMate pastreaza datele in UTC fara fus
+
+
+def compact(data, trim_km=0.0, cap=300):
+    """Traseul unei calatorii pentru pagina publica de comparare: [timp scurs (s), lat, lon, viteza, baterie %, distanta (km)], fara nume de locuri.
+    Opririle raman pe loc (timpul scurs ramane cel real). trim_km taie capetele traseului (ascunde casa); None daca nu raman puncte."""
+    segs = [s for s in (data.get('segments') or []) if len(s.get('points') or []) > 1]
+    if not segs:
+        return None
+    pts, dist, prev, t0 = [], 0.0, None, None
+    for si, sg in enumerate(segs):
+        for i, p in enumerate(sg['points']):
+            t = _ts(p[0])
+            t0 = t if t0 is None else t0
+            if prev is not None and si > 0 and i == 0:
+                pts.append([prev[0] + 1, prev[1], prev[2], 0, prev[4], prev[5]])                  # oprire: masina sta pe loc pana la urmatoarea cursa
+                pts.append([max(prev[0] + 1, t - t0 - 1), prev[1], prev[2], 0, prev[4], prev[5]])
+                prev = pts[-1]
+            elif prev is not None:
+                dist += _hav(prev[1], prev[2], p[1], p[2])
+            cur = [t - t0, p[1], p[2], p[3] or 0, p[5] if p[5] is not None else (prev[4] if prev else 0), dist]
+            if prev is not None and cur[0] <= prev[0]:
+                cur[0] = prev[0] + 1
+            pts.append(cur)
+            prev = cur
+    total = dist
+    if trim_km > 0:
+        pts = [q for q in pts if trim_km <= q[5] <= total - trim_km]
+    if len(pts) < 2:
+        return None
+    step = max(1, -(-len(pts) // cap))
+    pick = pts[::step] + ([pts[-1]] if (len(pts) - 1) % step else [])
+    return dict(pts=[[int(q[0]), round(q[1], 5), round(q[2], 5), int(round(q[3])), int(round(q[4])), round(q[5], 1)] for q in pick], km=round(total, 1), dur=int(pts[-1][0] - pts[0][0]), t0=int(t0))
+
+
 _HOME_SEEN = {}                                  # id link -> ultima data cand masina era "acasa" (un geofence gol trecator nu trebuie sa-i arate pozitia exacta)
 
 
-def view(share, live, now=None, home=HOME):
+def view(share, live, now=None, home=HOME, drive_start=None):
     """Ce vede cel care are linkul. Aici se decide ce iese din aplicatie: nimic altceva decat campurile de mai jos."""
     now = now or time.time()
     out = dict(ok=True, name=share['label'] or '', expires=share['expires'], now=now)
@@ -45,6 +91,8 @@ def view(share, live, now=None, home=HOME):
     if not at_home and live.get('latitude') is not None and live.get('longitude') is not None:
         out['lat'], out['lon'] = round(float(live['latitude']), 5), round(float(live['longitude']), 5)
         out['heading'] = live.get('heading')
+        if state == 'driving' and drive_start and now >= drive_start:
+            out['elapsed_s'] = int(now - drive_start)                                       # timpul de la plecare: "fantomele" comparatiilor merg la acelasi timp scurs
         out['speed'] = round(live['speed']) if isinstance(live.get('speed'), (int, float)) else None
     route = live.get('active_route') if isinstance(live.get('active_route'), dict) else None
     if route and not route.get('error') and isinstance(route.get('minutes_to_arrival'), (int, float)) and state == 'driving' and not at_home:
@@ -56,7 +104,8 @@ def view(share, live, now=None, home=HOME):
 
 
 def init(S):
-    S.OWN.migrate('share', ['create table shares (id integer primary key, h text not null unique, created real not null, expires real not null, car integer, label text, hide_home integer default 1, show_dest integer default 1, revoked integer default 0, views integer default 0, last_view real, by text)'])
+    S.OWN.migrate('share', ['create table shares (id integer primary key, h text not null unique, created real not null, expires real not null, car integer, label text, hide_home integer default 1, show_dest integer default 1, revoked integer default 0, views integer default 0, last_view real, by text)',
+                                 'alter table shares add column trips text'])
     hits, bad = defaultdict(deque), defaultdict(deque)
     lock = threading.Lock()
 
@@ -91,6 +140,49 @@ def init(S):
                 return False
             return len(d) >= 20
 
+    trip_cache = {}
+
+    def car_drive_start(car):
+        k = ('ds', car)
+        hit = trip_cache.get(k)
+        if hit and time.time() - hit[0] < 30:
+            return hit[1]
+        v = None
+        try:
+            if S.has_cars():
+                r = S.q("select extract(epoch from start_date) as t from drives where car_id=%s and end_date is null order by start_date desc limit 1", (car,))
+                v = float(r[0]['t']) if r else None
+        except Exception:                                                                    # baza indisponibila: fara "fantome", restul paginii merge
+            v = None
+        trip_cache[k] = (time.time(), v)
+        return v
+
+    def trips_payload(sh):
+        """Traseele salvate alese pentru comparare (max 2), compacte; cu casa ascunsa se taie 600 m de la capete."""
+        try:
+            ids = [int(x) for x in json.loads(sh['trips'] or '[]')][:2]
+        except (TypeError, ValueError):
+            ids = []
+        trim = 0.6 if sh['hide_home'] else 0.0
+        out = []
+        for tid in ids:
+            k = ('t', tid, sh['car'] or 1, trim)
+            hit = trip_cache.get(k)
+            if hit and time.time() - hit[0] < 900:
+                c = hit[1]
+            else:
+                try:
+                    data = S.demo_trip(tid) if S.has_cars() is False else S.trip(sh['car'] or 1, tid)
+                    c = compact(data, trim)
+                except Exception:
+                    c = None
+                if len(trip_cache) > 200:
+                    trip_cache.clear()
+                trip_cache[k] = (time.time(), c)
+            if c:
+                out.append(c)
+        return out
+
     def base():
         b = S.cget('share_base', 'SHARE_BASE', '')
         if b:
@@ -118,17 +210,22 @@ def init(S):
         tok, _, tail = rest.partition('/')
         if blocked(ip):                                                         # prea multe incercari cu token gresit: oprit 10 minute
             return (429, 'prea multe cereri', 'text/plain', CSP)
-        sh = S.OWN.one('select * from shares where h=?', (digest(tok),)) if TOKEN.match(tok) and tail in ('', 'data') else None
+        sh = S.OWN.one('select * from shares where h=?', (digest(tok),)) if TOKEN.match(tok) and tail in ('', 'data', 'trips') else None
         if not sh:
             strike(ip)
             return (404, 'not found', 'text/plain', CSP)
         if sh['revoked'] or sh['expires'] < time.time():
-            if tail == 'data':
+            if tail in ('data', 'trips'):
                 return (410, json.dumps(dict(ok=False, gone=True)), 'application/json', CSP)
             return (410, '<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><body style="font-family:system-ui;background:#0b0d10;color:#eceff3;padding:40px;text-align:center"><h2>Linkul a expirat</h2><p style="color:#8f99a4">Cere unul nou.</p>', 'text/html; charset=utf-8', CSP)
         if tail == 'data':
             S.OWN.run('update shares set views=views+1, last_view=? where id=?', (time.time(), sh['id']))
-            return (200, json.dumps(view(sh, S.live_for(sh['car'] or 1), home=home_re())), 'application/json', CSP)
+            out = view(sh, S.live_for(sh['car'] or 1), home=home_re(), drive_start=car_drive_start(sh['car'] or 1) if sh['trips'] else None)
+            if sh['trips']:
+                out['ntrips'] = len(json.loads(sh['trips'] or '[]')[:2])
+            return (200, json.dumps(out), 'application/json', CSP)
+        if tail == 'trips':
+            return (200, json.dumps(dict(ok=True, trips=trips_payload(sh))), 'application/json', CSP)
         p = os.path.join(S.STATIC, 'share.html')
         return (200, readf(p), 'text/html; charset=utf-8', CSP) if os.path.isfile(p) else (404, 'not found', 'text/plain', CSP)
 
@@ -137,7 +234,7 @@ def init(S):
 
     @S.route('GET', '/api/share', role='user')
     def listing(h, a):
-        rows = S.OWN.rows('select id, created, expires, car, label, hide_home, show_dest, revoked, views, last_view, by from shares where created > ? order by created desc limit 30', (time.time() - 14 * 86400,))
+        rows = S.OWN.rows('select id, created, expires, car, label, hide_home, show_dest, revoked, views, last_view, by, trips from shares where created > ? order by created desc limit 30', (time.time() - 14 * 86400,))
         return dict(shares=rows, base=base(), now=time.time())
 
     @S.route('POST', '/api/share/create', pin=True, role='user')
@@ -153,11 +250,17 @@ def init(S):
         active = S.OWN.one('select count(*) n from shares where revoked=0 and expires > ?', (time.time(),))['n']
         if active >= 10:
             raise ValueError('Ai deja 10 linkuri active; retrage unul.')
+        try:
+            trips = [int(x) for x in (b.get('trips') or [])][:2]
+        except (TypeError, ValueError):
+            raise ValueError('călătorii invalide')
+        if any(not 0 < x < 2 ** 31 for x in trips):
+            raise ValueError('călătorii invalide')
         tok = secrets.token_urlsafe(32)
         label = re.sub(r'[<>\r\n]', '', str(b.get('label', '')))[:40]
-        S.OWN.run('insert into shares(h, created, expires, car, label, hide_home, show_dest, by) values(?,?,?,?,?,?,?,?)',
-                  (digest(tok), time.time(), time.time() + hours * 3600, int(b.get('car', 1)), label, 1 if b.get('hide_home', True) else 0, 1 if b.get('show_dest', True) else 0, getattr(h, 'role', None) or 'user'))
-        S.audit('share', actor=getattr(h, 'role', None))
+        S.OWN.run('insert into shares(h, created, expires, car, label, hide_home, show_dest, by, trips) values(?,?,?,?,?,?,?,?,?)',
+                  (digest(tok), time.time(), time.time() + hours * 3600, int(b.get('car', 1)), label, 1 if b.get('hide_home', True) else 0, 1 if b.get('show_dest', True) else 0, getattr(h, 'role', None) or 'user', json.dumps(trips) if trips else None))
+        S.audit('share', actor=getattr(h, 'role', None), trips=len(trips))
         return dict(ok=True, url='%s/share/%s' % (base(), tok))
 
     @S.route('POST', '/api/share/revoke', pin=True, role='user')

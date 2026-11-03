@@ -3,6 +3,16 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.9.0 - 2026-11-03
+
+### New features
+- **Interactive timeline** (trip page → *📈 Interactive timeline*). The whole trip on a map with an **At cursor** card (speed, altitude, battery, distance, net energy used, energy charged) and cards you swipe sideways with the statistics of the section you chose: *General* (average and top speed, stops, moving time), *Altitude* (minimum, maximum, ascent, descent) and *Energy* (net used, regen, charged, Wh/km, battery). Below the map a chart of altitude and battery with stops and charges shaded; **drag the two handles to select a section** (the map zooms to it and every card is recalculated) and touch the chart to move the cursor.
+- **Compare trips** (trip page → *⚖ Compare with other trips*, or *Compare trips* on the Trips page). Up to **three trips on one map**: the cars start together and you see where each one was after the same time since departure, with speed, distance, elapsed time, battery and net energy next to each car, a time slider, pause and 1x-8x speed. A table underneath compares distance, duration, moving time, average and top speed, net energy, Wh/km, regen, energy charged on the way, battery and stops.
+- **Live-location link with a comparison.** When you create a link you can pick up to **two saved trips**: the public page draws them next to your car and shows where each one was after the same time since the current drive started (speed, distance, time, battery). Recipients get only the routes and numbers, **no place names**; while *Hide the position while at home* is on, **600 m are cut from both ends** of those routes. Links without a comparison are unchanged.
+
+### Fixes
+- **A manual tariff did not calculate the cost of a charge.** On the charge page, choosing a tariff (a station tariff, *Use the manual tariff* or one picked in *Find the station*) now also sets the charge cost to kWh x tariff, and a charge without a linked station has a *Tariff* field with *Calculate the cost from the tariff*. Choosing a tariff replaces the cost entered before; the automatic station link still never touches your costs.
+
 ## 1.8.0 - 2026-10-28
 
 ### New features

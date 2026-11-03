@@ -37,6 +37,10 @@ The **sleep guard** attributes each awake period to Sentry, a command (app/rule/
 
 Drives grouped into trips by the gap between them (1–12 h, configurable), with distance, energy, charging stops and cost, and the same map as the drive page.
 
+- **Interactive timeline** (`#/timeline/<trip>`, from the trip page): the trip on a map with an *At cursor* card (speed, altitude, battery, distance, net energy used, energy charged) and swipeable cards for the section you select (*General*: average and top speed, stops, moving time; *Altitude*: minimum, maximum, ascent, descent; *Energy*: net used, regen, charged, Wh/km, battery). Under the map a chart of altitude and battery with stops and charges shaded: drag the two handles to select a section (the map zooms to it and the cards are recalculated), touch the chart to move the cursor.
+- **Compare trips** (`#/compare/<id>,<id>,<id>`): up to three trips on one map. The cars start together and you see where each was after the same time since departure (speed, distance, elapsed time, battery and net energy next to each car; slider, pause, 1x-8x), plus a table of distance, duration, moving time, speeds, net energy, Wh/km, regen, energy charged on the way, battery and stops.
+- Net energy in both is the power of the GPS points integrated over time (consumption minus regen), so it can differ a few percent from the figure TeslaMate stores for the drive.
+
 ## Reports and "what PZU would have cost" (`#/reports`)
 
 - Weekly (Monday) and monthly (1st) reports: distance, energy, charging cost, solar share, idle drain, records, ICE-car comparison and change versus the previous period. Generated on demand too, and sent to your notification channels.
@@ -58,6 +62,7 @@ A public page with a map and the arrival time for someone waiting for you.
 - Served on the **public** port (`PUBLIC_PORT`, the one that already serves the Fleet public key), so it needs a public domain; set `SHARE_BASE` or use the Fleet domain. If you put a geo-fence or access policy in front of that hostname, recipients must be allowed through it.
 - The token is 32 random bytes; only its SHA-256 is stored, so the link is shown **once**. Links expire (15 min to 48 h), can be revoked, are limited to 10 active, and token guessing is rate-limited per IP.
 - The page receives only: position, heading, speed, ETA and (optionally) the destination name. By default the position is hidden while the car is inside your home geofence.
+- **Comparison (optional):** when you create the link you can pick up to two saved trips. The page then also receives, for each, a thinned route (about 300 points of time, position, speed, battery and distance, **without any place name**) and, while you drive, the time since your current drive started, so it can show where each saved trip was after the same time. While *Hide the position while at home* is on, 600 m are cut from both ends of those routes (the direction you leave in can still be guessed). Without a comparison nothing changes.
 - Anyone holding the link sees the position while it is valid: treat it like the position itself.
 
 ## Car handoff (`#/handoff`, admin only)

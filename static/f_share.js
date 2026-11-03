@@ -3,6 +3,8 @@ SETTINGS_EXT.push({
   cat: 'data', order: 2,
   async render() {
     let d; try { d = await api('/api/share'); } catch (e) { return ''; }
+    let tl = []; try { tl = (await api('/api/trips?days=365&car=' + car)).trips.slice(0, 60); } catch (e) { /* fara comparatii */ }
+    const topt = tl.map((t) => `<option value="${t.id}">${esc(new Date(T(t.start)).toLocaleDateString(LOC(), { day: 'numeric', month: 'short' }))} · ${esc(tr(t.start_name || '—'))} → ${esc(tr(t.end_name || '—'))} · ${nf(t.km)} km</option>`).join('');
     const live = d.shares.filter((s) => !s.revoked && s.expires > d.now);
     const rows = live.map((s) => `<div class="alrow"><div><b>${esc(s.label || X('Link', 'Link'))}</b><small class="mut">${X('expiră ', 'expires ')}${esc(new Date(s.expires * 1000).toLocaleString(LOC()))} · ${s.views} ${X('vizualizări', 'views')}${s.hide_home ? ' · ' + X('ascunde acasa', 'hides home') : ''}${s.show_dest ? ' · ' + X('arată destinația', 'shows destination') : ''}</small></div><a href="#" data-shr="${s.id}">${X('Retrage', 'Revoke')}</a></div>`).join('');
     return `<h2>${X('Link de urmărire în timp real', 'Live-location link')}</h2><div class="card cfg">
@@ -11,6 +13,9 @@ SETTINGS_EXT.push({
       <label class="cf">${X('Valabil (ore)', 'Valid for (hours)')}<select id="sh_h"><option value="1">1</option><option value="2" selected>2</option><option value="4">4</option><option value="8">8</option><option value="24">24</option><option value="48">48</option></select></label>
       <label class="cf">${X('Etichetă (apare pe pagină, opțional)', 'Label (shown on the page, optional)')}<input id="sh_l" maxlength="40" placeholder="Mihai"></label>
       ${sw('sh_home', true, X('Ascunde poziția cât sunt acasă', 'Hide the position while at home'))}${sw('sh_dest', true, X('Arată destinația', 'Show the destination'))}
+      ${tl.length ? `<h3 class="sub">${X('Comparație pe hartă (opțional)', 'Comparison on the map (optional)')}</h3>
+      <p class="note" style="margin:0 0 6px">${X('Până la două călătorii salvate apar pe hartă lângă mașina ta, cu poziția lor după același timp de la plecare. Cine are linkul le vede traseul (fără nume de locuri); cât timp „Ascunde poziția cât sunt acasă” e pornit, se taie 600 m de la capete.', 'Up to two saved trips appear on the map next to your car, showing where they were after the same time since departure. Anyone with the link sees their route (no place names); while “Hide the position while at home” is on, 600 m are cut from both ends.')}</p>
+      <label class="cf">${X('Comparația 1', 'Comparison 1')}<select id="sh_t1"><option value="">—</option>${topt}</select></label><label class="cf">${X('Comparația 2', 'Comparison 2')}<select id="sh_t2"><option value="">—</option>${topt}</select></label>` : ''}
       <div class="links"><a href="#" id="sh_new">${X('Creează link', 'Create link')}</a>${live.length ? `<a href="#" id="sh_all">${X('Retrage toate', 'Revoke all')}</a>` : ''}</div>
       <div id="sh_out"></div>
       ${rows ? `<h3 class="sub">${X('Linkuri active', 'Active links')}</h3>${rows}` : ''}
@@ -21,7 +26,7 @@ SETTINGS_EXT.push({
     const nw = document.getElementById('sh_new');
     if (nw) nw.onclick = async (e) => {
       e.preventDefault(); say(X('Se creează…', 'Creating…'), 'busy');
-      const [ok, j] = await pinPost('/api/share/create', { hours: document.getElementById('sh_h').value, label: document.getElementById('sh_l').value, hide_home: document.getElementById('sh_home').checked, show_dest: document.getElementById('sh_dest').checked });
+      const [ok, j] = await pinPost('/api/share/create', { hours: document.getElementById('sh_h').value, label: document.getElementById('sh_l').value, hide_home: document.getElementById('sh_home').checked, show_dest: document.getElementById('sh_dest').checked, trips: ['sh_t1', 'sh_t2'].map((i) => { const e = document.getElementById(i); return e ? +e.value : 0; }).filter((x, i, ar) => x > 0 && ar.indexOf(x) === i) });
       if (!ok || !j.url) { say('✗ ' + (j.reason || X('Eroare', 'Error')), 'bad'); return; }
       document.getElementById('sh_out').innerHTML = `<label class="cf">${X('Link (se arată o singură dată)', 'Link (shown once)')}<input readonly id="sh_url" value="${esc(j.url)}"></label><div class="links"><a href="#" id="sh_copy">${X('Copiază', 'Copy')}</a>${navigator.share ? `<a href="#" id="sh_send">${X('Trimite…', 'Share…')}</a>` : ''}</div>`;
       say('✓ ' + X('Creat', 'Created'), 'ok');
