@@ -23,7 +23,7 @@ A mobile-first, [Tessie](https://tessie.com)-style web app (installable PWA) on 
 | **Charging control** | Charging current (A), scheduled charging and scheduled departure/preconditioning (current Tesla schedule model — add/remove), **energy source of each charge** (grid vs solar, estimated, via Home Assistant) |
 | **Drives** | Day-grouped list; detail with speed-coloured map, charts linked to the map (touch a chart → the point on the map), **driving style** (hard braking/acceleration, regen, score); **animated 3D route replay**: tilted map following the car, clock, weather (Open-Meteo), speed-adaptive zoom, stops and charging stops, battery/net/regen/charged, click any route point to inspect it, zoom/free explore, and **export to video (MP4/WebM)** |
 | **Profiler** | Live streaming of 200+ vehicle signals (Fleet Telemetry) in short sessions: profiles, grouped cells with mini charts, tiles, CSV export - [docs/profiler.md](docs/profiler.md) |
-| **Import from Tessie** | Bring your Tessie history (drives with GPS paths, charges, costs) into TeslaMate — dry-run, one transaction, one-click undo - [docs/import-tessie.md](docs/import-tessie.md) |
+| **Import from Tessie** | Bring **everything** Tessie has into TeslaMate and the app (drives with altitude/temperatures, real charging curves, parked periods, battery capacity over time, alerts) so you can stop using Tessie — dry-run, one transaction, one-click undo - [docs/import-tessie.md](docs/import-tessie.md) |
 | **Sleep & idle drain** (Parked) | 48-hour sleep/awake timeline, sleep % per day, idle battery drain between drives/charges (%/h and kWh/day), detection of periodic short wakes (something polling the car) |
 | **Charges** | History with curves (power, SoC, energy), cost; **editable total cost per session**, **provider** per session (auto-detected from the place, editable) and a **provider filter with total kWh + cost** - [docs/costs.md](docs/costs.md) |
 | **Stats** | Distance/day, consumption, cost, **comparison with a petrol/diesel car** (your l/100 km × the fuel price of each day, fetched and stored daily), range degradation, **battery health** (usable capacity from charges, charging-curve comparison, consumption vs temperature and speed), state history, software updates |
@@ -104,7 +104,7 @@ Set `NOTIFY_WEBHOOK` — see **[docs/notifications.md](docs/notifications.md)** 
 
 ## Customising
 
-* **Car picture:** drop a top-down transparent PNG of your car at `./data/car.png` (a generic drawing is used otherwise; the seat buttons on the Climate page are positioned for a typical sedan top view).
+* **Car picture:** a **Model 3 / Y** shows a top-down photo (of a Model 3) repainted in your car's colour, other models a generic drawing in their colour; to use your own, drop a top-down transparent PNG of your car at `./data/car.png` (it always wins; the seat buttons on the Climate page are positioned for a typical sedan top view).
 * **Currency:** `CURRENCY` in `.env` (e.g. `CURRENCY=RON`; cost comes from the prices you set in TeslaMate) or in the app under Settings → Display. The value set in the app wins. After editing `.env` run `docker compose up -d` (`restart` does not re-read it).
 * **Public demo with fictional data:** `docker compose --profile demo up -d demo` (port 4102, no database, no keys, commands disabled).
 

@@ -386,3 +386,4 @@ code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em;backgroun
 .ct-cursor{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:#fff;pointer-events:none;box-shadow:0 0 5px #0009}
 .ct-ax{display:flex;justify-content:space-between;color:var(--mut);font-size:11.5px;margin-top:5px;font-variant-numeric:tabular-nums}.ct-leg{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11.5px;color:var(--mut)}.ct-leg span:before{content:"";display:inline-block;width:11px;height:4px;border-radius:2px;background:var(--c);margin-right:5px;vertical-align:middle}
 .tpn{margin:10px 0 2px;padding:9px 12px;border-radius:12px;background:#ffffff09;color:var(--mut);font-size:12px;line-height:1.4}
+.tsal summary{cursor:pointer;padding:7px 0;border-bottom:1px solid #ffffff10;list-style:none}.tsal summary::-webkit-details-marker{display:none}.tsal[open] summary{border-bottom-color:transparent}

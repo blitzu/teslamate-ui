@@ -3,6 +3,22 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.10.0 - 2026-11-03
+
+### New features
+- **A Model 3 / Model Y shows the real top-down photo, in the colour of your car.** The *Top* view of a Model 3 or Model Y is now a photo (not the generic drawing), repainted in the paint your car reports: Pearl White, Quicksilver, Stealth Grey, Midnight Silver, Solid Black, Deep Blue, Red Multi-Coat / Ultra Red and Midnight Cherry Red. Windows, interior and lights stay as in the photo. It is the same picture on the Climate page (seat buttons), in the route replay and behind the open doors / frunk / trunk, and it is the view shown first again. Your own `data/car.png` still wins when you put one there; the Model S / X keep the drawing in their colour. The photo is of a Model 3: on a Model Y the outline is close but not exact.
+
+- **Complete Tessie import: you can stop using Tessie and keep everything.** The import now takes everything Tessie has:
+  - **Drives** come from Tessie's state history (not just the GPS path): every point also gets **altitude**, inside and outside **temperature**, climate on/off and the car's **real range**, and the drive gets its total **ascent / descent**, the exact start/end odometer and the temperatures. A place you saved in Tessie (e.g. *Home*) becomes the name of the new address.
+  - **Charges** get the **real charging curve** (power, voltage and current about every 45 s; for example the 178 kW peak of a Supercharger) instead of two points, with the energy integrated from the power and brought to Tessie's total, and the real range. A DC charge from any fast charger (not only Tesla's) is marked as DC, so the AC/DC statistics are right.
+  - **What TeslaMate cannot keep goes into the app's own database and into a new page, *Tessie archive*** (in the menu once there is data): **parked periods** with the energy they used (drain, with sentry/climate), the **battery capacity over time** (kWh, from Tessie's measurements and from every charge), the car's **firmware alerts** grouped by kind, the **autopilot** kilometres, the tag of a drive (it becomes an app tag) and, on the page of every drive, an **estimated peak power / regen** (computed from the energy left in the battery over ~60 s: Tessie does not provide real power, so it is marked as an estimate and never written into TeslaMate's power column).
+  - *Undo import* removes all of it, including the archive. Not available from Tessie at all: real power, tyre pressures, sleep/offline history, software-version history.
+  - Drives imported with an older version do not get the new data: use *Undo import* and import again (it is much faster now).
+
+### Improvements
+- **The Tessie import is faster.** The routes of the drives are now downloaded **5 at a time** (set `IMPORT_WORKERS`, 1-8; 1 = one by one as before) instead of one by one with a pause after each, and they are written in the same order as before. When Tessie answers *too many requests* every download waits, not only the one that got the error.
+- **Test, then Import, downloads everything once.** The routes fetched by *Test (no writes)* are kept on disk (`data/import_cache`, compressed, only the fields the import uses) and reused by *Import*; they are deleted after a real import and expire after 3 days.
+
 ## 1.9.3 - 2026-11-03
 
 ### Fixes

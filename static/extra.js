@@ -63,7 +63,7 @@ async function afterClimate() {
       <div class="tstep"><button id="tm">−</button><div><b id="tv">${nf(CL.temp, 1)}</b><small>°C</small></div><button id="tp">+</button></div></div>
   </div>
   <h2>${tr('Scaune încălzite')}</h2>
-  <div class="card seats"><div class="seatimg"><img src="/car.png" alt="">${SEATS_SHOWN.map(seatBtn).join('')}</div></div>${caps.rear_seats === undefined ? `<p class="note" style="margin:6px 4px">${X('Dotările (ex. bancheta încălzită) se detectează automat când mașina e online; până atunci arăt toate scaunele.', 'Equipment (e.g. heated rear seat) is detected automatically when the car is online; until then all seats are shown.')}</p>` : ''}
+  <div class="card seats"><div class="seatimg"><img src="${esc(carPng(cur()))}" alt="">${SEATS_SHOWN.map(seatBtn).join('')}</div></div>${caps.rear_seats === undefined ? `<p class="note" style="margin:6px 4px">${X('Dotările (ex. bancheta încălzită) se detectează automat când mașina e online; până atunci arăt toate scaunele.', 'Equipment (e.g. heated rear seat) is detected automatically when the car is online; until then all seats are shown.')}</p>` : ''}
   <div class="card" style="margin-top:10px">${caps.wheel_heater === false ? '' : sw('wheel', CL.wheel, tr('Volan încălzit'))}${sw('defrost', CL.defrost, tr('Dezgheață (max)'))}</div>
   <h2>${tr('Protecție supraîncălzire habitaclu')}</h2>
   <div class="card">${segB('cop', [['Off', X('Oprit', 'Off')], ['FanOnly', X('Doar ventilator', 'Fan only')], ['On', X('Pornit', 'On')]], CL.cop)}
@@ -291,7 +291,7 @@ async function startReplay(id) {
       const el = mk('rp-pin stop ' + s.kind, `<i>${s.kind === 'charge' ? '⚡' : '⏸'}</i><span>${s.kind === 'charge' ? X('Încărcare ', 'Charging ') + dur(s.sec) + (s.kwh ? ' · +' + nf(s.kwh, 1) + ' kWh' : '') : X('Oprit ', 'Stopped ') + dur(s.sec)}</span>`);
       new ml.Marker({ element: el, anchor: 'bottom' }).setLngLat([s.lon, s.lat]).addTo(map2); RP.stopEls.push([s, el]);
     });
-    RP.carEl = mk('rp-car', '<img src="/car.png" alt="">');
+    RP.carEl = mk('rp-car', `<img src="${esc(carPng(cur()))}" alt="">`);
     RP.car = new ml.Marker({ element: RP.carEl, rotationAlignment: 'map', pitchAlignment: 'map', rotation: tl[0].hd }).setLngLat([tl[0].lon, tl[0].lat]).addTo(map2);
     // carduri de informatii lipite de masina (ca in filmulet): stanga distanta+altitudine, dreapta baterie+consum
     RP.cardL = mk('rp-fc l', `<i>${X('Distanță', 'Distance')}</i><b id="rkm">0,0<small> km</small></b><span id="rel">0 m</span><em id="rv"></em>`);
@@ -742,7 +742,7 @@ function afterSettings() {
     if (st.running) { const pc = st.total ? Math.round(st.done / st.total * 100) : 0; impSay(`⏳ ${esc(st.phase)} · ${pc}%<div class="bar" style="margin:8px 0 0"><div class="fill" style="width:${pc}%"></div></div>`); return; }
     clearInterval(impT);
     if (st.error) impSay(`<span style="color:#ffb3b3">✗ ${esc(st.error)}</span>`);
-    else if (st.result) { const r = st.result; impSay(`<b style="color:var(--mint)">✓ ${r.dry_run ? X('Test reușit (nu s-a scris nimic)', 'Test passed (nothing written)') : X('Import terminat', 'Import finished')}</b> — ${r.drives} ${X('curse', 'drives')}, ${r.charges} ${X('încărcări', 'charges')}, ${r.positions} ${X('puncte GPS', 'GPS points')}.${r.dry_run ? '' : ' ' + X('Poți anula oricând cu „Anulează importul”.', 'You can undo it anytime with “Undo import”.')}`); }
+    else if (st.result) { const r = st.result; impSay(`<b style="color:var(--mint)">✓ ${r.dry_run ? X('Test reușit (nu s-a scris nimic)', 'Test passed (nothing written)') : X('Import terminat', 'Import finished')}</b> — ${r.drives} ${X('curse', 'drives')}, ${r.charges} ${X('încărcări', 'charges')}, ${r.positions} ${X('puncte GPS', 'GPS points')}${r.curve_charges ? ', ' + r.curve_charges + ' ' + X('curbe de încărcare', 'charging curves') : ''}; ${X('în Arhiva Tessie', 'in the Tessie archive')}: ${r.idles} ${X('staționări', 'parked periods')}, ${r.health} ${X('măsurători ale bateriei', 'battery measurements')}, ${r.alerts} ${X('alerte', 'alerts')}.${r.extras_error ? ' <span style="color:#ffb3b3">⚠ ' + esc(r.extras_error) + '</span>' : ''}${r.dry_run ? '' : ' ' + X('Poți anula oricând cu „Anulează importul”.', 'You can undo it anytime with “Undo import”.')}`); }
   }, 1200); };
   view.querySelectorAll('[data-imp]').forEach((b) => b.onclick = async (e) => {
     e.preventDefault(); const k = b.dataset.imp; impSay('…');
@@ -751,7 +751,7 @@ function afterSettings() {
       const j = await imp('preview'); if (!j.ok) { impSay(`<span style="color:#ffb3b3">✗ ${esc(j.reason || 'eroare')}</span>`); return; }
       const dd = (ts) => ts ? new Date(ts * 1000).toLocaleDateString(LOC(), { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
       const w = (o) => o.before + o.between + o.after ? ` (${o.before ? o.before + ' ' + X('înainte', 'before') : ''}${o.before && (o.between || o.after) ? ', ' : ''}${o.between ? o.between + ' ' + X('între', 'between') : ''}${o.between && o.after ? ', ' : ''}${o.after ? o.after + ' ' + X('după datele TeslaMate', 'after your TeslaMate data') : ''})` : '';
-      impSay(`${X('Tessie are', 'Tessie has')} <b>${j.tessie_drives}</b> ${X('curse și', 'drives and')} <b>${j.tessie_charges}</b> ${X('încărcări', 'charges')}; ${X('în TeslaMate există deja', 'TeslaMate already has')} ${j.already_in_teslamate.drives} + ${j.already_in_teslamate.charges}. ${X('De importat', 'To import')}: <b>${j.to_import_drives}</b> ${X('curse', 'drives')}${w(j.drives_where)} (${nf(j.km)} km), <b>${j.to_import_charges}</b> ${X('încărcări', 'charges')}${w(j.charges_where)} (${nf(j.kwh, 1)} kWh)${j.first ? ' · ' + dd(j.first) + ' – ' + dd(j.last) : ''}.${j.already ? '<br>' + X('Există deja date aduse de un import anterior; noul import le completează, iar „Anulează importul” le scoate pe toate.', 'Data from an earlier import exists; the new import adds to it and “Undo import” removes all of it.') : ''}`);
+      impSay(`${X('Tessie are', 'Tessie has')} <b>${j.tessie_drives}</b> ${X('curse și', 'drives and')} <b>${j.tessie_charges}</b> ${X('încărcări', 'charges')}; ${X('în TeslaMate există deja', 'TeslaMate already has')} ${j.already_in_teslamate.drives} + ${j.already_in_teslamate.charges}. ${X('De importat', 'To import')}: <b>${j.to_import_drives}</b> ${X('curse', 'drives')}${w(j.drives_where)} (${nf(j.km)} km), <b>${j.to_import_charges}</b> ${X('încărcări', 'charges')}${w(j.charges_where)} (${nf(j.kwh, 1)} kWh)${j.first ? ' · ' + dd(j.first) + ' – ' + dd(j.last) : ''}. ${X('Pentru Arhiva Tessie', 'For the Tessie archive')}: ${j.extras.idles} ${X('staționări', 'parked periods')}, ${j.extras.health} ${X('măsurători ale bateriei', 'battery measurements')}, ${j.extras.alerts} ${X('alerte', 'alerts')}.${j.already ? '<br>' + X('Există deja date aduse de un import anterior; noul import le completează, iar „Anulează importul” le scoate pe toate.', 'Data from an earlier import exists; the new import adds to it and “Undo import” removes all of it.') : ''}`);
     } else if (k === 'dry' || k === 'run') {
       if (k === 'run' && !confirm(X('Importul ADAUGĂ curse, încărcări și puncte GPS în baza TeslaMate (nu șterge și nu modifică nimic existent) și poate fi anulat. Ai făcut o copie de siguranță a bazei de date?', 'The import ADDS drives, charges and GPS points to the TeslaMate database (it never deletes or changes existing data) and can be undone. Have you backed up the database?'))) { impSay(''); return; }
       const j = await imp(k, { confirm: true }); if (!j.ok) { impSay(`<span style="color:#ffb3b3">✗ ${esc(j.reason || 'eroare')}</span>`); return; } impPoll();
@@ -796,7 +796,7 @@ function drawNav(active) {
   nav2.innerHTML = `<div class="sb-top"><div class="sb-logo"><svg viewBox="0 0 24 24"><path d="${NAVI.car}"/></svg><span>TESLAMATE UI</span></div></div>
     <button class="sb-car" id="sbcar" title="${X('Detalii mașină', 'Car details')}"><span>${esc(carLabel(c))}</span>${nicon('info')}</button>
     ${S.cars.length > 1 ? `<select id="sbcarsel" aria-label="${X('Alege mașina', 'Choose car')}">${S.cars.map((x) => `<option value="${x.id}" ${x.id === car ? 'selected' : ''}>${esc(carLabel(x))}${x.name ? ' · ' + esc(x.name) : ''}</option>`).join('')}</select>` : ''}
-    <div class="sb-menu">${MENU.concat(EXTRA_MENU).map(([k, ro, en, ic]) => `<a href="#/${k}" class="${active === k ? 'on' : ''}">${nicon(ic)}<span>${X(ro, en)}</span></a>`).join('')}</div>
+    <div class="sb-menu">${MENU.concat(EXTRA_MENU).filter(([k]) => k !== 'tessie' || S.tessie).map(([k, ro, en, ic]) => `<a href="#/${k}" class="${active === k ? 'on' : ''}">${nicon(ic)}<span>${X(ro, en)}</span></a>`).join('')}</div>
     <div class="sb-foot"><a href="#/settings" class="${active === 'settings' ? 'on' : ''}">${nicon('gear')}<span>${X('Setări', 'Settings')}</span></a>
       ${S.app ? `<a href="#/settings" class="sb-ver">v${esc(S.app.version)}${S.app.latest ? ` · <b>${X('nou', 'new')} v${esc(S.app.latest)}</b>` : ''}</a>` : ''}<div class="sb-lang"><button data-lang="ro" class="${LANG === 'ro' ? 'on' : ''}">RO</button><button data-lang="en" class="${LANG === 'en' ? 'on' : ''}">EN</button></div></div>`;
   nav2.querySelectorAll('[data-lang]').forEach((b) => b.onclick = () => { LANG = b.dataset.lang; try { localStorage.setItem('lang', LANG); } catch (x) { /* ignore */ } document.documentElement.lang = LANG; render(); });
@@ -1063,7 +1063,7 @@ function openPhoto(L, o) {
   const st = openState(L, o);
   const any = st.anyDoor || st.frunk || st.trunk || st.windows;
   if (!any) return `<div class="pp" id="pp">${carFx(L)}</div>`;
-  const bg = "background-image:url('/car.png')";
+  const bg = "background-image:url('" + esc(carPng(cur())) + "')";
   const piece = (k, cls) => `<div class="ppu${k === 'hood' || k === 'trunk' ? ' sf' : ''}" style="clip-path:polygon(${polyStr(k)})"></div><div class="ppc ${cls}" style="${bg};clip-path:polygon(${polyStr(k)});transform-origin:${hingeStr(k)}"></div>`;
   let h = '';
   if (st.doorsKnown) {

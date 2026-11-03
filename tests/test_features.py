@@ -897,6 +897,27 @@ class CarImageTests(Isolated):
         finally:
             S.DATA_DIR = old
 
+    def test_model_3_gets_the_project_photo_in_the_paint_of_the_car(self):
+        pack = os.path.join(S.STATIC, 'car-m3')
+        for color in list(S.CAR_TINT) + ['PearlWhite', None, 'CevaNou']:
+            f = S.car_top('3', color)
+            self.assertTrue(f and os.path.isfile(f), color)
+            self.assertTrue(f.startswith(pack))
+            with open(f, 'rb') as fh:
+                self.assertEqual(fh.read(4), b'RIFF')                                       # WebP
+        self.assertTrue(S.car_top('3', 'PearlWhite').endswith('white.webp'))
+        self.assertTrue(S.car_top('3', 'SolidBlack').endswith('1c1f23.webp'))
+        self.assertNotEqual(S.car_top('3', 'SolidBlack'), S.car_top('3', 'RedMulticoat'))
+        self.assertEqual(S.car_top('3', 'RedMulticoat'), S.car_top('3', 'UltraRed'))          # aceeasi nuanta = acelasi fisier
+        self.assertEqual(S.car_top('Y', 'SolidBlack'), S.car_top('3', 'SolidBlack'))          # Model Y: aceeasi poza
+        self.assertIsNone(S.car_top('S', 'SolidBlack'))                                       # S / X: desenul generic
+        self.assertIsNone(S.car_top(None, 'SolidBlack'))
+
+    def test_state_flags_a_model_3_as_having_a_top_photo(self):
+        self.assertTrue(os.path.isfile(S.car_top('3', 'StealthGrey')))
+        for color in ('PearlWhite', 'StealthGrey', 'SolidBlack'):
+            self.assertTrue(S.car_photo() or S.car_top('3', color))
+
 
 class TelemetryLiveTests(Isolated):
     def setUp(self):
@@ -1250,14 +1271,320 @@ class ImporterGapTests(Isolated):
             def cursor(self): return Cur()
             def commit(self): pass
             def rollback(self): pass
-        orig_plan = IM.plan
+        orig_plan, orig_extras = IM.plan, IM.fetch_extras
         IM.plan = lambda cur, token, vin, car, mode, cutoff=None: (0, [], [], [], [])
+        IM.fetch_extras = lambda token, vin, until=None: dict(idles=[], health=[], alerts=[])
         try:
             IM.run(Conn(), 't', 'v', 1, {}, mode='gaps')
         finally:
-            IM.plan = orig_plan
+            IM.plan, IM.fetch_extras = orig_plan, orig_extras
         led = json_.load(open(IM.LEDGER))
         self.assertEqual((led['drives'], led['positions'], led['tessie_drives']), ([1], [10, 11], ['a']))
+
+
+class ImporterParallelTests(Isolated):
+    def setUp(self):
+        self.old = (IM.CACHE, IM.tget)
+        IM.CACHE = tempfile.mkdtemp()
+        self.calls = []
+        self.lock = __import__('threading').Lock()
+
+        def fake(token, path, params=None, timeout=90):
+            time.sleep(0.05)
+            with self.lock:
+                self.calls.append(params['from'])
+            return dict(results=[dict(timestamp=params['from'] + 5 + i, latitude=44.0, longitude=26.0, battery_level=80, speed=10, odometer=100.0, junk='x' * 50) for i in range(3)])
+        IM.tget = fake
+
+    def tearDown(self):
+        IM.CACHE, IM.tget = self.old
+
+    def drives(self, n):
+        return [dict(started_at=1000 + i * 100, ended_at=1050 + i * 100) for i in range(n)]
+
+    def test_paths_come_in_order_and_in_parallel(self):
+        ds = self.drives(20)
+        t = time.time()
+        out = list(IM.prefetch('t', 'VIN1', ds, workers=5))
+        took = time.time() - t
+        self.assertEqual([d['started_at'] for d, _ in out], [d['started_at'] for d in ds])        # ordinea curselor se pastreaza
+        self.assertLess(took, 20 * 0.05 * 0.6)                                                      # 5 fire: mult sub timpul unui singur fir
+        self.assertEqual(sorted(out[0][1][0]), sorted(IM.KEEP))                                    # doar campurile folosite
+
+    def test_a_second_pass_uses_the_cache_and_a_real_import_clears_it(self):
+        ds = self.drives(6)
+        list(IM.prefetch('t', 'VIN1', ds, workers=3))
+        self.assertEqual(len(self.calls), 6)
+        again = list(IM.prefetch('t', 'VIN1', ds, workers=3))
+        self.assertEqual(len(self.calls), 6)                                                        # "Import" dupa "Test": nicio cerere noua
+        self.assertEqual(len(again[0][1]), 3)
+        IM.clean_cache('VIN1')
+        list(IM.prefetch('t', 'VIN1', ds[:1], workers=3))
+        self.assertEqual(len(self.calls), 7)
+
+    def test_old_cache_files_expire(self):
+        list(IM.prefetch('t', 'VIN1', self.drives(2), workers=2))
+        f = IM.cache_file('VIN1', 1000, 1050)
+        os.utime(f, (time.time() - 5 * 86400,) * 2)
+        IM.clean_cache(older_than=IM.CACHE_TTL)
+        self.assertFalse(os.path.exists(f))
+        self.assertTrue(os.path.exists(IM.cache_file('VIN1', 1100, 1150)))
+
+    def test_an_error_stops_the_pass_and_is_raised_for_that_drive(self):
+        def bad(token, path, params=None, timeout=90):
+            if params['from'] > 1100:
+                raise IM.TessieError('boom')
+            return dict(results=[])
+        IM.tget = bad
+        got = []
+        with self.assertRaises(IM.TessieError):
+            for d, _ in IM.prefetch('t', 'VIN1', self.drives(8), workers=2):
+                got.append(d['started_at'])
+        self.assertEqual(got, [1000, 1100])
+
+
+class FakePg:
+    """Cursor fals pentru importer: tine minte ce se scrie si raspunde ca PostgreSQL la cele cateva interogari ale importului."""
+    def __init__(self):
+        self.sql, self.n, self.last = [], 100, ''
+
+    def execute(self, sql, params=None):
+        self.sql.append((' '.join(sql.split()), params))
+        self.last = self.sql[-1][0]
+
+    def fetchone(self):
+        q = self.last
+        if 'efficiency' in q:
+            return (0.15,)
+        if 'avg(ideal_battery_range_km' in q:
+            return (480.0,)
+        if 'insert into addresses' in q:
+            return (7, True)
+        if q.startswith('select id from addresses'):
+            return None
+        if 'returning id' in q:
+            self.n += 1
+            return (self.n,)
+        return None
+
+    def fetchall(self):
+        return []
+
+    def close(self):
+        pass
+
+    def inserts(self, table):
+        return [p for q, p in self.sql if q.startswith('insert into ' + table + ' ')]
+
+
+class ImporterV2Tests(Isolated):
+    def setUp(self):
+        import types
+        self.pg = FakePg()
+        self.rows = []
+        ex = types.ModuleType('psycopg2.extras')
+        ex.execute_values = lambda cur, sql, rows, page_size=100, fetch=False: (self.rows.extend(rows), [(1000 + i,) for i in range(len(rows))])[1]
+        top = types.ModuleType('psycopg2')
+        top.extras = ex
+        self.saved = {k: sys.modules.get(k) for k in ('psycopg2', 'psycopg2.extras')}
+        sys.modules['psycopg2'], sys.modules['psycopg2.extras'] = top, ex
+
+    def tearDown(self):
+        for k, v in self.saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+
+    def drive(self):
+        return dict(id=77, started_at=1_000_000, ended_at=1_000_300, starting_latitude=44.4, starting_longitude=26.1, ending_latitude=44.5, ending_longitude=26.2, starting_battery=80, ending_battery=78,
+                    starting_odometer=5000.0, ending_odometer=5004.0, odometer_distance=4.0, max_speed=62, average_speed=30, energy_used=0.6, rated_range_used=3.0, autopilot_distance=0.0, tag=None,
+                    average_outside_temperature=9.5, average_inside_temperature=21.0, starting_location='Strada A', ending_location='Strada B', starting_saved_location='Acasa', ending_saved_location=None)
+
+    def points(self, n=11):
+        return [dict(timestamp=1_000_000 + i * 30, latitude=44.4 + i * .01, longitude=26.1 + i * .01, battery_level=80 - i // 5, usable_battery_level=80 - i // 5, battery_range=300 - i * 1.5, elevation=80 + (i % 4) * 5,
+                     speed=40 + i, odometer=5000 + i * .4, inside_temp=21.5, outside_temp=9.0, is_climate_on=1, battery_heater_on=0, energy_remaining=50 - i * .08) for i in range(n)]
+
+    def test_pure_helpers(self):
+        self.assertEqual(IM.climb([100, 100, 100]), (0, 0))
+        up, down = IM.climb([100, 110, 120, 130, 120, 110, 100, 90])
+        self.assertGreater(up, 15)
+        self.assertGreater(down, 25)
+        self.assertEqual(IM.climb([None, 5]), (None, None))
+        mx, mn, avg = IM.est_power(self.points())                                           # 0,08 kWh la 30 s = 9,6 kW
+        self.assertAlmostEqual(mx, 9.6, 1)
+        self.assertAlmostEqual(avg, 9.6, 1)
+        self.assertEqual(IM.est_power([dict(timestamp=1, energy_remaining=5)]), (None, None, None))
+        self.assertEqual(IM.est_power([dict(timestamp=i, latitude=1) for i in range(5)]), (None, None, None))      # fara energia ramasa nu inventam nimic
+        regen = [dict(timestamp=i * 30, energy_remaining=40 + i * .1) for i in range(8)]
+        self.assertLess(IM.est_power(regen)[1], 0)                                          # energia creste = recuperare = putere negativa
+        self.assertEqual(IM.iso_ts('2025-09-22T15:16:23.000Z'), 1758554183.0)
+        self.assertEqual(IM.iso_ts(12), 12.0)
+        self.assertIsNone(IM.iso_ts('ieri'))
+
+    def test_a_drive_keeps_elevation_temperatures_range_and_saved_place(self):
+        ctx = IM.Ctx(self.pg, 1)
+        n = IM.import_drive(ctx, 't', 'V', self.drive(), self.points())
+        self.assertEqual(n, 11)
+        drive = self.pg.inserts('drives')[0]
+        self.assertEqual(drive[2], 9.5)                                                      # temperatura medie exterioara din lista Tessie
+        self.assertEqual((drive[9], drive[10]), (5000.0, 5004.0))                           # odometrul exact din lista
+        self.assertGreater(drive[18], 0)                                                     # urcare calculata din altitudine
+        self.assertEqual(drive[5], 300.0)                                                    # autonomia de start = cea reala a primului punct
+        r = self.rows[0]                                                                     # date, lat, lon, speed, odo, ideal, est, rated, soc, usable, elevation, t_out, t_in, climate, heater, car, drive
+        self.assertEqual((r[5], r[6], r[7]), (300.0, 300.0, 300.0))
+        self.assertEqual((r[10], r[11], r[12], r[13], r[14]), (80, 9.0, 21.5, True, False))
+        self.assertTrue(all(isinstance(x[10], int) for x in self.rows))
+        addr = [p for q, p in self.pg.sql if q.startswith('insert into addresses')]
+        self.assertEqual(addr[0][3], 'Acasa')                                                # locul salvat in Tessie devine numele adresei
+        self.assertEqual(addr[0][0], 'Strada A')                                             # textul adresei ramane cel din Tessie
+        ex = ctx.extra['drives'][0]
+        self.assertEqual((ex['tessie_id'], ex['avg_speed'], ex['start_saved']), (77, 30, 'Acasa'))
+        self.assertIsNotNone(ex['est_power_max'])
+        self.assertEqual(len(ctx.ledger['positions']), 11)
+
+    def test_a_drive_without_extra_fields_still_imports_like_before(self):
+        pts = [dict(timestamp=1_000_000 + i * 30, latitude=44.4 + i * .01, longitude=26.1, battery_level=80, speed=30, odometer=3100 + i * .25) for i in range(5)]     # ca la /path: mile, fara altitudine
+        d = self.drive()
+        d.update(starting_odometer=None, ending_odometer=None, odometer_distance=2.0)
+        ctx = IM.Ctx(self.pg, 1)
+        self.assertEqual(IM.import_drive(ctx, 't', 'V', d, pts), 5)
+        r = self.rows[0]
+        self.assertIsNone(r[10])
+        self.assertEqual(r[5], r[6])
+        drive = self.pg.inserts('drives')[0]
+        self.assertIsNone(drive[18])
+        self.assertAlmostEqual(drive[9], 3100 * IM.KM, 0)                                   # unitatea (mile) se deduce ca inainte
+
+    def charge(self):
+        return dict(id=5, started_at=2_000_000, ended_at=2_000_600, latitude=44.4, longitude=26.1, location='Acasa', saved_location='Acasa', is_supercharger=False, is_fast_charger=True, odometer=5000.0,
+                    energy_added=10.0, energy_used=10.8, starting_battery=40, ending_battery=60, cost=12.5, max_range=440.0, capacity=60.5, since_last_charge=80.0)
+
+    def curve(self):
+        return [dict(timestamp=2_000_000 + i * 60, battery_level=40 + 2 * i, usable_battery_level=40 + 2 * i, battery_range=200 + 8 * i, charger_power=[0, 50, 100, 100, 100, 100, 90, 80, 60, 40, 0][i], charger_voltage=400 if i else 1,
+                     charger_actual_current=[0, 120, 250, 250, 250, 250, 220, 200, 150, 100, 0][i], outside_temp=12.0, battery_heater_on=0, charging_state='Charging') for i in range(11)]
+
+    def test_a_charge_gets_the_real_curve_scaled_to_the_total_energy(self):
+        ctx = IM.Ctx(self.pg, 1)
+        IM.import_charge(ctx, self.charge(), self.curve())
+        rows = self.pg.inserts('charges')
+        self.assertEqual(len(rows), 11)
+        self.assertEqual(rows[0][3], 0.0)
+        self.assertEqual(rows[-1][3], 10.0)                                                  # energia cumulata ajunge exact la totalul Tessie
+        self.assertEqual([r[3] for r in rows], sorted(r[3] for r in rows))                   # si nu scade niciodata
+        self.assertEqual(max(r[4] for r in rows), 100)                                       # putere reala (kW), nu media
+        self.assertIsNone(rows[0][5])                                                        # tensiunea 1 V (necunoscuta) nu se scrie
+        self.assertEqual(rows[3][5], 400)
+        self.assertTrue(all(r[11] for r in rows))                                            # incarcare rapida (DC)
+        cp = self.pg.inserts('charging_processes')[0]
+        self.assertEqual(cp[-1], 12.0)                                                       # temperatura medie
+        self.assertEqual((cp[4], cp[5]), (200.0, 280.0))                                     # autonomie reala la start / sfarsit
+        self.assertEqual(ctx.extra['charges'][0]['curve_points'], 11)
+
+    def test_a_charge_without_power_data_keeps_two_points(self):
+        ctx = IM.Ctx(self.pg, 1)
+        IM.import_charge(ctx, self.charge(), [dict(timestamp=2_000_000, battery_level=40, charger_power=None)])
+        rows = self.pg.inserts('charges')
+        self.assertEqual(len(rows), 2)
+        self.assertEqual((rows[0][3], rows[1][3]), (0.0, 10.0))
+        self.assertEqual(ctx.extra['charges'][0]['curve_points'], 0)
+
+    def test_states_replace_path_and_path_is_the_fallback(self):
+        calls = []
+
+        def fake(token, path, params=None, timeout=90):
+            calls.append(path.rsplit('/', 1)[1])
+            if path.endswith('/states'):
+                return dict(results=[] if len(calls) == 1 else [dict(timestamp=5, latitude=1.0, longitude=2.0, power=None, elevation=33, junk=1)] * 3)
+            return dict(results=[dict(timestamp=5, latitude=1.0, longitude=2.0, speed=20, odometer=100, heading=7)] * 2)
+        old = (IM.tget, IM.CACHE)
+        IM.tget, IM.CACHE = fake, tempfile.mkdtemp()
+        try:
+            pts = IM.cached_points('t', 'V', 10, 20)
+            self.assertEqual(calls, ['states', 'path'])                                      # fara puncte in /states: cadem pe /path
+            self.assertEqual(len(pts), 2)
+            self.assertNotIn('heading', pts[0])
+            again = IM.cached_points('t', 'V', 30, 40)
+            self.assertEqual(calls[2:], ['states'])                                          # cu puncte in /states: o singura cerere
+            self.assertEqual(again[0]['elevation'], 33)
+            self.assertEqual(sorted(again[0]), sorted(IM.KEEP))
+            IM.cached_points('t', 'V', 30, 40)
+            self.assertEqual(len(calls), 3)                                                  # a doua oara vine din cache
+        finally:
+            IM.tget, IM.CACHE = old
+
+    def test_run_hands_the_extras_to_the_sink_after_commit_and_never_on_a_test(self):
+        ledger_dir = tempfile.mkdtemp()
+        old = (IM.LEDGER, IM.CACHE, IM.plan, IM.fetch_extras, IM.tget)
+        IM.LEDGER, IM.CACHE = os.path.join(ledger_dir, 'l.json'), os.path.join(ledger_dir, 'cache')
+        pts_d, pts_c = self.points(), self.curve()
+        IM.plan = lambda cur, token, vin, car, mode, cutoff=None: (0, [], [], [self.drive()], [self.charge()])
+        IM.fetch_extras = lambda token, vin, until=None: dict(idles=[dict(id=1, started_at=1, ended_at=2)], health=[dict(ts=5.0)], alerts=[])
+        IM.tget = lambda token, path, params=None, timeout=90: dict(results=pts_c if params['from'] > 1_500_000 else pts_d)
+        events = []
+
+        class Conn:
+            def __init__(self, pg): self.pg = pg
+            def cursor(self): return self.pg
+            def commit(self): events.append('commit')
+            def rollback(self): events.append('rollback')
+        try:
+            res = IM.run(Conn(FakePg()), 't', 'VIN', 1, {}, dry_run=True, sink=lambda d: events.append('sink'))
+            self.assertEqual(events, ['rollback'])                                           # la "Test" nu se scrie nimic nicaieri
+            self.assertEqual((res['drives'], res['charges'], res['positions'], res['idles'], res['health'], res['curve_charges']), (1, 1, 11, 1, 2, 1))
+            self.assertTrue(os.path.isdir(os.path.join(IM.CACHE, 'VIN')))                    # dar traseele raman in cache pentru "Import"
+            got = []
+            events.clear()
+            res = IM.run(Conn(FakePg()), 't', 'VIN', 1, {}, sink=lambda d: (events.append('sink'), got.append(d)))
+            self.assertEqual(events, ['commit', 'sink'])                                    # datele proprii se scriu DUPA commit
+            self.assertEqual((got[0]['car'], len(got[0]['idles']), len(got[0]['drives']), len(got[0]['charges'])), (1, 1, 1, 1))
+            self.assertFalse(os.path.exists(os.path.join(IM.CACHE, 'VIN', '1000000-1000300.s.json.gz')))      # dupa importul real cache-ul se goleste
+            events.clear()
+            res = IM.run(Conn(FakePg()), 't', 'VIN', 1, {}, sink=lambda d: 1 / 0)
+            self.assertIn('extras_error', res)                                               # o eroare la datele proprii nu strica importul TeslaMate (deja salvat)
+        finally:
+            IM.LEDGER, IM.CACHE, IM.plan, IM.fetch_extras, IM.tget = old
+
+
+class TessieDataTests(Isolated):
+    def setUp(self):
+        S.tessie_purge()
+
+    def data(self):
+        return dict(car=1, idles=[dict(id=1, started_at=100.0, ended_at=4000.0, location='Strada', saved_location='Acasa', latitude=44.4, longitude=26.1, starting_battery=70, ending_battery=69,
+                                      rated_range_used=2.0, energy_used=0.4, charger_energy_used=0, climate_fraction=0.1, sentry_fraction=1)],
+                    health=[dict(ts=50.0, odometer=182, max_range=457.9, capacity=64.2)],
+                    alerts=[dict(timestamp=500, name='APP_w050_aeb_event', description='d', impact='i', condition='c', clear_condition='cc', recent_fleet_count='47', incidence_rate='0.25')],
+                    drives=[dict(tessie_id=9, drive_id=3, started_at=1, ended_at=2, autopilot_km=1.5, avg_speed=40, energy_used=2.0, rated_range_used=10, tag='Serviciu', est_power_max=30.1, est_power_min=-12.0, est_power_avg=9.0)],
+                    charges=[dict(tessie_id=4, charge_id=2, started_at=10, ended_at=900, max_range=440.0, capacity=60.5, since_last_charge=5.0, saved='Acasa', fast=False, curve_points=11, odometer=5000)])
+
+    def test_save_is_idempotent_and_summary_counts(self):
+        S.tessie_save(self.data())
+        S.tessie_save(self.data())                                                          # a doua rulare nu dubleaza nimic
+        sm = S.route_lookup('GET', '/api/tessie/summary')[0](None, dict(car='1'))
+        self.assertEqual((sm['idles']['n'], sm['health']['n'], sm['alerts']['n'], sm['drives']['n'], sm['charges']['n']), (1, 2, 1, 1, 1))      # sanatatea: masuratoarea + capacitatea de la incarcare
+        self.assertTrue(sm['any'])
+        self.assertTrue(S.tessie_has_data())
+
+    def test_pages_data_and_the_tag_of_the_drive(self):
+        S.tessie_save(self.data())
+        get = lambda path, **a: S.route_lookup('GET', '/api/tessie/' + path)[0](None, dict(car='1', **a))
+        idl = get('idles')
+        self.assertEqual((idl['rows'][0]['saved'], idl['total']['n'], idl['total']['sentry_kwh']), ('Acasa', 1, 0.4))
+        self.assertEqual([p['capacity'] for p in get('health')['points']], [64.2, 60.5])
+        al = get('alerts')
+        self.assertEqual((al['kinds'][0]['name'], al['kinds'][0]['fleet']), ('APP_w050_aeb_event', 47))
+        dr = get('drive', id='3')
+        self.assertEqual((dr['found'], dr['est_power_max'], dr['autopilot_km']), (True, 30.1, 1.5))
+        self.assertFalse(get('drive', id='99')['found'])
+        self.assertIn(3, S.TAGS.ids('drive', 'Serviciu'))                                    # eticheta din Tessie devine eticheta din aplicatie
+
+    def test_undo_removes_everything(self):
+        S.tessie_save(self.data())
+        S.tessie_purge()
+        sm = S.route_lookup('GET', '/api/tessie/summary')[0](None, dict(car='1'))
+        self.assertFalse(sm['any'])
+        self.assertEqual(sm['idles']['n'], 0)
 
 
 class DriveScoreTests(Isolated):

@@ -2485,9 +2485,16 @@ def imp_action(car, body):
                 return dict(ok=False, reason='Un import rulează acum; așteaptă să se termine.')
             cn = imp_conn()
             try:
-                return dict(ok=True, undone=importer.undo(cn))
+                undone = importer.undo(cn)
             finally:
                 cn.close()
+            try:
+                purge_fn = globals().get('tessie_purge')
+                if purge_fn:
+                    purge_fn()                                                       # si datele din baza proprie (staționari, sanatatea bateriei, alerte...)
+            except Exception as e:  # noqa
+                log('import tessie: nu am putut sterge datele proprii:', e)
+            return dict(ok=True, undone=undone)
     if not token:
         return dict(ok=False, reason='Salvează mai întâi tokenul Tessie în Setări.')
     if act == 'vehicles':
@@ -2522,7 +2529,7 @@ def imp_action(car, body):
             cn = None
             try:
                 cn = imp_conn()
-                IMP['result'] = importer.run(cn, token, vin, car, IMP, dry_run=(act == 'dry'), mode=mode)
+                IMP['result'] = importer.run(cn, token, vin, car, IMP, dry_run=(act == 'dry'), mode=mode, sink=globals().get('tessie_save'))
             except Exception as e:  # noqa
                 if cn:
                     cn.rollback()
@@ -3158,6 +3165,15 @@ CAR_TINT = {'StealthGrey': '#6e757e', 'Quicksilver': '#aeb6bf', 'SolidBlack': '#
             'DeepBlue': '#1f3f7a', 'DeepBlueMetallic': '#1f3f7a', 'RedMulticoat': '#b3202b', 'UltraRed': '#b3202b', 'SilverMetallic': '#aeb6bf', 'MidnightCherryRed': '#6b1230'}
 
 
+def car_top(model, color):
+    """Fotografia de sus a unui Model 3 / Y (static/car-m3/), revopsita in culoarea masinii (alb = poza neschimbata); None pentru S/X si necunoscut."""
+    if str(model or '').upper() not in ('3', 'Y'):
+        return None
+    hx = CAR_TINT.get(str(color or ''))
+    f = os.path.join(STATIC, 'car-m3', (hx[1:] if hx else 'white') + '.webp')
+    return f if os.path.isfile(f) else None
+
+
 def car_default_svg(svg, color):
     """Desenul generic al masinii (vedere de sus), colorat in culoarea masinii. Alb (PearlWhite / necunoscut) = desenul neschimbat."""
     hx = CAR_TINT.get(str(color or ''))
@@ -3223,12 +3239,12 @@ def api_state():
                 c['sleep'] = None
             c['live'] = lv
             c['image'] = car_image(c)
-            c['photo'] = bool(car_photo())                              # fotografie de sus pusa de utilizator; fara ea, vederea implicita e randarea 3/4 Tesla
+            c['photo'] = bool(car_photo() or car_top(c.get('model'), c.get('color')))        # poza de sus (a utilizatorului sau a Modelului 3); fara ea, vederea implicita e randarea 3/4 Tesla
             c['image34'] = compositor_url(c) if not os.environ.get('CAR_OPTIONS') else None                 # vederea 3/4 (Model 3 / Y)
             c['live_age'] = (time.time() - LIVE_TS[c['id']]) if c['id'] in LIVE_TS else None
             out.append(c)
-        return dict(demo=False, cars=out, links=LINKS, mqtt=bool(LIVE), lan_open=not AUTH['pw'] and not DEMO_ONLY, currency=CURRENCY, app=app_brief())
-    return dict(demo=True, public_demo=DEMO_ONLY, cars=[dict(DEMO_CAR, live=DEMO_LIVE, live_age=0, image=car_image(DEMO_CAR), photo=bool(car_photo()), image34=compositor_url(DEMO_CAR), sleep=DEMO_SLEEP)],
+        return dict(demo=False, cars=out, links=LINKS, mqtt=bool(LIVE), lan_open=not AUTH['pw'] and not DEMO_ONLY, currency=CURRENCY, app=app_brief(), tessie=bool(globals().get('tessie_has_data') and tessie_has_data()))
+    return dict(demo=True, public_demo=DEMO_ONLY, cars=[dict(DEMO_CAR, live=DEMO_LIVE, live_age=0, image=car_image(DEMO_CAR), photo=bool(car_photo() or car_top(DEMO_CAR.get('model'), DEMO_CAR.get('color'))), image34=compositor_url(DEMO_CAR), sleep=DEMO_SLEEP)],
                 links=({} if DEMO_ONLY else LINKS), mqtt=False, db_error=(cl is None and not DEMO_ONLY), lan_open=not AUTH['pw'] and not DEMO_ONLY, currency=CURRENCY, app=app_brief())
 
 
@@ -3882,7 +3898,7 @@ class H(BaseHTTPRequestHandler):
             p = '/index.html'
         f = os.path.normpath(os.path.join(STATIC, p.lstrip('/')))
         if p == '/car.png':
-            f = car_photo() or os.path.join(STATIC, 'car-default.svg')
+            f = car_photo() or car_top((a or {}).get('m'), (a or {}).get('c')) or os.path.join(STATIC, 'car-default.svg')
         elif not (f == STATIC or f.startswith(STATIC + os.sep)):
             f = ''
         if not f or not os.path.isfile(f):
@@ -3890,7 +3906,7 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             return
         ct = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml',
-              '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png'}.get(os.path.splitext(f)[1], 'application/octet-stream')
+              '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.webp': 'image/webp'}.get(os.path.splitext(f)[1], 'application/octet-stream')
         b = open(f, 'rb').read()
         if p == '/car.png' and f.endswith('.svg'):
             b = car_default_svg(b, (a or {}).get('c'))

@@ -154,6 +154,7 @@ ${L.is_climate_on ? `<path class="heat ${hot}" d="M78 226q10-10 22 0t22 0"/><pat
 
 /* ---------- pages ---------- */
 function cur() { return S.cars.find((c) => c.id === car) || S.cars[0]; }
+const carPng = (c) => '/car.png?c=' + encodeURIComponent((c && c.color) || '') + '&m=' + encodeURIComponent((c && c.model) || '');          // poza de sus: a utilizatorului, altfel Model 3 revopsit / desenul generic, in culoarea masinii
 const STATE = { online: 'Online', asleep: 'Doarme', offline: 'Offline', charging: 'Se încarcă', driving: 'În mișcare', suspended: 'Suspendată', updating: 'Se actualizează' };
 
 function pageCar() {
@@ -192,7 +193,7 @@ function pageCar() {
   return `
 <div class="top row"><div><h1>${esc(c.name || L.display_name || 'Tesla')}</h1><small>${esc(c.marketing_name || ('Model ' + (c.model || '')))}${c.trim && !/^\d+$/.test(c.trim) ? ' · ' + esc(c.trim) : ''}${age ? ' · ' + age : ''}</small></div><div class="sp"></div>${S.demo ? '<span class="pill demo">DEMO</span>' : ''}<span class="pill ${pc}">${esc(st)}</span></div>
 <div class="card" style="margin-top:12px">
-  ${carViewSwitch(c, v34)}<div class="stage photo ${v34 ? 'v34' : c.image === '/car.png' ? 'top' : ''} ${charging ? 'chg' : ''}" id="stage">${v34 ? carView34(c, L) : c.image ? `<div class="cw ${carStateClass(L)}"><img src="${esc(c.image === '/car.png' && c.photo === false ? '/car.png?c=' + encodeURIComponent(c.color || '') : c.image)}" alt="">${c.image === '/car.png' ? openPhoto(L, (S.opens || {})[c.id]) : ''}</div>` : carSvg(L)}${!v34 && c.image === '/car.png' && c.tpms !== 'none' ? ['fl', 'fr', 'rl', 'rr'].map((k) => { const v = L['tpms_pressure_' + k]; return `<span class="tw ${k} ${v != null && v < 2.5 ? 'low' : ''}">${v == null ? '—' : nf(v, 1)}<small>bar</small></span>`; }).join('') : ''}</div>
+  ${carViewSwitch(c, v34)}<div class="stage photo ${v34 ? 'v34' : c.image === '/car.png' ? 'top' : ''} ${charging ? 'chg' : ''}" id="stage">${v34 ? carView34(c, L) : c.image ? `<div class="cw ${carStateClass(L)}"><img src="${esc(c.image === '/car.png' ? carPng(c) : c.image)}" alt="">${c.image === '/car.png' ? openPhoto(L, (S.opens || {})[c.id]) : ''}</div>` : carSvg(L)}${!v34 && c.image === '/car.png' && c.tpms !== 'none' ? ['fl', 'fr', 'rl', 'rr'].map((k) => { const v = L['tpms_pressure_' + k]; return `<span class="tw ${k} ${v != null && v < 2.5 ? 'low' : ''}">${v == null ? '—' : nf(v, 1)}<small>bar</small></span>`; }).join('') : ''}</div>
   ${c.tpms === 'none' ? `<div class="tpn">🛞 ${X('Fără senzori de presiune (TPMS indirect): mașina nu raportează presiunea anvelopelor.', 'No pressure sensors (indirect TPMS): the car does not report tyre pressure.')}</div>` : `<div class="tpr ${c.image === '/car.png' && !v34 ? 'hide' : ''}">${['fl', 'fr', 'rl', 'rr'].map((k, i) => { const v = L['tpms_pressure_' + k]; return `<span class="${v != null && v < 2.5 ? 'low' : ''}"><i>${['Față stânga', 'Față dreapta', 'Spate stânga', 'Spate dreapta'][i]}</i><b>${v == null ? '—' : nf(v, 1)}</b> bar</span>`; }).join('')}</div>`}
   <div class="row" style="align-items:flex-end;margin-top:4px"><div class="pct">${nf(soc)}<small>%</small></div><div class="rng"><b>${nf(range)}</b> km autonomie</div></div>
   <div class="bar"><div class="fill ${socCls(soc)} ${charging ? 'chg' : ''}" style="width:${Math.max(0, Math.min(100, soc || 0))}%"></div>${lim ? `<div class="lim" style="left:calc(${Math.min(100, lim)}% - 1px)"></div>` : ''}</div>
@@ -300,6 +301,7 @@ async function pageDrive(id) {
   ${driveCostCard(d)}
   ${driveEvents(dd.events)}
   ${tagsCard('drive', +id, d?.tags)}
+  <div id="tdrv"></div>
   <div class="toast" aria-live="polite" id="dtip">${X('Atinge un grafic ca să vezi punctul pe hartă.', 'Touch a chart to see the point on the map.')}</div>
   ${sec('Viteză (km/h)', line(pts.map((p) => [t(p), p[3]]), { color: '#7aa8ff', fx: (x) => new Date(x).toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' }) }))}
   ${sec('Putere (kW)', line(pts.map((p) => [t(p), p[4]]), { color: '#d9ba80', fx: (x) => new Date(x).toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' }) }))}
@@ -318,7 +320,7 @@ async function pageDrive(id) {
     map.fitBounds(pts.map((p) => [p[1], p[2]]), { padding: [24, 24] });
     driveHover(pts, map);
   }, 0);
-  setTimeout(() => { if (location.hash.startsWith('#/drive/' + id)) tagsBind('drive', +id); }, 0);
+  setTimeout(() => { if (location.hash.startsWith('#/drive/' + id)) { tagsBind('drive', +id); tessieDriveCard(id); } }, 0);
   return html;
 }
 
