@@ -1958,7 +1958,7 @@ def cfg_public():
         notify=dict(webhook_set=bool(NHOOK)), tessie=dict(token_set=bool(cget('tessie_token', 'TESSIE_TOKEN'))),
         telegram=dict(token_set=bool(cget('telegram_token', 'TELEGRAM_TOKEN')), chat=cget('telegram_chat', 'TELEGRAM_CHAT', '')),
         update=dict(check=update_cfg_on(), webhook=cget('update_webhook', 'UPDATE_WEBHOOK', ''), token_set=bool(cget('update_token', 'UPDATE_TOKEN', '')), private=APP_VERSION.endswith('-private')),
-        display=dict(app_url=APPURL, price_grid=cget('price_grid', 'PRICE_GRID', ''), currency=CURRENCY, ampwhere_country=cget('ampwhere_country', 'AMPWHERE_COUNTRY', 'auto'), tesla_renders=str(cget('tesla_renders', 'TESLA_RENDERS', '0')).lower() in ('1', 'true', 'yes', 'on'), ampwhere=str(cget('ampwhere', 'AMPWHERE', '1')).strip().lower() in ('1', 'true', 'yes', 'on'), ice_l100=cget('ice_l100', 'ICE_L100', ''), fuel_type=fuel_conf()['type'], fuel_price=cget('fuel_price', 'FUEL_PRICE', ''), fuel_country=fuel_conf()['country'], teslamate=LINKS['teslamate'], grafana=LINKS['grafana']),
+        display=dict(app_url=APPURL, price_grid=cget('price_grid', 'PRICE_GRID', ''), currency=CURRENCY, ampwhere_country=cget('ampwhere_country', 'AMPWHERE_COUNTRY', 'auto'), tesla_renders=str(cget('tesla_renders', 'TESLA_RENDERS', '1')).lower() in ('1', 'true', 'yes', 'on'), ampwhere=str(cget('ampwhere', 'AMPWHERE', '1')).strip().lower() in ('1', 'true', 'yes', 'on'), ice_l100=cget('ice_l100', 'ICE_L100', ''), fuel_type=fuel_conf()['type'], fuel_price=cget('fuel_price', 'FUEL_PRICE', ''), fuel_country=fuel_conf()['country'], teslamate=LINKS['teslamate'], grafana=LINKS['grafana']),
         inet=dict(on=str(cget('inet_on', 'INET_ON', '0')).lower() in ('1', 'true'), mode=cget('inet_mode', 'INET_MODE', 'duckdns'), own_domain=cget('inet_domain', 'INET_DOMAIN', ''), domain=cget('duck_domain', 'DUCK_DOMAIN', ''), token_set=bool(cget('duck_token', 'DUCK_TOKEN', '')),
                   staging=str(cget('inet_staging', 'INET_STAGING', '0')).lower() in ('1', 'true'), email=cget('inet_email', 'INET_EMAIL', ''), allowed_hosts=cget('allowed_hosts', 'ALLOWED_HOSTS', '')),
         access=dict(team=ACCESS['team'], aud=ACCESS['aud'], email=ACCESS['email'], roles=str(cget('roles', 'ROLES')), password_set=bool(AUTH['pw'])))
@@ -3139,11 +3139,42 @@ COMPOSITOR = {
 def compositor_url(c, view=None):
     """Poza 3/4 a masinii de la configuratorul Tesla (decupata pe masina), pentru Model 3 / Model Y; None pentru restul modelelor."""
     k = COMPOSITOR.get(str(c.get('model') or '').upper())
-    if not k or str(cget('tesla_renders', 'TESLA_RENDERS', '0')).lower() not in ('1', 'true', 'yes', 'on'):           # 0 = nu cerem imagini de la Tesla (implicit in versiunea publica)
+    if not k or str(cget('tesla_renders', 'TESLA_RENDERS', '1')).lower() not in ('1', 'true', 'yes', 'on'):           # 0 = nu cerem imagini de la Tesla (implicit in versiunea publica)
         return None
     paint = k['paints'].get(str(c.get('color') or ''), k['fallback'])
     return ('https://static-assets.tesla.com/configurator/compositor?context=design_studio_2&options=%s,%s,%s,%s&view=%s&model=%s&size=1920&bkba_opt=1&crop=1200,700,370,230&overlay=0&'
             % (k['base'], paint, k['wheel'], k['interior'], view or k['view'], k['model']))
+
+
+def car_photo():
+    """Fotografia de sus a masinii pusa de utilizator (/data/car.png, apoi static/car.png); None daca nu exista."""
+    for f in (os.path.join(DATA_DIR, 'car.png'), os.path.join(STATIC, 'car.png')):
+        if os.path.isfile(f):
+            return f
+    return None
+
+
+CAR_TINT = {'StealthGrey': '#6e757e', 'Quicksilver': '#aeb6bf', 'SolidBlack': '#1c1f23', 'MidnightSilver': '#5b6168', 'MidnightSilverMetallic': '#5b6168',
+            'DeepBlue': '#1f3f7a', 'DeepBlueMetallic': '#1f3f7a', 'RedMulticoat': '#b3202b', 'UltraRed': '#b3202b', 'SilverMetallic': '#aeb6bf', 'MidnightCherryRed': '#6b1230'}
+
+
+def car_default_svg(svg, color):
+    """Desenul generic al masinii (vedere de sus), colorat in culoarea masinii. Alb (PearlWhite / necunoscut) = desenul neschimbat."""
+    hx = CAR_TINT.get(str(color or ''))
+    if not hx:
+        return svg
+    r, g, b = (int(hx[i:i + 2], 16) for i in (1, 3, 5))
+    mix = lambda t, k: '#%02x%02x%02x' % tuple(round(v + (t - v) * k) for v in (r, g, b))
+    stops = (mix(0, .16), mix(255, .2), mix(0, .2))
+    gradient = re.search(rb'<linearGradient id="b".*?</linearGradient>', svg, re.S)
+    if not gradient:
+        return svg
+    n = [0]
+
+    def sub(m):
+        n[0] += 1
+        return b'stop-color="' + stops[min(n[0] - 1, 2)].encode() + b'"'
+    return svg[:gradient.start()] + re.sub(rb'stop-color="#[0-9a-fA-F]{3,6}"', sub, gradient.group(0)) + svg[gradient.end():]
 
 
 def car_image(c):
@@ -3192,11 +3223,12 @@ def api_state():
                 c['sleep'] = None
             c['live'] = lv
             c['image'] = car_image(c)
+            c['photo'] = bool(car_photo())                              # fotografie de sus pusa de utilizator; fara ea, vederea implicita e randarea 3/4 Tesla
             c['image34'] = compositor_url(c) if not os.environ.get('CAR_OPTIONS') else None                 # vederea 3/4 (Model 3 / Y)
             c['live_age'] = (time.time() - LIVE_TS[c['id']]) if c['id'] in LIVE_TS else None
             out.append(c)
         return dict(demo=False, cars=out, links=LINKS, mqtt=bool(LIVE), lan_open=not AUTH['pw'] and not DEMO_ONLY, currency=CURRENCY, app=app_brief())
-    return dict(demo=True, public_demo=DEMO_ONLY, cars=[dict(DEMO_CAR, live=DEMO_LIVE, live_age=0, image=car_image(DEMO_CAR), image34=compositor_url(DEMO_CAR), sleep=DEMO_SLEEP)],
+    return dict(demo=True, public_demo=DEMO_ONLY, cars=[dict(DEMO_CAR, live=DEMO_LIVE, live_age=0, image=car_image(DEMO_CAR), photo=bool(car_photo()), image34=compositor_url(DEMO_CAR), sleep=DEMO_SLEEP)],
                 links=({} if DEMO_ONLY else LINKS), mqtt=False, db_error=(cl is None and not DEMO_ONLY), lan_open=not AUTH['pw'] and not DEMO_ONLY, currency=CURRENCY, app=app_brief())
 
 
@@ -3558,7 +3590,7 @@ class H(BaseHTTPRequestHandler):
         except Exception as e:  # noqa
             log('GET %s: %s' % (p, e), flush=True)
             return self.send_json(dict(error='eroare internă'), 500)
-        return self.static(p)
+        return self.static(p, a)
 
     def do_POST(self):
         u = urlparse(self.path)
@@ -3845,13 +3877,12 @@ class H(BaseHTTPRequestHandler):
             with CLOCK:
                 group.discard(qu)
 
-    def static(self, p):
+    def static(self, p, a=None):
         if p in ('/', ''):
             p = '/index.html'
         f = os.path.normpath(os.path.join(STATIC, p.lstrip('/')))
         if p == '/car.png':
-            user = os.path.join(os.path.dirname(TOKENS), 'car.png')
-            f = user if os.path.isfile(user) else (f if os.path.isfile(f) else os.path.join(STATIC, 'car-default.svg'))
+            f = car_photo() or os.path.join(STATIC, 'car-default.svg')
         elif not (f == STATIC or f.startswith(STATIC + os.sep)):
             f = ''
         if not f or not os.path.isfile(f):
@@ -3861,6 +3892,8 @@ class H(BaseHTTPRequestHandler):
         ct = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml',
               '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png'}.get(os.path.splitext(f)[1], 'application/octet-stream')
         b = open(f, 'rb').read()
+        if p == '/car.png' and f.endswith('.svg'):
+            b = car_default_svg(b, (a or {}).get('c'))
         cc = 'no-cache'
         if os.path.basename(f) == 'index.html':          # scripturile/stilurile primesc ?v=<amprenta>: un telefon cu o copie veche in memorie nu le mai poate refolosi
             v = static_build()

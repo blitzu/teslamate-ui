@@ -3,6 +3,12 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.9.3 - 2026-11-03
+
+### Fixes
+- **The car pictures did not show on a new installation.** The public version had the Tesla render (the *3/4* view) switched off and the *Top* view drew nothing at all (the built-in drawing had no size of its own and collapsed to a few pixels). Now the *3/4* render of your car is **on by default** and is the view shown first when you have not put your own top photo in (`data/car.png`); *Top* shows the built-in drawing, **in the colour of your car** (white, grey, silver, black, blue, red). Settings -> Display -> *Tesla images* still turns the renders off (your browser loads them from Tesla's servers).
+- **On a phone, the side menu squeezed the car selector** when the menu was taller than the screen (several cars and many entries), so the *Dashboard* entry overlapped it. The selector and the buttons keep their size now and there is a gap before the list.
+
 ## 1.9.2 - 2026-11-03
 
 ### Fixes

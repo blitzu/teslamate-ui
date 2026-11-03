@@ -864,6 +864,40 @@ class TpmsDetectionTests(Isolated):
         self.assertNotIn(1, S.TPMS_NONE)
 
 
+class CarImageTests(Isolated):
+    def svg(self):
+        with open(os.path.join(S.STATIC, 'car-default.svg'), 'rb') as f:
+            return f.read()
+
+    def test_default_drawing_takes_the_paint_of_the_car(self):
+        import xml.dom.minidom as md
+        svg = self.svg()
+        self.assertEqual(S.car_default_svg(svg, 'PearlWhite'), svg)                         # alb / necunoscut: desenul neschimbat
+        self.assertEqual(S.car_default_svg(svg, None), svg)
+        self.assertEqual(S.car_default_svg(svg, 'CevaNou'), svg)
+        grey, black = S.car_default_svg(svg, 'StealthGrey'), S.car_default_svg(svg, 'SolidBlack')
+        for out in (grey, black):
+            self.assertNotEqual(out, svg)
+            md.parseString(out)                                                            # ramane XML valid
+            self.assertEqual(out.count(b'stop-color'), svg.count(b'stop-color'))
+        self.assertNotEqual(grey, black)
+        self.assertIn(b'url(#b)', grey)                                                    # caroseria foloseste tot gradientul retintat
+        self.assertEqual(grey.split(b'</linearGradient>', 1)[1], svg.split(b'</linearGradient>', 1)[1])        # restul desenului (roti, geamuri) nu se atinge
+
+    def test_a_photo_in_the_data_folder_wins_and_flags_the_car(self):
+        d = tempfile.mkdtemp()
+        old = S.DATA_DIR
+        S.DATA_DIR = d
+        try:
+            if os.path.isfile(os.path.join(S.STATIC, 'car.png')):
+                self.skipTest('instanta cu fotografie proprie in static/')
+            self.assertIsNone(S.car_photo())
+            open(os.path.join(d, 'car.png'), 'wb').write(b'x')
+            self.assertEqual(S.car_photo(), os.path.join(d, 'car.png'))
+        finally:
+            S.DATA_DIR = old
+
+
 class TelemetryLiveTests(Isolated):
     def setUp(self):
         S.LIVE.clear()
