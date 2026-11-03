@@ -3155,6 +3155,9 @@ def live_for(car_id):
     return dict(LIVE.get(car_id, {}))
 
 
+TPMS_NONE = {}                                    # masina -> cand am constatat ca nu a raportat NICIODATA presiuni (TPMS indirect, ex. Model 3 RWD 2026); reverificam din 6 in 6 ore
+
+
 def api_state():
     cl = has_cars()
     if cl:
@@ -3168,15 +3171,21 @@ def api_state():
                     lv = {k: v for k, v in p[0].items() if k != 'date'}
                     lv['since'] = p[0]['date']
                     lv['state'] = 'offline'
-            if lv.get('tpms_pressure_fl') is None:
+            if lv.get('tpms_pressure_fl') is None and time.time() - TPMS_NONE.get(c['id'], 0) > 6 * 3600:
                 try:
                     tp = q("select tpms_pressure_fl, tpms_pressure_fr, tpms_pressure_rl, tpms_pressure_rr, date from positions "
                            "where car_id=%s and tpms_pressure_fl is not null order by date desc limit 1", (c['id'],))
                     if tp:
                         lv = dict(lv, **{k: v for k, v in tp[0].items() if k.startswith('tpms_')})
                         lv['tpms_date'] = tp[0]['date']
+                        TPMS_NONE.pop(c['id'], None)
+                    elif lv.get('battery_level') is not None:
+                        TPMS_NONE[c['id']] = time.time()                       # masina raporteaza alte date, dar niciodata presiuni: nu mai scanam istoricul la fiecare cerere
                 except Exception:
                     pass
+            if any(lv.get('tpms_pressure_' + k) is not None for k in ('fl', 'fr', 'rl', 'rr')):
+                TPMS_NONE.pop(c['id'], None)
+            c['tpms'] = 'none' if c['id'] in TPMS_NONE and lv.get('tpms_pressure_fl') is None else 'ok'
             try:
                 c['sleep'] = sleep_info(c['id'])
             except Exception:

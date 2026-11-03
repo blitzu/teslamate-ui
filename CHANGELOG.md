@@ -3,6 +3,11 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.9.2 - 2026-11-03
+
+### Fixes
+- **Cars with indirect TPMS (for example the Model 3 RWD 2026) showed four dashes for the tyre pressures.** These cars do not report pressures at all. When a car reports other data but has never reported a pressure, the car page now says *No pressure sensors (indirect TPMS)* instead of four dashes and the figures next to the wheels on the picture are hidden. A car that reported pressures before keeps showing the last known ones. The app also stops searching the whole history for a pressure on every request for such a car (the result is remembered for 6 hours).
+
 ## 1.9.1 - 2026-11-03
 
 ### Fixes

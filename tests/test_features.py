@@ -816,6 +816,54 @@ class BleStateTests(Isolated):
         self.assertEqual(S.ble_state_sync(), 0)
 
 
+class TpmsDetectionTests(Isolated):
+    """Un Model 3 RWD 2026 are TPMS indirect: nu raporteaza presiuni, iar aplicatia trebuie sa stie asta (nu sa arate patru liniute)."""
+    def setUp(self):
+        self.keep = {k: getattr(S, k) for k in ('has_cars', 'cars', 'q', 'live_for', 'sleep_info', 'car_image', 'compositor_url')}
+        S.has_cars = lambda: True
+        S.cars = lambda: [dict(id=1, name='Tesla')]
+        S.sleep_info = lambda c: None
+        S.car_image = lambda c: None
+        S.compositor_url = lambda c: None
+        S.TPMS_NONE.clear()
+        self.queries = []
+        self.rows = []
+
+        def q(sql, args=()):
+            self.queries.append(sql)
+            return self.rows if 'tpms_pressure_fl is not null' in sql else []
+        S.q = q
+
+    def tearDown(self):
+        for k, v in self.keep.items():
+            setattr(S, k, v)
+
+    def test_a_car_that_never_reported_pressure_is_marked_and_not_rescanned(self):
+        S.live_for = lambda c: dict(battery_level=60, tpms_pressure_fl=None)
+        self.assertEqual(S.api_state()['cars'][0]['tpms'], 'none')
+        n = len(self.queries)
+        self.assertEqual(S.api_state()['cars'][0]['tpms'], 'none')
+        self.assertEqual(len(self.queries), n)                                    # a doua cerere nu mai scaneaza istoricul
+
+    def test_pressures_in_live_data_or_history_mean_there_are_sensors(self):
+        S.live_for = lambda c: dict(battery_level=60, tpms_pressure_fl=2.9, tpms_pressure_fr=2.9)
+        self.assertEqual(S.api_state()['cars'][0]['tpms'], 'ok')
+        S.live_for = lambda c: dict(battery_level=60, tpms_pressure_fl=None)
+        self.rows = [dict(tpms_pressure_fl=2.8, tpms_pressure_fr=2.8, tpms_pressure_rl=2.8, tpms_pressure_rr=2.8, date='2026-11-01T10:00:00')]
+        c = S.api_state()['cars'][0]
+        self.assertEqual((c['tpms'], c['live']['tpms_pressure_fl']), ('ok', 2.8))              # adormita: ultima valoare cunoscuta
+
+    def test_a_car_without_any_data_yet_is_not_judged(self):
+        S.live_for = lambda c: dict(tpms_pressure_fl=None)                                      # nicio alta valoare: poate abia a pornit
+        self.assertEqual(S.api_state()['cars'][0]['tpms'], 'ok')
+
+    def test_pressure_appearing_later_clears_the_mark(self):
+        S.TPMS_NONE[1] = time.time()
+        S.live_for = lambda c: dict(battery_level=60, tpms_pressure_fl=2.9)
+        self.assertEqual(S.api_state()['cars'][0]['tpms'], 'ok')
+        self.assertNotIn(1, S.TPMS_NONE)
+
+
 class TelemetryLiveTests(Isolated):
     def setUp(self):
         S.LIVE.clear()
