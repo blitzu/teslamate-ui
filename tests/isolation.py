@@ -28,4 +28,7 @@ class Isolated(unittest.TestCase):
         try:
             return super().run(result)
         finally:
+            timer = getattr(S, 'LA', {}).get('timer')                         # cronometrul Live Activity (4 s) pornit de un test nu are voie sa traga in testul urmator
+            if timer:
+                timer.cancel()
             restore(S, snap)

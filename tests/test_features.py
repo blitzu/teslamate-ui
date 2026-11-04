@@ -620,6 +620,8 @@ class NotificationClearTests(Isolated):
         S.LIVE.clear()
 
     def tearDown(self):
+        if S.LA.get('timer'):                                                               # cronometrul Live Activity (4 s) pornit de acest test nu are voie sa traga in testul urmator
+            S.LA['timer'].cancel()
         S.http, S.NHOOK, S.notify = self.orig[0], self.orig[1], self.orig[2]
         S.LA.clear()
         S.LA.update(self.orig[3])
@@ -641,6 +643,28 @@ class NotificationClearTests(Isolated):
         S.LIVE[1] = dict(doors_open=False, trunk_open=False)
         S.notify_check(1, 'trunk_open', True, False)
         self.assertEqual(self.clears(), ['tesla_door'])
+
+    def test_a_door_opened_on_a_locked_car_waits_for_the_car_to_unlock_itself(self):
+        old, old_la = S.DOOR_LOCK_GRACE, S.la_poke
+        S.DOOR_LOCK_GRACE, S.la_poke = 0.2, lambda car: None                                # fara fire de fundal ale Live Activity in testul asta
+        try:
+            st = S.nset_load()
+            if not st.get('door'):
+                self.skipTest('notificarile de usa sunt oprite')
+            S.LAST_SENT.pop('door_locked:doors_open', None)
+            S.LIVE[1] = dict(display_name='T', locked=True, doors_open=True, shift_state='P')
+            S.notify_check(1, 'doors_open', False, True)
+            S.LIVE[1]['locked'] = False                                                     # masina se descuie singura dupa cateva zeci de ms
+            time.sleep(0.5)
+            self.assertEqual([c for c in self.calls if c and c.get('kind') == 'door' and not c.get('clear')], [])      # fara alerta falsa
+            S.LAST_SENT.pop('door_locked:doors_open', None)
+            S.LIVE[1] = dict(display_name='T', locked=True, doors_open=True, shift_state='P')
+            S.notify_check(1, 'doors_open', False, True)
+            time.sleep(0.5)                                                                 # ramane incuiata: alerta adevarata, dar dupa pauza
+            alerts = [c for c in self.calls if c and c.get('kind') == 'door' and not c.get('clear')]
+            self.assertEqual(len(alerts), 1)
+        finally:
+            S.DOOR_LOCK_GRACE, S.la_poke = old, old_la
 
     def test_low_battery_is_tagged_ignores_zero_and_clears_on_recovery(self):
         S.LIVE[1] = dict(battery_level=0, plugged_in=False, shift_state='P')

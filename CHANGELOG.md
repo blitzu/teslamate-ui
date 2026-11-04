@@ -3,6 +3,11 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.10.1 - 2026-11-04
+
+### Fixes
+- **False "Opened while the car is locked" alert.** When you open a door of a locked car with the key, the phone or the handle, the car unlocks itself, but its lock state reaches the app a second or two after the door state, so the app alerted right away. The alert now waits 10 seconds and is sent only if the door is still open and the car is still locked; if the car unlocked itself, the normal "left open for more than 5 minutes" reminder applies instead.
+
 ## 1.10.0 - 2026-11-03
 
 ### New features

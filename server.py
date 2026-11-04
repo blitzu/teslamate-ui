@@ -2626,6 +2626,7 @@ def _once(kind, secs=90):
     return True
 
 
+DOOR_LOCK_GRACE = 10                                                 # secunde de asteptat inainte de alerta "deschis cat masina e blocata"
 OPEN_KEYS = {'doors_open': 'o ușă', 'trunk_open': 'portbagajul', 'frunk_open': 'frunk-ul', 'windows_open': 'un geam'}
 
 
@@ -2720,17 +2721,28 @@ def notify_check(car, key, old, new):
         notify('low_batt', '🪫 Baterie scăzută', '%s: baterie %s%% și nu e conectată la priză.' % (nm, new))
     elif key in OPEN_KEYS and new is True and st['door']:
         what = OPEN_KEYS[key]
-        if lv.get('locked') and key != 'windows_open' and _once('door_locked:' + key, 120):
-            notify('door', '⚠️ Deschis cât mașina e blocată', '%s: s-a deschis %s deși mașina e blocată.' % (nm, what))
-            return
 
         def later():
             l2 = LIVE.get(car, {})
             if l2.get(key) is True and l2.get('shift_state') in (None, 'P') and _once('door_left:' + key, 1800):
                 notify('door', '🚪 Lăsat deschis', '%s: %s e deschis(ă) de peste 5 minute.' % (nm, what))
-        t = threading.Timer(300, later)
-        t.daemon = True
-        t.start()
+
+        def arm_left_open():
+            t = threading.Timer(300, later)
+            t.daemon = True
+            t.start()
+        if lv.get('locked') and key != 'windows_open':
+            def still_locked():                       # mașina se descuie singură când deschizi ușa (cheie / telefon): starea "locked" ajunge cu o secundă-două după ușă, deci nu alertam pe loc
+                l2 = LIVE.get(car, {})
+                if l2.get(key) is True and l2.get('locked') and _once('door_locked:' + key, 120):
+                    notify('door', '⚠️ Deschis cât mașina e blocată', '%s: s-a deschis %s deși mașina e blocată.' % (nm, what))
+                elif l2.get(key) is True:
+                    arm_left_open()                   # s-a descuiat: regula obișnuită "lăsat deschis"
+            t = threading.Timer(DOOR_LOCK_GRACE, still_locked)
+            t.daemon = True
+            t.start()
+            return
+        arm_left_open()
 
 
 
