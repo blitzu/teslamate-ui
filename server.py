@@ -457,6 +457,10 @@ def decorate(rows):
             if pl and kwh:
                 r['cost_place'], r['place_name'], r['place_price'] = round(float(kwh) * pl['price'], 2), pl['name'], pl['price']
         r['cost_eff'] = e['cost'] if e.get('cost') is not None else (r['cost_real'] if r.get('cost_real') is not None else (r['cost_place'] if r['cost_place'] is not None else r.get('cost')))
+        r['credit'] = CREDITS.adjust(r, e) if CREDITS else None          # credit cumparat la furnizor (bani sau km): costul real in loc de pretul de lista
+        if r['credit']:
+            r['cost_list'], r['cost_eff'] = r['credit']['list'], r['credit']['cost']
+        r['credit_rate'] = CREDITS.info(r) if CREDITS else None          # pachetul valabil (chiar si cu cost scris de mana): pentru pretul real afisat langa tarife
     return rows
 
 
@@ -790,7 +794,7 @@ def _charges_rows(car, limit, offset, cid=None, lo=None, hi=None, ids=None):
         par.append(list(ids))
     return q(f"""select cp.id, cp.start_date, cp.end_date, cp.charge_energy_added, cp.charge_energy_used, cp.duration_min, cp.cost, g.cost_per_unit as tariff,
         coalesce(pp.latitude, a.latitude) as lat, coalesce(pp.longitude, a.longitude) as lon,
-        cp.start_battery_level as start_soc, cp.end_battery_level as end_soc, cp.outside_temp_avg,
+        cp.start_battery_level as start_soc, cp.end_battery_level as end_soc, cp.outside_temp_avg, cp.start_rated_range_km, cp.end_rated_range_km,
         (select max(charger_power) from charges ch where ch.charging_process_id=cp.id) as power_max,
         coalesce((select bool_or(fast_charger_present) from charges ch where ch.charging_process_id=cp.id), false) as dc,
         {NAME_A} as name
@@ -3288,6 +3292,7 @@ PUBLIC_ROUTES = []               # fn(handler, cale, parametri) -> (cod, corp, c
 CTX = threading.local()          # CTX.actor = cine a dat comanda (user:rol / rule:id / system)
 OWN = None                       # baza de date proprie (features.store.Store), setata de features.load()
 PLACES = None                    # features.places: match(lat, lon) -> loc salvat cu pret pe kWh
+CREDITS = None                   # features.credits: adjust(rand, date_salvate) -> costul real dupa creditul cumparat la furnizor (sau None)
 INET = None                       # features.inet: HTTPS direct din internet (Let's Encrypt + DuckDNS)
 INET_TLS = None                   # contextul TLS al listenerului public (pus de features.inet); None = HTTP simplu
 STATION_LINK = None                # features.stations: asociaza o incarcare cu statia ei (doar daca exista o sursa de statii)

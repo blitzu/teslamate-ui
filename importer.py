@@ -213,6 +213,17 @@ def hav_m(a, b, c, d):
     return 12742000 * math.asin(min(1, math.sqrt(x)))
 
 
+def derive_eff(drives):
+    """kWh pe km de autonomie nominala, din cursele Tessie (energia consumata / autonomia consumata); None daca sunt prea putine date sau iese ceva nerealist."""
+    e = r = 0.0
+    for d in drives:
+        a, b = d.get('energy_used') or 0, d.get('rated_range_used') or 0
+        if a > 0.3 and b > 3 and (d.get('odometer_distance') or 0) > 3:
+            e, r = e + a, r + b
+    v = e / r if r > 30 else None
+    return round(v, 3) if v and 0.08 <= v <= 0.30 else None
+
+
 def pick_factor(measured, target):
     """Alege 1 sau 1.609344 (mile/h -> km/h) dupa care se apropie mai mult de valoarea cunoscuta (km)."""
     if not measured or not target:
@@ -228,6 +239,7 @@ class Ctx:
         self.extra = dict(drives=[], charges=[])                 # date pentru baza proprie (autopilot, putere estimata, locuri salvate...), scrise dupa commit
         cur.execute('select efficiency from cars where id=%s', (car_id,))
         r = cur.fetchone()
+        self.eff_missing = not (r and r[0])                    # TeslaMate completeaza eficienta doar dupa incarcari inregistrate live: pe o instanta noua e goala si aplicatia nu poate calcula consumul
         self.eff = float(r[0]) if r and r[0] else 0.15
         cur.execute("""select avg(ideal_battery_range_km*100.0/battery_level) from positions where car_id=%s and battery_level>=20 and ideal_battery_range_km is not null""", (car_id,))
         r = cur.fetchone()
@@ -495,6 +507,8 @@ def run(conn, token, vin, car, progress, cutoff=None, dry_run=False, mode='gaps'
     progress.update(phase='Citesc staționările, starea bateriei și alertele…')
     extras = fetch_extras(token, vin, cut if mode == 'older' else None)
     ctx = Ctx(cur, car)
+    if ctx.eff_missing:
+        ctx.eff = derive_eff(drives) or ctx.eff                                       # eficienta masinii din datele Tessie: consumul iese ca la Tessie
     progress.update(total=len(drives) + len(charges))
     npts = 0
     clean_cache(older_than=CACHE_TTL)
@@ -504,6 +518,8 @@ def run(conn, token, vin, car, progress, cutoff=None, dry_run=False, mode='gaps'
     for i, (c, pts) in enumerate(prefetch(token, vin, charges, kind='charge')):
         progress.update(phase='Încărcări %d/%d' % (i + 1, len(charges)), done=len(drives) + i)
         import_charge(ctx, c, pts)
+    if ctx.eff_missing:
+        cur.execute('update cars set efficiency=%s where id=%s and efficiency is null', (ctx.eff, car))        # fara ea, aplicatia nu arata consumul (autonomie consumata x eficienta)
     res = dict(drives=len(drives), charges=len(charges), positions=npts, addresses=len(ctx.ledger['addresses']), skipped=ctx.skipped, dry_run=dry_run, mode=mode,
                idles=len(extras['idles']), health=len(extras['health']) + sum(1 for x in ctx.extra['charges'] if x.get('max_range') and x.get('capacity')), alerts=len(extras['alerts']),
                curve_charges=sum(1 for x in ctx.extra['charges'] if x['curve_points']), power_estimated=sum(1 for x in ctx.extra['drives'] if x.get('est_power_max') is not None))

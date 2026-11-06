@@ -192,6 +192,7 @@ function pageCar() {
   ].join('');
   return `
 <div class="top row"><div><h1>${esc(c.name || L.display_name || 'Tesla')}</h1><small>${esc(c.marketing_name || ('Model ' + (c.model || '')))}${c.trim && !/^\d+$/.test(c.trim) ? ' · ' + esc(c.trim) : ''}${age ? ' · ' + age : ''}</small></div><div class="sp"></div>${S.demo ? '<span class="pill demo">DEMO</span>' : ''}<span class="pill ${pc}">${esc(st)}</span></div>
+${driving && typeof liveDriveBanner === 'function' ? liveDriveBanner(L) : ''}
 <div class="card" style="margin-top:12px">
   ${carViewSwitch(c, v34)}<div class="stage photo ${v34 ? 'v34' : c.image === '/car.png' ? 'top' : ''} ${charging ? 'chg' : ''}" id="stage">${v34 ? carView34(c, L) : c.image ? `<div class="cw ${carStateClass(L)}"><img src="${esc(c.image === '/car.png' ? carPng(c) : c.image)}" alt="">${c.image === '/car.png' ? openPhoto(L, (S.opens || {})[c.id]) : ''}</div>` : carSvg(L)}${!v34 && c.image === '/car.png' && c.tpms !== 'none' ? ['fl', 'fr', 'rl', 'rr'].map((k) => { const v = L['tpms_pressure_' + k]; return `<span class="tw ${k} ${v != null && v < 2.5 ? 'low' : ''}">${v == null ? '—' : nf(v, 1)}<small>bar</small></span>`; }).join('') : ''}</div>
   ${c.tpms === 'none' ? `<div class="tpn">🛞 ${X('Fără senzori de presiune (TPMS indirect): mașina nu raportează presiunea anvelopelor.', 'No pressure sensors (indirect TPMS): the car does not report tyre pressure.')}</div>` : `<div class="tpr ${c.image === '/car.png' && !v34 ? 'hide' : ''}">${['fl', 'fr', 'rl', 'rr'].map((k, i) => { const v = L['tpms_pressure_' + k]; return `<span class="${v != null && v < 2.5 ? 'low' : ''}"><i>${['Față stânga', 'Față dreapta', 'Spate stânga', 'Spate dreapta'][i]}</i><b>${v == null ? '—' : nf(v, 1)}</b> bar</span>`; }).join('')}</div>`}
@@ -202,7 +203,7 @@ function pageCar() {
   ${sleepBlock(c)}
 </div>
 <h2>Comenzi</h2><div id="cmds"></div>
-<h2>Locație</h2><div id="map"></div>
+${driving && typeof liveDriveMap === 'function' ? liveDriveMap() : '<h2>Locație</h2><div id="map"></div>'}
 <h2>Detalii</h2><div class="grid">${stats}</div>
 <h2>Ultima cursă · ultima încărcare</h2><div id="last"></div>
 <div class="links"><a href="#/climate">🌡 ${X('Clima', 'Climate')} ›</a></div>
@@ -224,6 +225,7 @@ function sleepBlock(c) {
 
 function drawMap(el, L) {
   if (!window.L || !el) return;
+  if (typeof ldMount === 'function' && ldMount(el, L.latitude, L.longitude)) return;          // cursa in desfasurare: harta cu traseul si destinatia (f_livedrive.js)
   if (map) { map.remove(); map = null; }
   const lat = L.latitude ?? 44.4268, lon = L.longitude ?? 26.1025;
   map = window.L.map(el, { zoomControl: false, attributionControl: true }).setView([lat, lon], 14);

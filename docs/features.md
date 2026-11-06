@@ -34,6 +34,10 @@ The **sleep guard** attributes each awake period to Sentry, a command (app/rule/
 - **Charging stats** (`#/chstats`): AC versus DC energy and share, average/peak speed per type, the average DC speed by battery level, the level where you start and stop charging, and kWh per month, for the chosen period.
 - **Google Maps links** for the location of a charge and for the start and arrival of a drive.
 
+## Drive in progress (`#/live` and the Car page)
+
+While the car is moving, the Car page's map shows the route driven so far, the car (an arrow pointing the way it heads) and, when the car has a navigation route, the destination as a pin; under it the distance, duration, battery, energy used, average Wh/km and an estimated cost. A card on top shows the destination, the distance left and the arrival time, and opens `#/live`, which adds battery and speed charts. Everything refreshes every 5 seconds. The destination, distance left, arrival time and charge on arrival come from TeslaMate's `active_route` (only published while a navigation route is set); the line from the car to the pin is straight, because the exact route is not published.
+
 ## Trips (`#/trips`)
 
 Drives grouped into trips by the gap between them (1–12 h, configurable), with distance, energy, charging stops and cost, and the same map as the drive page.

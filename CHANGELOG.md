@@ -3,6 +3,16 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.12.0 - 2026-11-06
+
+### New features
+- **Prepaid credit.** On the Charges page, "Prepaid credit" lets you record what you bought at a provider: money credit ("paid 1000, received 2000" at iHunt or any other network) or kilometres of range ("100 for 1000 km" for Tesla Supercharging). From then on, every charge at that provider gets its **real cost** by itself: list price x paid/credit for money credit, kilometres of range added x price per km for km credit. The cost shows in the charge list, in the totals, the statistics, the reports and the drive costs, with a "credit" mark and the list price. A pack can apply from a date (with several packs the latest one valid on the charge date is used), and the page shows how much of each pack is used, what is left and how much you saved. An amount you typed on a charge stays untouched, because it is the real amount; a cost that came from the tariff of the chosen station is a list price, so the credit applies to it. Next to the tariffs of the stations you find, the real price per kWh with your credit is shown.
+
+## 1.11.0 - 2026-11-04
+
+### New features
+- **Drive in progress.** While the car is moving, the Car page shows a card "DRIVE IN PROGRESS - To Home, 45 km/h, 1.7 km left, arrival 19:45", and its map becomes the live drive map right there: the route driven so far, the **car on the map** (an arrow pointing the way it heads), the **destination of the navigation as a pin**, and under it the distance, duration, battery, energy used so far, average Wh/km and an estimated electric cost. The card opens a detail page that adds battery and speed charts. Everything refreshes every 5 seconds, and the map is not reloaded when the page redraws. The destination, the distance left, the arrival time and the charge on arrival come from the car's active navigation route (TeslaMate publishes them while a route is set); without navigation you still get the route, the car and the figures. The line from the car to the pin is straight, because the exact route is not published.
+
 ## 1.10.1 - 2026-11-04
 
 ### Fixes

@@ -43,13 +43,25 @@ On a charge, **🔎 Find the station** looks for the charging station at the pla
   available (so, right after you update), the charges you already have are linked in the background, once**; charges at home or without a station nearby stay as they are, and your costs are never touched.
   An administrator can redo it with `POST /api/stations/autolink` (add `"force": true` to also redo the ones already linked).
 
+## Prepaid credit (Charges → 💳 Prepaid credit)
+
+If you bought credit from a charging network below its list price, record it and the real cost of every charge there is worked out for you.
+
+* **Money credit** – "I paid 1000, I received 2000" (the app's currency). A charge at that provider costs its list price × paid ÷ credit, here 50 % of the price shown.
+* **Kilometres of range** – "I paid 100 for 1000 km" (Tesla Supercharging packs). A charge costs the kilometres of rated range it added × paid ÷ km, here 0.10 per km. It needs the rated range at the start and the end of the charge, which TeslaMate records.
+* A pack applies to every charge of its **provider** (the one shown on the charge); optionally *from a date* on. With several packs the latest one valid on the charge date is used.
+* **What it changes:** the cost of a charge that has no cost typed by you, and the cost that came from the tariff of a station you chose (that is a list price). A **cost you typed stays exactly as you typed it**, because it is the real amount.
+* The real cost is used everywhere (lists, totals, statistics, reports, the cost of drives) and is marked "credit" with the list price. Next to the tariffs of the stations you look up, the real price per kWh with your credit is shown.
+* The page shows, for each pack, how much of it the charges have used, what is left (or by how much it was exceeded) and how much you saved against the list price.
+* Nothing is written to TeslaMate; the packs are kept in the app's own database.
+
 ## Cost of each drive
 
 Every drive (in the list and on the drive page) shows what it cost, the equivalent in petrol litres and, if you set the petrol car's consumption, what it would have cost with a petrol car.
 
 * **Oldest energy first (FIFO).** The battery is a queue of layers: every charge adds its kWh at that charge's price (its cost ÷ kWh added) and a drive uses kWh starting from the oldest layer. The cost of a drive is the sum of the prices of the kWh it used, so the money of a charge ends up on the drives that used its energy and, once that energy is gone, later drives do not carry it. Before each charge the battery is brought to the energy given by the state of charge at the start (what the car lost while parked is taken from the oldest layer).
 * **Energy from before your first charge in TeslaMate came from the factory and is free.**
-* The charge costs are the same ones used everywhere else (manual > real grid cost > saved place > TeslaMate).
+* The charge costs are the same ones used everywhere else (manual > real grid cost > saved place > TeslaMate, then your prepaid credit is applied).
 * **Petrol equivalent (l/100 km)** = the electric cost per 100 km ÷ the price of a litre that day. It only needs the fuel price. **With a petrol car** = km ÷ 100 × the consumption you set × the fuel price of the day, and *Saved* is the difference. Both use the same settings as the Stats comparison below.
 * **A `~` in front of the number** means part of the energy comes from charges that have no price: they are counted at the average price of your priced charges, so the drive is an estimate. Enter the cost of those charges and it becomes exact.
 * Drives need a usable energy figure (TeslaMate's range difference × efficiency) and at least one charge with a price; otherwise no cost is shown.

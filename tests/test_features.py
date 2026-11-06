@@ -1369,8 +1369,8 @@ class ImporterParallelTests(Isolated):
 
 class FakePg:
     """Cursor fals pentru importer: tine minte ce se scrie si raspunde ca PostgreSQL la cele cateva interogari ale importului."""
-    def __init__(self):
-        self.sql, self.n, self.last = [], 100, ''
+    def __init__(self, eff=0.15):
+        self.sql, self.n, self.last, self.eff = [], 100, '', eff
 
     def execute(self, sql, params=None):
         self.sql.append((' '.join(sql.split()), params))
@@ -1378,8 +1378,8 @@ class FakePg:
 
     def fetchone(self):
         q = self.last
-        if 'efficiency' in q:
-            return (0.15,)
+        if q.startswith('select efficiency'):
+            return (self.eff,)
         if 'avg(ideal_battery_range_km' in q:
             return (480.0,)
         if 'insert into addresses' in q:
@@ -1566,6 +1566,34 @@ class ImporterV2Tests(Isolated):
             events.clear()
             res = IM.run(Conn(FakePg()), 't', 'VIN', 1, {}, sink=lambda d: 1 / 0)
             self.assertIn('extras_error', res)                                               # o eroare la datele proprii nu strica importul TeslaMate (deja salvat)
+        finally:
+            IM.LEDGER, IM.CACHE, IM.plan, IM.fetch_extras, IM.tget = old
+
+    def test_a_fresh_teslamate_gets_its_efficiency_from_the_tessie_drives(self):
+        # TeslaMate nou (eficienta goala): fara ea aplicatia nu arata consumul. Importul o deduce din energie / autonomie consumata si o scrie, o singura data
+        self.assertEqual(IM.derive_eff([dict(energy_used=6.0, rated_range_used=40.0, odometer_distance=30), dict(energy_used=3.0, rated_range_used=24.0, odometer_distance=18)]), 0.141)
+        self.assertIsNone(IM.derive_eff([dict(energy_used=0.6, rated_range_used=3.0, odometer_distance=4)]))              # prea putine date
+        self.assertIsNone(IM.derive_eff([dict(energy_used=40.0, rated_range_used=40.0, odometer_distance=30)]))           # nerealist (1 kWh/km)
+        ledger_dir = tempfile.mkdtemp()
+        old = (IM.LEDGER, IM.CACHE, IM.plan, IM.fetch_extras, IM.tget)
+        IM.LEDGER, IM.CACHE = os.path.join(ledger_dir, 'l.json'), os.path.join(ledger_dir, 'cache')
+        big = dict(self.drive(), energy_used=6.0, rated_range_used=40.0, odometer_distance=30.0)
+        IM.plan = lambda cur, token, vin, car, mode, cutoff=None: (0, [], [], [big], [])
+        IM.fetch_extras = lambda token, vin, until=None: dict(idles=[], health=[], alerts=[])
+        IM.tget = lambda token, path, params=None, timeout=90: dict(results=self.points())
+
+        class Conn:
+            def __init__(self, pg): self.pg = pg
+            def cursor(self): return self.pg
+            def commit(self): pass
+            def rollback(self): pass
+        try:
+            empty, filled = FakePg(eff=None), FakePg(eff=0.133)
+            IM.run(Conn(empty), 't', 'VIN', 1, {})
+            IM.run(Conn(filled), 't', 'VIN', 1, {})
+            up = [p for q, p in empty.sql if q.startswith('update cars set efficiency')]
+            self.assertEqual(up, [(0.15, 1)])                                                                            # 6 kWh / 40 km
+            self.assertEqual([q for q, p in filled.sql if q.startswith('update cars set efficiency')], [])                # una deja setata nu se atinge
         finally:
             IM.LEDGER, IM.CACHE, IM.plan, IM.fetch_extras, IM.tget = old
 
@@ -1921,6 +1949,107 @@ class ChargeCostPromptTests(Isolated):
         S.notify_check(1, 'charging_state', 'Starting', 'Charging')
         S.notify_check(1, 'charging_state', 'Charging', 'Stopped')
         self.assertEqual(starts, [1, 1])
+
+
+class CreditsTests(Isolated):
+    def setUp(self):
+        super().setUp()
+        S.OWN.run('delete from credit_packs')
+        self.save = S.route_lookup('POST', '/api/credits/save')[0]
+        S.meta_update(987655, dict(cost=None, station=''))
+
+    def tearDown(self):
+        S.OWN.run('delete from credit_packs')
+        S.meta_update(987655, dict(cost=None, station=''))
+        super().tearDown()
+
+    def row(self, **k):
+        return dict(dict(id=987655, name='Ionity Brasov', start_date='2026-11-02T10:00:00', charge_energy_added=40.0, charge_energy_used=44.0, cost=90.0, cost_real=None, lat=None, lon=None,
+                         start_rated_range_km=100.0, end_rated_range_km=250.0), **k)
+
+    def test_parse_validates_and_computes_rates(self):
+        from features import credits as CR
+        p = CR.parse(dict(provider=' iHunt <b>', kind='money', paid='1000', amount='2000', since='2026-10-01'))
+        self.assertEqual((p['provider'], p['kind'], CR.rate(dict(p))), ('iHunt b', 'money', 0.5))
+        self.assertEqual(CR.rate(CR.parse(dict(provider='Tesla Supercharger', kind='km', paid='100', amount='1000'))), 0.1)
+        for bad in (dict(provider='', paid=1, amount=1), dict(provider='x', paid=0, amount=1), dict(provider='x', paid=1, amount='a'), dict(provider='x', paid=1, amount=1, since='ieri')):
+            with self.assertRaises(ValueError):
+                CR.parse(bad)
+
+    def test_the_latest_pack_valid_on_the_charge_date_wins(self):
+        from features import credits as CR
+        packs = [dict(id=1, provider='iHunt', kind='money', paid=1000, amount=2000, since=''), dict(id=2, provider='iHunt', kind='money', paid=900, amount=1000, since='2026-11-01'),
+                 dict(id=3, provider='Altul', kind='money', paid=1, amount=1, since='')]
+        self.assertEqual(CR.pick(packs, 'ihunt', '2026-10-20')['id'], 1)
+        self.assertEqual(CR.pick(packs, 'iHunt', '2026-11-02T10:00:00')['id'], 2)
+        self.assertIsNone(CR.pick(packs, 'Nimeni', '2026-11-02'))
+
+    def test_money_credit_turns_the_list_cost_into_the_real_cost(self):
+        self.save(None, dict(provider='Ionity', kind='money', paid='1000', amount='2000'))
+        r = S.decorate([self.row()])[0]                                       # 90 lei la tariful TeslaMate, jumatate dupa credit
+        self.assertEqual((r['cost_list'], r['cost_eff'], r['credit']['kind']), (90.0, 45.0, 'money'))
+        self.assertEqual(S.decorate([self.row(name='Alta statie')])[0]['cost_eff'], 90.0)          # alt furnizor: neatins
+
+    def test_km_credit_uses_the_range_added(self):
+        self.save(None, dict(provider='Tesla Supercharger', kind='km', paid='100', amount='1000'))
+        r = S.decorate([self.row(name='Supercharger Sibiu')])[0]              # 150 km de autonomie x 0,10 lei
+        self.assertEqual((r['cost_eff'], r['credit']['km']), (15.0, 150.0))
+        r = S.decorate([self.row(name='Supercharger Sibiu', start_rated_range_km=None)])[0]       # fara autonomie nu se poate calcula: ramane costul de pana atunci
+        self.assertEqual((r['cost_eff'], r['credit']), (90.0, None))
+
+    def test_a_cost_you_typed_stays_but_a_tariff_cost_gets_the_credit(self):
+        self.save(None, dict(provider='Ionity', kind='money', paid='1000', amount='2000'))
+        S.meta_update(987655, dict(cost='60'))
+        r = S.decorate([self.row()])[0]
+        self.assertEqual((r['cost_eff'], r['credit']), (60.0, None))          # suma scrisa de mana e suma reala
+        st = dict(name='Ionity', provider='Ionity', tariffs=[dict(kind='dc', price=2.0)], sel=0)
+        S.meta_update(987655, dict(cost='88', station=st))                    # 44 kWh x 2,0 = 88: costul vine din tarif
+        r = S.decorate([self.row()])[0]
+        self.assertEqual((r['cost_list'], r['cost_eff']), (88.0, 44.0))
+        S.meta_update(987655, dict(cost='70', station=st))                    # alta suma decat tariful: scrisa de tine
+        self.assertEqual(S.decorate([self.row()])[0]['cost_eff'], 70.0)
+
+    def test_the_listing_shows_what_is_left_of_each_pack(self):
+        self.save(None, dict(provider='Ionity', kind='money', paid='1000', amount='2000'))
+        fn = S.route_lookup('GET', '/api/credits')[0]
+        j = fn(None, dict(car=1))
+        self.assertEqual((len(j['packs']), j['packs'][0]['rate']), (1, 0.5))
+        self.assertIn('usage', j['packs'][0])
+
+
+class LiveDriveTests(Isolated):
+    def lv(self, **k):
+        return dict(dict(state='driving', shift_state='D', latitude=44.40, longitude=26.10, heading=135, speed=45, battery_level=60, odometer=5012.0, ideal_battery_range_km=290.0, power=18), **k)
+
+    def test_only_a_moving_car_counts_as_a_drive_in_progress(self):
+        from features import livedrive as LD
+        self.assertTrue(LD.driving(dict(state='driving')))
+        self.assertTrue(LD.driving(dict(state='online', shift_state='R')))
+        self.assertFalse(LD.driving(dict(state='online', shift_state='P')))
+        self.assertFalse(LD.driving({}))
+
+    def test_the_navigation_destination_gives_name_distance_arrival_and_charge(self):
+        from features import livedrive as LD
+        r = LD.route_info(self.lv(active_route=dict(destination='Home', energy_at_arrival=52, miles_to_arrival=1.0, minutes_to_arrival=3.2, traffic_minutes_delay=2,
+                                                    location=dict(latitude=44.41, longitude=26.11), error=None)), 1000)
+        self.assertEqual((r['name'], r['lat'], r['lon'], r['min'], r['eta'], r['soc_arrival'], r['delay']), ('Home', 44.41, 26.11, 3.2, 1192, 52, 2))
+        self.assertEqual(r['km'], 1.6)                                                     # TeslaMate publica mile
+        self.assertIsNone(LD.route_info(self.lv(active_route=dict(error='no route')), 1000))   # fara navigatie activa
+        self.assertIsNone(LD.route_info(self.lv(), 1000))
+        far = LD.route_info(self.lv(active_route=dict(destination='X', location=dict(latitude=44.50, longitude=26.10))), 1000)   # fara distanta de la masina: in linie dreapta
+        self.assertAlmostEqual(far['km'], 11.1, delta=0.2)
+        self.assertIsNone(far['eta'])
+
+    def test_distance_duration_energy_and_cost_so_far(self):
+        from features import livedrive as LD
+        drv = dict(id=9, start_date='2026-11-04T17:00:00', start_km=5000.0, start_ideal_range_km=300.0)
+        now = LD.started_ts('2026-11-04T17:44:00')
+        out = LD.build(self.lv(), drv, [[1, 44.4, 26.1, 40, 10, 60, 80]], now, 0.14, 1.2)
+        self.assertEqual((out['active'], out['min'], out['km'], out['kwh'], out['wh_km'], out['cost'], out['drive_id']), (True, 44, 12.0, 1.4, 117, 1.68, 9))
+        out = LD.build(self.lv(), None, [], now, 0.14, None)                                # cursa abia a inceput: inca nu e in baza
+        self.assertEqual((out['active'], out['drive_id'], out['lat'], 'km' in out), (True, None, 44.40, False))
+        out = LD.build(self.lv(ideal_battery_range_km=305.0), drv, [], now, 0.14, 1.2)       # autonomia a crescut (recuperare): niciodata energie negativa
+        self.assertEqual(out['kwh'], 0.0)
 
 
 if __name__ == '__main__':

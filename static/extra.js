@@ -1102,6 +1102,7 @@ async function pinPost(path, body) {
 }
 function chCost(c) {
   const cu = esc(CU()), tmc = c.cost != null ? nf(c.cost, 2) : '—';
+  if (c.credit) return `<span title="${X('Cost real după creditul cumpărat · preț de listă: ', 'Real cost after prepaid credit · list price: ')}${c.credit.list != null ? nf(c.credit.list, 2) : '—'}"><b>${nf(c.cost_eff, 2)}</b> ${cu} <small style="color:var(--mut)">(${X('credit', 'credit')}${c.credit.list != null ? ' · ' + X('listă ', 'list ') + nf(c.credit.list, 2) : ''})</small></span>`;
   if (c.cost_manual != null) return `<span title="${X('Cost introdus manual · TeslaMate: ', 'Manually entered cost · TeslaMate: ')}${tmc}"><b>${nf(c.cost_manual, 2)}</b> ${cu} <small style="color:var(--mut)">(${X('manual', 'manual')})</small></span>`;
   if (c.cost_manual == null && c.cost_real == null && c.cost_place != null) return `<span title="${X('Preț salvat pentru ', 'Saved price for ')}${esc(c.place_name)}: ${nf(c.place_price, 3)} ${cu}/kWh · TeslaMate: ${tmc}"><b>${nf(c.cost_place, 2)}</b> ${cu} <small style="color:var(--mut)">(${nf(c.place_price, 2)}/kWh)</small></span>`;
   if (c.cost_real != null) return `<span title="${X('Cost real estimat (doar energia din rețea) · TeslaMate: ', 'Estimated real cost (grid energy only) · TeslaMate: ')}${tmc}"><b>${nf(c.cost_real, 2)}</b> ${cu} <small style="color:var(--mut)">(TM ${tmc})</small></span>`;
@@ -1124,7 +1125,7 @@ async function pageCharges() {
   const head = `<div class="top"><h1>${tr('Încărcări')}</h1></div>`;
   if (!chRows.length) return `${head}<div id="chfilt">${lfBar('charges')}</div><div class="empty">${X('Nimic în perioada aleasă.', 'Nothing in the chosen period.')}</div>${chargeCtlShell()}`;
   if (chF.p !== null && !chRows.some((r) => (r.provider || '') === chF.p)) chF.p = null;
-  return `${head}<div class="links" style="margin:0 2px"><a href="#/chstats">📊 ${X('Statistici încărcări', 'Charging stats')}</a><a href="#" id="goctl">${X('Control încărcare ↓', 'Charging control ↓')}</a></div><div id="chfilt"></div><div id="chlist"></div>${chargeCtlShell()}`;
+  return `${head}<div class="links" style="margin:0 2px"><a href="#/chstats">📊 ${X('Statistici încărcări', 'Charging stats')}</a><a href="#/credits">💳 ${X('Credit cumpărat', 'Prepaid credit')}</a><a href="#" id="goctl">${X('Control încărcare ↓', 'Charging control ↓')}</a></div><div id="chfilt"></div><div id="chlist"></div>${chargeCtlShell()}`;
 }
 function chFiltered() {
   return chRows.filter((r) => chF.p === null || (r.provider || '') === chF.p);
@@ -1168,6 +1169,7 @@ async function afterChargeEdit() {
       <label>${X('Furnizor', 'Provider')}<select id="ce_prov"><option value="">${X('Automat', 'Automatic')}${c.provider && !c.provider_set ? ' (' + esc(c.provider) + ')' : ''}</option>${provs.map((p) => `<option value="${esc(p)}" ${c.provider_set && p === c.provider ? 'selected' : ''}>${esc(p)}</option>`).join('')}<option value="__new__">➕ ${X('Furnizor nou…', 'New provider…')}</option></select></label>
       <label id="ce_newl" style="display:none;grid-column:1/-1">${X('Nume furnizor nou', 'New provider name')}<input id="ce_provnew" maxlength="40" placeholder="ex. Ionity" autocomplete="off"></label></div>
     <div class="links"><a href="#" id="ce_save">${X('Salvează', 'Save')}</a>${c.lat != null && c.lon != null ? `<a href="#" id="ce_find">🔎 ${X('Caută stația', 'Find the station')}</a>` : ''}${c.cost_manual != null || c.provider_set ? `<a href="#" id="ce_clear">${X('Șterge modificările', 'Clear changes')}</a>` : ''}</div>
+    ${typeof crNote === 'function' && crNote(c) ? `<p class="note" style="margin:10px 0 0">💳 ${crNote(c)}</p>` : ''}
     <div id="ce_sv"></div>
     <div id="ce_st"></div>
     <div class="toast" aria-live="polite" id="ce_msg">${X('Costul introdus înlocuiește costul TeslaMate și estimarea, în listă și în statistici. Se salvează doar în această aplicație, nu în TeslaMate. Lasă gol ca să revii la cost automat.', 'The cost you enter replaces the TeslaMate cost and the estimate in the list and in the statistics. It is stored only in this app, not in TeslaMate. Leave empty to go back to the automatic cost.')}</div></div>`);
@@ -1178,7 +1180,7 @@ async function afterChargeEdit() {
     if (ok) { say('✓ ' + X('Salvat', 'Saved'), 'ok'); setTimeout(render, 600); } else say('✗ ' + (j.reason || X('Eroare', 'Error')), 'bad');
   };
   const kwhUsed = c.charge_energy_used || c.charge_energy_added || 0;
-  const tarTxt = (t) => (t.kind === 'manual' ? X('Manual', 'Manual') : (t.kind ? t.kind.toUpperCase() : '')) + (t.power ? ' ' + nf(t.power) + ' kW' : '') + ' · ' + nf(t.price, 2) + ' ' + esc(t.cur || CU()) + '/kWh' + (t.per_h ? ' · +' + nf(t.per_h, 2) + '/h' : '') + (t.orig_cur ? ' (' + nf(t.orig_price, 2) + ' ' + esc(t.orig_cur) + ')' : '');
+  const tarTxt = (t) => (t.kind === 'manual' ? X('Manual', 'Manual') : (t.kind ? t.kind.toUpperCase() : '')) + (t.power ? ' ' + nf(t.power) + ' kW' : '') + ' · ' + nf(t.price, 2) + ' ' + esc(t.cur || CU()) + '/kWh' + (t.per_h ? ' · +' + nf(t.per_h, 2) + '/h' : '') + (t.orig_cur ? ' (' + nf(t.orig_price, 2) + ' ' + esc(t.orig_cur) + ')' : '') + crReal(c, t);
   const saveSt = async (body, msg) => {                                      // alegerea statiei / tarifului se salveaza singura, fara butonul Salvează
     say(X('Se salvează…', 'Saving…'), 'busy');
     const [ok, j] = await pinPost('/api/charge/meta', Object.assign({ id: c.id }, body));

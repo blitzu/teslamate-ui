@@ -387,3 +387,15 @@ code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em;backgroun
 .ct-ax{display:flex;justify-content:space-between;color:var(--mut);font-size:11.5px;margin-top:5px;font-variant-numeric:tabular-nums}.ct-leg{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11.5px;color:var(--mut)}.ct-leg span:before{content:"";display:inline-block;width:11px;height:4px;border-radius:2px;background:var(--c);margin-right:5px;vertical-align:middle}
 .tpn{margin:10px 0 2px;padding:9px 12px;border-radius:12px;background:#ffffff09;color:var(--mut);font-size:12px;line-height:1.4}
 .tsal summary{cursor:pointer;padding:7px 0;border-bottom:1px solid #ffffff10;list-style:none}.tsal summary::-webkit-details-marker{display:none}.tsal[open] summary{border-bottom-color:transparent}
+
+/* cursa in desfasurare */
+.ldb{display:block;position:relative;margin-top:12px;padding:12px 38px 12px 14px;text-decoration:none;color:inherit;border-color:#2f7bff66;background:linear-gradient(135deg,#14233f,var(--card,#14181d))}
+.ldb small{display:block;font-size:10.5px;letter-spacing:.08em;color:#8fb3ff}
+.ldb b{display:block;font-size:17px;margin:2px 0}
+.ldb span{font-size:13px;color:var(--mut,#9aa4b2)}
+.ldb i{position:absolute;right:14px;top:50%;transform:translateY(-50%);font-style:normal;font-size:24px;color:#8fb3ff}
+#ldh small{letter-spacing:.08em;color:#8fb3ff;font-size:11px}
+.ldsub{font-size:14px;color:var(--mut,#9aa4b2);margin-top:4px}
+.ldmap{height:340px}
+#map.ldmap{height:320px}
+.ldcar,.ldpin{display:block;filter:drop-shadow(0 2px 4px #0009)}
