@@ -43,7 +43,8 @@ def parse(b):
     if fee < 0:
         raise ValueError('Taxa invalidă')
     return dict(provider=prov, kind=kind, paid=paid, amount=amount, since=since, note=clean(b.get('note'), 60), fee=fee,
-                fee_in_credit=0 if str(b.get('fee_in_credit', '1')).lower() in ('0', 'false', 'no') else 1)
+                fee_in_credit=0 if str(b.get('fee_in_credit', '1')).lower() in ('0', 'false', 'no') else 1,
+                km_kwh=None if kind != 'km' or str(b.get('km_kwh') or '').strip() == '' else num(b.get('km_kwh'), 0.2, 50, 'Kilometrii pe kWh'))
 
 
 def rate(p):
@@ -58,13 +59,22 @@ def pick(packs, provider, day):
     return max(ok, key=lambda p: (p.get('since') or '', p['id'])) if ok else None
 
 
-def adjust(p, list_cost=None, km=None, voucher=0.0):
+def credit_km(p, km, kwh):
+    """Kilometri de credit scazuti de o incarcare: cu factorul pachetului (km pe kWh luat de la incarcator, potrivit cu aplicatia furnizorului) = kWh x factor;
+    fara factor, autonomia nominala adaugata (estimare)."""
+    if p.get('km_kwh') and kwh:
+        return float(kwh) * p['km_kwh']
+    return km if km and km > 0 else None
+
+
+def adjust(p, list_cost=None, km=None, voucher=0.0, kwh=None):
     """Costul real dupa credit (sau None daca lipseste ce trebuie), ca (cost, de_la_credit): bani => din costul de lista, km => din kilometrii adaugati.
     Taxa de conectare a pachetului (pe sesiune) se adauga la fiecare incarcare: la creditul in bani se plateste din credit (se aduna la pretul de lista) sau separat, in bani;
     la creditul in km se plateste mereu separat. de_la_credit = cat din pretul de lista a trecut prin credit. Voucherele (bani gratis) se scad primele din ce trece prin credit."""
     fee = p.get('fee') or 0
     if p['kind'] == 'km':
-        return (round(km * rate(p) + fee, 2), km) if km and km > 0 else None
+        k = credit_km(p, km, kwh)
+        return (round(k * rate(p) + fee, 2), k) if k and k > 0 else None
     if list_cost is None:
         return None
     fic = p.get('fee_in_credit', 1)
@@ -82,10 +92,12 @@ def info_row(packs, r):
     p = pick(packs, r.get('provider'), r.get('start_date') or '')
     if not p:
         return None
-    out = dict(pack=p['id'], kind=p['kind'], rate=round(rate(p), 4))
+    out = dict(pack=p['id'], kind=p['kind'], rate=round(rate(p), 4), km_kwh=p.get('km_kwh'))
     kwh, km = r.get('charge_energy_used') or r.get('charge_energy_added'), range_km(r)
-    if p['kind'] == 'km' and kwh and km and km > 0:
-        out['per_kwh'] = round(rate(p) * km / float(kwh), 3)
+    if p['kind'] == 'km' and kwh:
+        k = credit_km(p, km, kwh)
+        if k:
+            out['per_kwh'] = round(rate(p) * k / float(kwh), 3)
     return out
 
 
@@ -148,22 +160,61 @@ def adjust_row(packs, r, e, voucher=0.0):
     if not ok:
         return None
     km = range_km(r)
-    res = adjust(p, base, km, voucher)
+    kwh = r.get('charge_energy_used') or r.get('charge_energy_added')
+    res = adjust(p, base, km, voucher, kwh)
     if res is None:
         return None
     cost, via = res
     return dict(pack=p['id'], kind=p['kind'], rate=round(rate(p), 4), list=round(via, 2) if p['kind'] == 'money' else None, base=round(base, 2) if base is not None else None,
-                fee=p.get('fee') or 0, fee_in_credit=bool(p.get('fee_in_credit', 1)), voucher=round(voucher, 2), km=round(km, 1) if km else None, cost=cost)
+                fee=p.get('fee') or 0, fee_in_credit=bool(p.get('fee_in_credit', 1)), voucher=round(voucher, 2), km=round(via, 1) if p['kind'] == 'km' else (round(km, 1) if km else None), kwh=round(float(kwh), 2) if kwh else None, km_kwh=p.get('km_kwh'), cost=cost)
+
+
+def calibrate(kwh_total, amount, left):
+    """Kilometri de credit pe kWh potriviti cu aplicatia furnizorului: cat s-a consumat dupa ea (credit - ramas) impartit la energia luata de la incarcator de incarcarile care i se potrivesc."""
+    left = float(left)
+    if not (0 <= left <= amount):
+        raise ValueError('Kilometrii rămași trebuie să fie între 0 și %g.' % amount)
+    if not kwh_total or kwh_total <= 0:
+        raise ValueError('Nicio încărcare de potrivit: nu pot calcula factorul.')
+    return round(max(0.2, min(50.0, (amount - left) / kwh_total)), 4)
+
+
+def tally(data):
+    """Folosirea fiecarui pachet din incarcarile decorate. La pachetele in km, incarcarile cu cost scris de tine (deci neatinse de credit) consuma totusi kilometri din credit:
+    se numara la folosit (`typed` = cate), cu costul lor lasat cum e."""
+    use = {}
+    for r in data:
+        c = r.get('credit')
+        if not c:
+            ci = r.get('credit_rate')
+            km = range_km(r)
+            kwh = r.get('charge_energy_used') or r.get('charge_energy_added')
+            k = credit_km(dict(km_kwh=ci.get('km_kwh')), km, kwh) if ci and ci['kind'] == 'km' else None
+            if k and k > 0:
+                u = use.setdefault(ci['pack'], dict(n=0, kwh=0.0, used=0.0, real=0.0, list=0.0, typed=0))
+                u['n'] += 1
+                u['typed'] += 1
+                u['kwh'] += kwh or 0
+                u['used'] += k
+            continue
+        u = use.setdefault(c['pack'], dict(n=0, kwh=0.0, used=0.0, real=0.0, list=0.0, typed=0))
+        u['n'] += 1
+        u['kwh'] += r.get('charge_energy_used') or r.get('charge_energy_added') or 0
+        u['real'] += c['cost']
+        u['list'] += (c['base'] or 0) + (c['fee'] or 0) - (c['voucher'] or 0)               # pretul de lista echivalent (cu taxa), fara partea platita din voucher
+        u['used'] += (c['km'] or 0) if c['kind'] == 'km' else (c['list'] or 0) - (c['voucher'] or 0)
+    return {k: dict(n=u['n'], kwh=round(u['kwh'], 1), kwh_exact=u['kwh'], used=round(u['used'], 1), real=round(u['real'], 2), saved=round(u['list'] - u['real'], 2) if u['list'] else None, typed=u['typed']) for k, u in use.items()}
 
 
 def init(S):
     S.OWN.migrate('credits', ['create table credit_packs (id integer primary key, provider text not null, kind text not null, paid real not null, amount real not null, since text, note text, ts real)',
-                              'alter table credit_packs add column fee real not null default 0', 'alter table credit_packs add column fee_in_credit integer not null default 1'])
+                              'alter table credit_packs add column fee real not null default 0', 'alter table credit_packs add column fee_in_credit integer not null default 1',
+                              'alter table credit_packs add column km_kwh real'])
     cache = {'t': 0, 'rows': []}
 
     def rows():
         if time.time() - cache['t'] > 30:
-            cache['rows'], cache['t'] = S.OWN.rows('select id, provider, kind, paid, amount, since, note, fee, fee_in_credit from credit_packs'), time.time()
+            cache['rows'], cache['t'] = S.OWN.rows('select id, provider, kind, paid, amount, since, note, fee, fee_in_credit, km_kwh from credit_packs'), time.time()
         return cache['rows']
 
     tl = threading.local()
@@ -216,19 +267,7 @@ def init(S):
 
     def usage(car, demo):
         """Cat s-a folosit din fiecare pachet (din incarcarile care i se potrivesc) si cat a ramas din credit."""
-        data = S.decorate([dict(c) for c in S.DEMO['charges']] if demo else S._charges_rows(car, 5000, 0))
-        use = {}
-        for r in data:
-            c = r.get('credit')
-            if not c:
-                continue
-            u = use.setdefault(c['pack'], dict(n=0, kwh=0.0, used=0.0, real=0.0, list=0.0))
-            u['n'] += 1
-            u['kwh'] += r.get('charge_energy_used') or r.get('charge_energy_added') or 0
-            u['real'] += c['cost']
-            u['list'] += (c['base'] or 0) + (c['fee'] or 0) - (c['voucher'] or 0)               # pretul de lista echivalent (cu taxa), fara partea platita din voucher
-            u['used'] += (c['km'] or 0) if c['kind'] == 'km' else (c['list'] or 0) - (c['voucher'] or 0)
-        return {k: dict(n=u['n'], kwh=round(u['kwh'], 1), used=round(u['used'], 1), real=round(u['real'], 2), saved=round(u['list'] - u['real'], 2) if u['list'] else None) for k, u in use.items()}
+        return tally(S.decorate([dict(c) for c in S.DEMO['charges']] if demo else S._charges_rows(car, 5000, 0)))
 
     @S.route('GET', '/api/credits')
     def listing(h, a):
@@ -236,7 +275,7 @@ def init(S):
         if hc is None:
             raise S.DBDown()
         car = int(a.get('car', 1))
-        packs = S.OWN.rows('select id, provider, kind, paid, amount, since, note, fee, fee_in_credit from credit_packs order by provider collate nocase, since, id')
+        packs = S.OWN.rows('select id, provider, kind, paid, amount, since, note, fee, fee_in_credit, km_kwh from credit_packs order by provider collate nocase, since, id')
         use = usage(car, hc is False) if packs else {}
         per_v = S.CREDITS.ledger()[1] if any(p['kind'] == 'voucher' for p in packs) else {}
         for p in packs:
@@ -246,19 +285,33 @@ def init(S):
                 p['usage'] = dict(n=u['n'], kwh=0, used=round(u['used'], 2), real=0, saved=round(u['used'], 2))
                 continue
             p['rate'] = round(rate(p), 4)
-            p['usage'] = use.get(p['id']) or dict(n=0, kwh=0, used=0, real=0, saved=None)
+            p['usage'] = use.get(p['id']) or dict(n=0, kwh=0, used=0, real=0, saved=None, typed=0)
         return dict(packs=packs, providers=S.provider_list(car, hc is False))
 
     @S.route('POST', '/api/credits/save', pin=True, role='user')
     def save(h, b):
         p = parse(b)
+        left = str(b.get('left_now') if b.get('left_now') is not None else '').strip().replace(',', '.')
+        if left and p['kind'] != 'km':
+            left = ''
+        if left:
+            float(left)                                                      # valideaza inainte sa scriem ceva
         if b.get('id'):
-            S.OWN.run('update credit_packs set provider=?, kind=?, paid=?, amount=?, since=?, note=?, fee=?, fee_in_credit=?, ts=? where id=?', (p['provider'], p['kind'], p['paid'], p['amount'], p['since'], p['note'], p['fee'], p['fee_in_credit'], time.time(), int(b['id'])))
+            pid = int(b['id'])
+            S.OWN.run('update credit_packs set provider=?, kind=?, paid=?, amount=?, since=?, note=?, fee=?, fee_in_credit=?, km_kwh=?, ts=? where id=?',
+                      (p['provider'], p['kind'], p['paid'], p['amount'], p['since'], p['note'], p['fee'], p['fee_in_credit'], p['km_kwh'], time.time(), pid))
         else:
             if S.OWN.one('select count(*) n from credit_packs')['n'] >= MAX_PACKS:
                 raise ValueError('Maxim %d pachete.' % MAX_PACKS)
-            S.OWN.run('insert into credit_packs(provider, kind, paid, amount, since, note, fee, fee_in_credit, ts) values(?,?,?,?,?,?,?,?,?)', (p['provider'], p['kind'], p['paid'], p['amount'], p['since'], p['note'], p['fee'], p['fee_in_credit'], time.time()))
+            S.OWN.run('insert into credit_packs(provider, kind, paid, amount, since, note, fee, fee_in_credit, km_kwh, ts) values(?,?,?,?,?,?,?,?,?,?)',
+                      (p['provider'], p['kind'], p['paid'], p['amount'], p['since'], p['note'], p['fee'], p['fee_in_credit'], p['km_kwh'], time.time()))
+            pid = S.OWN.one('select max(id) m from credit_packs')['m']
         cache['t'] = led['t'] = 0
+        if left:                                                             # "mai am X km" din aplicatia furnizorului => km de credit pe kWh
+            kwh = (tally(Credits.source()).get(pid) or {}).get('kwh_exact', 0.0)
+            k = calibrate(kwh, p['amount'], left)
+            S.OWN.run('update credit_packs set km_kwh=?, ts=? where id=?', (k, time.time(), pid))
+            cache['t'] = led['t'] = 0
 
     @S.route('POST', '/api/credits/delete', pin=True, role='user')
     def delete(h, b):

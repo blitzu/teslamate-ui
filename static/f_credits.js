@@ -2,10 +2,11 @@
    costul real al incarcarii se calculeaza singur (pretul de lista x platit/credit, sau km adaugati x lei/km); vezi features/credits.py. */
 const crRate = (p) => p.paid / p.amount;
 const crFee = (p) => p.fee ? ' · ' + X('taxă conectare ', 'connection fee ') + nf(p.fee, 2) + ' ' + CU() + (p.kind === 'km' || !p.fee_in_credit ? ' ' + X('(separat)', '(separate)') : ' ' + X('(din credit)', '(from credit)')) : '';
+const crScale = (p) => p.kind === 'km' && p.km_kwh ? ' · ' + nf(p.km_kwh, 2) + ' km/kWh ' + X('(potrivit cu aplicația furnizorului)', '(matched to the provider’s app)') : '';
 const crLine = (p) => p.kind === 'voucher'
   ? `🎁 <b>${nf(p.amount, 2)} ${CU()}</b> ${X('voucher: bani gratis, se scad primii din încărcări', 'voucher: free money, taken off the charges first')}`
   : p.kind === 'km'
-  ? `${nf(p.paid, 2)} ${CU()} → ${nf(p.amount, 0)} km · <b>${nf(crRate(p), 3)} ${CU()}/km</b>${crFee(p)}`
+  ? `${nf(p.paid, 2)} ${CU()} → ${nf(p.amount, 0)} km · <b>${nf(crRate(p), 3)} ${CU()}/km</b>${crScale(p)}${crFee(p)}`
   : `${nf(p.paid, 2)} ${CU()} → ${nf(p.amount, 2)} ${CU()} ${X('credit', 'credit')} · ${X('1 leu din tarif costă de fapt', 'each 1 of list price really costs')} <b>${nf(crRate(p), 3)} ${CU()}</b>${crFee(p)}`;
 
 function crUsage(p) {
@@ -16,7 +17,7 @@ function crUsage(p) {
   }
   if (!u.n) return `<small class="mut">${X('Nicio încărcare folosită încă din acest pachet.', 'No charge has used this pack yet.')}</small>`;
   const left = p.amount - u.used, unit = p.kind === 'km' ? 'km' : CU();
-  return `<small class="mut">${X('Folosit', 'Used')} <b>${nf(u.used, p.kind === 'km' ? 0 : 2)}</b> ${X('din', 'of')} ${nf(p.amount, p.kind === 'km' ? 0 : 2)} ${unit} · ${u.n} ${X('încărcări', 'charges')}, ${nf(u.kwh, 0)} kWh, ${X('cost real', 'real cost')} ${nf(u.real, 2)} ${CU()}${u.saved != null ? ' · ' + X('economie față de tarif', 'saved vs list price') + ' ' + nf(u.saved, 2) + ' ' + CU() : ''}<br>
+  return `<small class="mut">${X('Folosit', 'Used')} <b>${nf(u.used, p.kind === 'km' ? 0 : 2)}</b> ${X('din', 'of')} ${nf(p.amount, p.kind === 'km' ? 0 : 2)} ${unit} · ${u.n} ${X('încărcări', 'charges')}, ${nf(u.kwh, 0)} kWh, ${X('cost real', 'real cost')} ${nf(u.real, 2)} ${CU()}${u.saved != null ? ' · ' + X('economie față de tarif', 'saved vs list price') + ' ' + nf(u.saved, 2) + ' ' + CU() : ''}${u.typed ? '<br>' + X(u.typed + ' din încărcări au costul scris de tine: kilometrii lor sunt scăzuți din credit, dar costul rămâne cel scris.', u.typed + ' of the charges have a cost you typed: their kilometres are taken off the credit, but the cost stays as typed.') : ''}<br>
     ${left >= 0 ? X('Rămas din credit: ', 'Credit left: ') + `<b>${nf(left, p.kind === 'km' ? 0 : 2)} ${unit}</b>` : `<span style="color:var(--bad,#ff7a7a)">${X('Creditul a fost depășit cu ', 'The credit was exceeded by ')}${nf(-left, p.kind === 'km' ? 0 : 2)} ${unit}</span>`}</small>`;
 }
 
@@ -37,6 +38,8 @@ PAGES.credits = {
         <label>${X('Tip de credit', 'Credit type')}<select id="cr_kind"><option value="money">${X('Bani (credit în ' + CU() + ')', 'Money (credit in ' + CU() + ')')}</option><option value="km">${X('Kilometri de autonomie (ex. Tesla)', 'Kilometres of range (e.g. Tesla)')}</option><option value="voucher">${X('Voucher (bani gratis)', 'Voucher (free money)')}</option></select></label>
         <label>${X('Am plătit', 'I paid')} (${cu})<input id="cr_paid" type="number" inputmode="decimal" step="0.01" min="0" placeholder="1000"></label>
         <label id="cr_al">${X('Am primit credit', 'I received credit')} (${cu})<input id="cr_amount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="2000"></label>
+        <label id="cr_ll">${X('Mai am acum, după aplicația furnizorului (km), opțional', 'Left now, per the provider’s app (km), optional')}<input id="cr_left" type="number" inputmode="decimal" step="1" min="0" placeholder="375"></label>
+        <label id="cr_sl">${X('Km de credit pe kWh (avansat)', 'Credit km per kWh (advanced)')}<input id="cr_scale" type="number" inputmode="decimal" step="0.01" min="0.2" placeholder="ex. 4.95"></label>
         <label>${X('Taxă de conectare pe sesiune', 'Connection fee per session')} (${cu})<input id="cr_fee" type="number" inputmode="decimal" step="0.01" min="0" placeholder="2"></label>
         <label id="cr_fcl">${X('Taxa se plătește', 'The fee is paid')}<select id="cr_fic"><option value="1">${X('din credit', 'from the credit')}</option><option value="0">${X('separat, în bani', 'separately, in cash')}</option></select></label>
         <label>${X('Se aplică de la data (opțional)', 'Applies from (optional)')}<input id="cr_since" type="date"></label>
@@ -44,7 +47,7 @@ PAGES.credits = {
       <p class="note" id="cr_prev" style="margin:8px 0 0"></p>
       <div class="links"><a href="#" id="cr_save">${X('Salvează pachetul', 'Save pack')}</a><a href="#" id="cr_cancel" style="display:none">${X('Renunță la modificare', 'Cancel edit')}</a></div>
       <div class="toast" id="cr_msg" style="display:none"></div>
-      <p class="note" style="margin:10px 0 0">${X('Fără dată, pachetul se aplică tuturor încărcărilor furnizorului; cu dată, doar celor de atunci încolo (dacă ai mai multe pachete, se folosește cel mai recent valabil la data încărcării). O sumă scrisă de tine pe o încărcare rămâne neschimbată, pentru că e suma reală. Un cost venit din tariful unei stații e preț de listă, deci i se aplică creditul. La tip „kilometri” se folosesc kilometrii de autonomie adăugați de încărcare (ex. Tesla Supercharger). Un voucher (bani gratis) se scade primul din încărcările de la data primirii, de la cel mai vechi la cel mai nou, și acoperă și taxa de conectare plătită din credit; o încărcare acoperită cu totul de voucher costă 0. Taxa de conectare se adaugă la fiecare încărcare a furnizorului; dacă ai doar taxă, fără reducere, scrie aceeași sumă la „plătit” și la „credit”.', 'Without a date the pack applies to every charge of the provider; with a date, only to charges from then on (with several packs, the latest one valid on the charge date is used). An amount you typed on a charge stays as it is, since it is the real amount. A cost that comes from a station tariff is a list price, so the credit applies to it. With the “kilometres” type the kilometres of range added by the charge are used (e.g. Tesla Supercharger). A voucher (free money) is taken off the charges first, from the day you received it, oldest charge first, and it also covers the connection fee when that is paid from the credit; a charge covered entirely by the voucher costs 0. The connection fee is added to every charge of the provider; if you only have a fee and no discount, type the same amount for “paid” and “credit”.')}</p></div>`;
+      <p class="note" style="margin:10px 0 0">${X('Fără dată, pachetul se aplică tuturor încărcărilor furnizorului; cu dată, doar celor de atunci încolo (dacă ai mai multe pachete, se folosește cel mai recent valabil la data încărcării). O sumă scrisă de tine pe o încărcare rămâne neschimbată, pentru că e suma reală. Un cost venit din tariful unei stații e preț de listă, deci i se aplică creditul. La tip „kilometri” se folosesc kilometrii de autonomie adăugați de încărcare (ex. Tesla Supercharger). Un voucher (bani gratis) se scade primul din încărcările de la data primirii, de la cel mai vechi la cel mai nou, și acoperă și taxa de conectare plătită din credit; o încărcare acoperită cu totul de voucher costă 0. La un pachet în km, furnizorul numără după energia luată de la încărcător, nu după autonomia nominală: scrie la „Mai am acum” cât îți arată aplicația furnizorului că a rămas, iar aplicația calculează câți km de credit scade pe fiecare kWh (se vede lângă pachet) și îl folosește pentru toate încărcările, și cele viitoare. Pe un Model 3 cu Tesla Supercharger rezultatul a fost cam 5 km pe kWh. Taxa de conectare se adaugă la fiecare încărcare a furnizorului; dacă ai doar taxă, fără reducere, scrie aceeași sumă la „plătit” și la „credit”.', 'Without a date the pack applies to every charge of the provider; with a date, only to charges from then on (with several packs, the latest one valid on the charge date is used). An amount you typed on a charge stays as it is, since it is the real amount. A cost that comes from a station tariff is a list price, so the credit applies to it. With the “kilometres” type the kilometres of range added by the charge are used (e.g. Tesla Supercharger). A voucher (free money) is taken off the charges first, from the day you received it, oldest charge first, and it also covers the connection fee when that is paid from the credit; a charge covered entirely by the voucher costs 0. A kilometre pack is counted by the energy taken from the charger, not by the rated range: type what the provider’s app says is left under “Left now” and the app works out how many credit km each kWh takes (shown next to the pack) and uses it for all charges, future ones included. On a Model 3 at a Tesla Supercharger it came out near 5 km per kWh. The connection fee is added to every charge of the provider; if you only have a fee and no discount, type the same amount for “paid” and “credit”.')}</p></div>`;
   },
   after() {
     const j = window.__cr || { packs: [] }; let editing = 0;
@@ -54,6 +57,7 @@ PAGES.credits = {
       const km = el('cr_kind').value === 'km', paid = parseFloat(String(el('cr_paid').value).replace(',', '.')), am = parseFloat(String(el('cr_amount').value).replace(',', '.'));
       const vo = el('cr_kind').value === 'voucher';
       el('cr_fcl').style.display = km || vo ? 'none' : '';
+      ['cr_ll', 'cr_sl'].forEach((i) => { el(i).style.display = km ? '' : 'none'; });
       ['cr_paid', 'cr_fee'].forEach((i) => { const lb = el(i).closest('label'); if (lb) lb.style.display = vo ? 'none' : ''; });
       el('cr_al').firstChild.textContent = vo ? X('Valoarea voucherului', 'Voucher value') + ' (' + CU() + ') ' : km ? X('Am primit kilometri', 'I received kilometres') + ' ' : X('Am primit credit', 'I received credit') + ' (' + CU() + ')';
       if (vo) { el('cr_prev').innerHTML = am > 0 ? X('→ se scade primul din încărcările de la data primirii; până se termină, încărcările costă 0.', '→ taken off the charges first, from the day you received it; until it is used up the charges cost 0.') : ''; return; }
@@ -61,12 +65,12 @@ PAGES.credits = {
     };
     ['cr_kind', 'cr_paid', 'cr_amount', 'cr_fee', 'cr_fic'].forEach((i) => el(i).oninput = prev);
     el('cr_prov').onchange = () => { const on = el('cr_prov').value === '__new__'; el('cr_newl').style.display = on ? '' : 'none'; if (on) el('cr_provnew').focus(); };
-    const reset = () => { editing = 0; ['cr_paid', 'cr_amount', 'cr_since', 'cr_note', 'cr_provnew', 'cr_fee'].forEach((i) => el(i).value = ''); el('cr_fic').value = '1'; el('cr_cancel').style.display = 'none'; el('crh').textContent = X('Adaugă un pachet', 'Add a pack'); prev(); };
+    const reset = () => { editing = 0; ['cr_paid', 'cr_amount', 'cr_since', 'cr_note', 'cr_provnew', 'cr_fee', 'cr_left', 'cr_scale'].forEach((i) => el(i).value = ''); el('cr_fic').value = '1'; el('cr_cancel').style.display = 'none'; el('crh').textContent = X('Adaugă un pachet', 'Add a pack'); prev(); };
     el('cr_cancel').onclick = (e) => { e.preventDefault(); reset(); };
     document.querySelectorAll('[data-cr-edit]').forEach((a) => a.onclick = (e) => {
       e.preventDefault(); const p = j.packs.find((x) => x.id === +a.dataset.crEdit); if (!p) return;
       editing = p.id; el('cr_prov').value = p.provider; el('cr_newl').style.display = 'none'; el('cr_kind').value = p.kind; el('cr_paid').value = p.paid; el('cr_amount').value = p.amount;
-      el('cr_since').value = p.since || ''; el('cr_note').value = p.note || ''; el('cr_fee').value = p.fee || ''; el('cr_fic').value = p.fee_in_credit ? '1' : '0'; el('cr_cancel').style.display = ''; el('crh').textContent = X('Modifică pachetul', 'Edit the pack'); prev(); el('crform').scrollIntoView({ behavior: 'smooth' });
+      el('cr_since').value = p.since || ''; el('cr_note').value = p.note || ''; el('cr_fee').value = p.fee || ''; el('cr_scale').value = p.kind === 'km' && p.km_kwh ? p.km_kwh : ''; el('cr_left').value = ''; el('cr_fic').value = p.fee_in_credit ? '1' : '0'; el('cr_cancel').style.display = ''; el('crh').textContent = X('Modifică pachetul', 'Edit the pack'); prev(); el('crform').scrollIntoView({ behavior: 'smooth' });
     });
     document.querySelectorAll('[data-cr-del]').forEach((a) => a.onclick = async (e) => {
       e.preventDefault(); if (!confirm(X('Șterg pachetul? Costurile încărcărilor revin la cele de dinainte.', 'Delete the pack? Charge costs go back to what they were.'))) return;
@@ -74,7 +78,7 @@ PAGES.credits = {
     });
     el('cr_save').onclick = async (e) => {
       e.preventDefault(); say(X('Se salvează…', 'Saving…'), 'busy');
-      const [ok, r] = await pinPost('/api/credits/save', { id: editing || undefined, provider: prov(), kind: el('cr_kind').value, paid: el('cr_paid').value, amount: el('cr_amount').value, since: el('cr_since').value, note: el('cr_note').value, fee: el('cr_fee').value, fee_in_credit: el('cr_fic').value });
+      const [ok, r] = await pinPost('/api/credits/save', { id: editing || undefined, provider: prov(), kind: el('cr_kind').value, paid: el('cr_paid').value, amount: el('cr_amount').value, since: el('cr_since').value, note: el('cr_note').value, fee: el('cr_fee').value, fee_in_credit: el('cr_fic').value, km_kwh: el('cr_scale').value, left_now: el('cr_left').value });
       if (ok) { say('✓ ' + X('Salvat', 'Saved'), 'ok'); setTimeout(render, 600); } else say('✗ ' + (r.reason || X('Eroare', 'Error')), 'bad');
     };
     prev();
@@ -87,8 +91,9 @@ function crNote(c) {
   const cu = esc(CU()), fee = k.fee ? ` + ${X('taxă de conectare', 'connection fee')} ${nf(k.fee, 2)} ${cu}` : '';
   if (k.voucher) return X(`Credit la ${esc(c.provider)}: ${nf(k.list, 2)} ${cu} prin credit, din care ${nf(k.voucher, 2)} ${cu} acoperiți de voucher (gratis), restul × ${nf(k.rate, 3)}${k.fee && !k.fee_in_credit ? fee : ''} = <b>${nf(k.cost, 2)} ${cu}</b> cost real.`,
     `Prepaid credit at ${esc(c.provider)}: ${nf(k.list, 2)} ${cu} through credit, ${nf(k.voucher, 2)} ${cu} of it covered by the voucher (free), the rest × ${nf(k.rate, 3)}${k.fee && !k.fee_in_credit ? fee : ''} = <b>${nf(k.cost, 2)} ${cu}</b> real cost.`);
-  if (k.kind === 'km') return X(`Credit în km la ${esc(c.provider)}: ${nf(k.km, 0)} km de autonomie × ${nf(k.rate, 3)} ${cu}/km${fee} = <b>${nf(k.cost, 2)} ${cu}</b>.`, `Prepaid km at ${esc(c.provider)}: ${nf(k.km, 0)} km of range × ${nf(k.rate, 3)} ${cu}/km${fee} = <b>${nf(k.cost, 2)} ${cu}</b>.`);
-  const sep = k.fee && !k.fee_in_credit;
+  if (k.kind === 'km') return k.km_kwh && k.kwh
+    ? X(`Credit în km la ${esc(c.provider)}: ${nf(k.kwh, 1)} kWh × ${nf(k.km_kwh, 2)} km/kWh = ${nf(k.km, 0)} km de credit × ${nf(k.rate, 3)} ${cu}/km${fee} = <b>${nf(k.cost, 2)} ${cu}</b>.`, `Prepaid km at ${esc(c.provider)}: ${nf(k.kwh, 1)} kWh × ${nf(k.km_kwh, 2)} km/kWh = ${nf(k.km, 0)} credit km × ${nf(k.rate, 3)} ${cu}/km${fee} = <b>${nf(k.cost, 2)} ${cu}</b>.`)
+    : X(`Credit în km la ${esc(c.provider)}: ${nf(k.km, 0)} km de autonomie × ${nf(k.rate, 3)} ${cu}/km${fee} = <b>${nf(k.cost, 2)} ${cu}</b>.`, `Prepaid km at ${esc(c.provider)}: ${nf(k.km, 0)} km of range × ${nf(k.rate, 3)} ${cu}/km${fee} = <b>${nf(k.cost, 2)} ${cu}</b>.`);
   return X(`Credit la ${esc(c.provider)}: preț de listă ${nf(k.base, 2)} ${cu}${k.fee && !sep ? fee : ''} × ${nf(k.rate, 3)}${sep ? fee : ''} = <b>${nf(k.cost, 2)} ${cu}</b> cost real.`,
            `Prepaid credit at ${esc(c.provider)}: list price ${nf(k.base, 2)} ${cu}${k.fee && !sep ? fee : ''} × ${nf(k.rate, 3)}${sep ? fee : ''} = <b>${nf(k.cost, 2)} ${cu}</b> real cost.`);
 }

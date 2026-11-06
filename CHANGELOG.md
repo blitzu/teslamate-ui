@@ -3,6 +3,14 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.14.1 - 2026-11-06
+
+### Fixes
+- **Kilometre credit packs now count charges with a cost you typed.** A charge whose cost you typed by hand keeps that cost (it is the real amount), but it still uses up kilometres of a prepaid km pack. The pack's page counted only the charges the credit priced, so a Tesla pack could show "no charge used" while all your Supercharger sessions had a typed cost. The used and remaining kilometres now include them, with a note saying how many of them have a typed cost.
+
+### New features
+- **Kilometre packs follow the energy, matched to the provider's app.** The provider counts a kilometre pack by the energy taken from the charger, not by the rated range: on four Tesla Supercharger sessions the credit used came out at 4.95 km per kWh of energy used (within 1%), while rated range or energy added drifted by 4%. In the pack form, type what the provider's app says is left ("Left now") and the app works out the credit kilometres per kWh (shown next to the pack, editable) and uses it for every charge of that provider, future ones included. Without it the pack keeps estimating from the rated range.
+
 ## 1.14.0 - 2026-11-06
 
 ### New features

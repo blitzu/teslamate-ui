@@ -2061,6 +2061,48 @@ class CreditsTests(Isolated):
         self.assertEqual(CR.adjust(dict(kind='money', paid=1.0, amount=1.0, fee=0, fee_in_credit=1), 4.0, None, 4.0)[0], 0.0)       # voucher acopera tot
         self.assertEqual(CR.adjust(dict(kind='money', paid=1000, amount=2000, fee=2, fee_in_credit=1), 30.0, None, 6.0)[0], 13.0)   # (30 + 2 - 6) x 0,5
 
+    def test_km_pack_counts_charges_with_a_typed_cost_but_keeps_their_cost(self):
+        from features import credits as CR
+        rows = [dict(id=1, charge_energy_added=40.0, start_rated_range_km=100.0, end_rated_range_km=400.0, credit=None, credit_rate=dict(pack=3, kind='km', rate=0.1, km_kwh=None)),   # cost scris de mana: neatins, dar consuma km
+                dict(id=2, charge_energy_added=10.0, start_rated_range_km=100.0, end_rated_range_km=200.0, credit=dict(pack=3, kind='km', cost=10.0, base=0, fee=0, voucher=0, list=None, km=100.0), credit_rate=None),
+                dict(id=3, charge_energy_added=5.0, start_rated_range_km=100.0, end_rated_range_km=150.0, credit=None, credit_rate=dict(pack=4, kind='money', rate=0.5))]   # pachet in bani: nu se numara
+        u = CR.tally(rows)
+        self.assertEqual((u[3]['used'], u[3]['n'], u[3]['typed'], u[3]['real']), (400.0, 2, 1, 10.0))
+        self.assertNotIn(4, u)
+        rows[0]['credit_rate']['km_kwh'] = 5.0                                  # cu factorul pachetului: kWh x 5 in loc de autonomia nominala
+        self.assertEqual(CR.tally(rows)[3]['used'], 40.0 * 5.0 + 100.0)
+
+    def test_km_credit_follows_the_energy_taken_from_the_charger(self):
+        from features import credits as CR
+        # cifrele din aplicatia Tesla pentru 4 sesiuni vs energia luata de la incarcator (charge_energy_used): ~4,95 km pe kWh la toate
+        sess = [(185, 37.35), (200, 39.91), (215, 43.39), (175, 35.77)]
+        k = CR.calibrate(sum(u for _, u in sess), 1150, 375)                  # 775 consumati din 1150
+        self.assertEqual(k, round(775 / 156.42, 4))
+        for credit, used in sess:
+            self.assertLess(abs(used * k - credit) / credit, 0.02)            # fiecare sesiune iese la sub 2% de ce arata Tesla
+        with self.assertRaises(ValueError):
+            CR.calibrate(156.42, 1150, 2000)                                  # mai mult decat creditul
+        with self.assertRaises(ValueError):
+            CR.calibrate(0, 1150, 375)                                        # nicio incarcare de potrivit
+        self.assertEqual(CR.parse(dict(provider='Tesla', kind='km', paid='1', amount='1150', km_kwh='4,95'))['km_kwh'], 4.95)
+        self.assertIsNone(CR.parse(dict(provider='Tesla', kind='money', paid='1', amount='5', km_kwh='4.95'))['km_kwh'])      # factorul conteaza doar la km
+        p = dict(id=1, provider='Tesla', kind='km', paid=100, amount=1000, since='', fee=0, fee_in_credit=1, km_kwh=4.95)
+        cost, via = CR.adjust(p, None, 999.0, 0.0, 40.0)                      # 40 kWh x 4,95 = 198 km de credit (autonomia nominala nu mai conteaza)
+        self.assertEqual((cost, round(via, 1)), (19.8, 198.0))
+
+    def test_save_with_left_now_sets_km_per_kwh(self):
+        cls = type(S.CREDITS)
+        old = cls.__dict__['source']
+        base = dict(provider='Tesla Supercharger', cost_eff=None, start_date='2026-10-20T10:00:00')
+        rows = [dict(base, id=987671, charge_energy_used=40.0, charge_energy_added=38.0, start_rated_range_km=100.0, end_rated_range_km=400.0),
+                dict(base, id=987672, charge_energy_used=60.0, charge_energy_added=58.0, start_rated_range_km=100.0, end_rated_range_km=600.0)]
+        cls.source = staticmethod(lambda: [dict(r, credit=S.CREDITS.adjust(r, {}), credit_rate=S.CREDITS.info(r)) for r in rows])
+        try:
+            self.save(None, dict(provider='Tesla Supercharger', kind='km', paid='10', amount='1000', left_now='500'))        # Tesla arata 500 ramasi => 500 consumati din 100 kWh
+        finally:
+            cls.source = old
+        self.assertEqual(S.OWN.rows('select km_kwh from credit_packs')[0]['km_kwh'], 5.0)
+
     def test_the_listing_shows_what_is_left_of_each_pack(self):
         self.save(None, dict(provider='Ionity', kind='money', paid='1000', amount='2000'))
         fn = S.route_lookup('GET', '/api/credits')[0]
