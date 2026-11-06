@@ -152,6 +152,18 @@ ${L.is_climate_on ? `<path class="heat ${hot}" d="M78 226q10-10 22 0t22 0"/><pat
 </g>${tp(24, 104, 'fl')}${tp(276, 104, 'fr')}${tp(24, 352, 'rl')}${tp(276, 352, 'rr')}</svg>`;
 }
 
+/* harta de baza: OpenStreetMap, innegrita din CSS (.leaflet-tile-pane) ca sa se potriveasca cu aplicatia */
+function mapTiles() {
+  return window.L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' });
+}
+/* traseu cu stralucire: un strat lat si transparent sub linia propriu-zisa */
+function glowLine(pts, color, w) {
+  const g = window.L.layerGroup();
+  window.L.polyline(pts, { color, weight: (w || 5) + 9, opacity: .16, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(g);
+  window.L.polyline(pts, { color, weight: w || 5, opacity: .95, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(g);
+  return g;
+}
+
 /* ---------- pages ---------- */
 function cur() { return S.cars.find((c) => c.id === car) || S.cars[0]; }
 const carPng = (c) => '/car.png?c=' + encodeURIComponent((c && c.color) || '') + '&m=' + encodeURIComponent((c && c.model) || '');          // poza de sus: a utilizatorului, altfel Model 3 revopsit / desenul generic, in culoarea masinii
@@ -229,7 +241,7 @@ function drawMap(el, L) {
   if (map) { map.remove(); map = null; }
   const lat = L.latitude ?? 44.4268, lon = L.longitude ?? 26.1025;
   map = window.L.map(el, { zoomControl: false, attributionControl: true }).setView([lat, lon], 14);
-  window.L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+  mapTiles().addTo(map);
   window.L.marker([lat, lon], { icon: window.L.divIcon({ className: '', html: '<div class="pin"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }) }).addTo(map);
 }
 
@@ -314,7 +326,7 @@ async function pageDrive(id) {
     const el = $('#dmap'); if (!el || !window.L || pts.length < 2) return;
     if (map) { map.remove(); map = null; }
     map = window.L.map(el, { zoomControl: false }).setView([pts[0][1], pts[0][2]], 13);
-    window.L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+    mapTiles().addTo(map);
     const col = (v) => v < 30 ? '#7aa8ff' : v < 70 ? '#6fd6b8' : v < 110 ? '#d9ba80' : '#ef7a7a';
     for (let i = 1; i < pts.length; i++) window.L.polyline([[pts[i - 1][1], pts[i - 1][2]], [pts[i][1], pts[i][2]]], { color: col(pts[i][3] || 0), weight: 5, opacity: .95, lineCap: 'round' }).addTo(map);
     const dot = (p, c) => window.L.circleMarker([p[1], p[2]], { radius: 7, color: '#0b0d10', weight: 3, fillColor: c, fillOpacity: 1 }).addTo(map);

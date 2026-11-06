@@ -56,7 +56,7 @@ PAGES.journey = {
       const el = $('#jmap'); if (!el || !window.L || (!d.drives.length && !d.charges.length)) return;
       if (map) { map.remove(); map = null; }
       map = window.L.map(el, { zoomControl: false }).setView([45.9, 25], 6);
-      window.L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+      mapTiles().addTo(map);
       const all = [];
       d.drives.forEach((x, i) => {
         const ll = x.pts.map((p) => [p[0], p[1]]); all.push(...ll);

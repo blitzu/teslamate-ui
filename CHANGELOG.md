@@ -3,6 +3,13 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.13.0 - 2026-11-06
+
+### New features
+- **Similar trips in Compare.** Once you pick the main trip, the page suggests trips that start and end at about the same places (within 1 km, also in the opposite direction) with a similar distance (+-20%), so you no longer search for them. Each suggestion shows the date (and how long ago), the distance difference, Wh/km, duration, the average temperature and its difference from yours, and badges: **same road** or **other road** (how much of the GPS routes overlap), **reverse**, and how far it is from your time of year. The ones from the same time of year come first; filter by All / Other road / Same road and tap one to add it to the comparison.
+- **Nicer maps.** The live drive route now glows and is coloured by speed (blue slow, green, gold, red fast) with a start dot, the car marker pulses, the animated lines in Compare glow, and the map attribution is quieter.
+- **Fullscreen button on maps.** The compare map (with its play and speed controls), the trip timeline map and the live drive map have a button in the top right corner that makes them fill the screen (Esc or the same button closes it). It works on phones that have no fullscreen support too.
+
 ## 1.12.1 - 2026-11-06
 
 ### New features

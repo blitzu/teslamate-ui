@@ -23,6 +23,11 @@ def cost_of(g):
                 eq_l100=round(litres / km * 100, 2) if km > 0 and all(d.get('fuel_price') for d in c) else None)
 
 
+def _avg(xs):
+    xs = [float(x) for x in xs if x is not None]
+    return round(sum(xs) / len(xs), 1) if xs else None
+
+
 def group(drives, charges, gap):
     """drives: lista de curse (cu start_date/end_date ISO); charges: incarcari; gap: timedelta. Intoarce calatoriile, cele mai noi primele."""
     ds = sorted((d for d in drives if d.get('end_date')), key=lambda d: d['start_date'])
@@ -48,6 +53,7 @@ def group(drives, charges, gap):
         out.append(dict(**cost_of(g), id=g[0]['id'], start=g[0]['start_date'], end=g[-1]['end_date'], n_drives=len(g), km=round(km, 1), drive_min=round(sum(d.get('duration_min') or 0 for d in g)),
                         total_min=round((b - a).total_seconds() / 60), kwh=round(kwh, 1), wh_km=round(kwh * 1000 / km) if km > 0 and kwh else None,
                         start_name=g[0].get('start_name'), end_name=g[-1].get('end_name'), stops=stops[:6], speed_max=max((d.get('speed_max') or 0 for d in g), default=0),
+                        a_lat=g[0].get('start_lat'), a_lon=g[0].get('start_lon'), b_lat=g[-1].get('end_lat'), b_lon=g[-1].get('end_lon'), temp=_avg([d.get('outside_temp_avg') for d in g]),
                         n_charges=len(ch), charge_kwh=round(sum(c.get('charge_energy_added') or 0 for c in ch), 1),
                         charge_cost=round(sum((c.get('cost_eff') if c.get('cost_eff') is not None else c.get('cost')) or 0 for c in ch), 2), drive_ids=[d['id'] for d in g]))
     out.sort(key=lambda t: t['start'], reverse=True)

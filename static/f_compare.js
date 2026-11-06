@@ -71,13 +71,72 @@ function ctStats(tl, a, b) {
 const ctName = (c) => `${tr(c.from || '—')} → ${tr(c.to || '—')}`;
 const ctDate = (c) => new Date(c.t0).toLocaleDateString(LOC(), { day: 'numeric', month: 'short' }) + ' ' + ctTod(c.t0);
 const ctDot = (c) => `<i class="ct-dot" style="background:${c}"></i>`;
-function ctMap(el, view) {
+/* buton "ecran complet" pe harta: Fullscreen API unde exista; altfel (iOS Safari nu il are pe elemente obisnuite) elementul acopera singur tot ecranul. Escape il inchide in ambele moduri. */
+function fsSet(host, on, btn, m) {
+  host.classList.toggle('fs-on', on);
+  document.body.classList.toggle('fs-lock', !!document.querySelector('.fs-on'));
+  if (btn) { btn.textContent = on ? '✕' : '⛶'; btn.setAttribute('aria-label', on ? X('Ieși din ecranul complet', 'Exit fullscreen') : X('Ecran complet', 'Fullscreen')); }
+  if (on && host.requestFullscreen) host.requestFullscreen().catch(() => {});
+  if (!on && document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+  [60, 350].forEach((ms) => setTimeout(() => { try { m.invalidateSize(); } catch (e) { /* harta nu mai exista */ } }, ms));
+}
+function fsControl(m, target) {
+  if (!window.L || !m || m.__fs) return;
+  m.__fs = true;
+  const host = target || m.getContainer();
+  const Ctl = window.L.Control.extend({
+    options: { position: 'topright' },
+    onAdd() {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'fsb'; b.textContent = '⛶'; b.setAttribute('aria-label', X('Ecran complet', 'Fullscreen'));
+      window.L.DomEvent.disableClickPropagation(b);
+      b.onclick = (e) => { e.preventDefault(); fsSet(host, !host.classList.contains('fs-on'), b, m); };
+      return b;
+    },
+  });
+  new Ctl().addTo(m);
+}
+addEventListener('keydown', (e) => { if (e.key === 'Escape') document.querySelectorAll('.fs-on').forEach((h) => { h.classList.remove('fs-on'); document.body.classList.remove('fs-lock'); document.querySelectorAll('.fsb').forEach((b) => { b.textContent = '⛶'; }); }); });
+document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) { document.querySelectorAll('.fs-on').forEach((h) => h.classList.remove('fs-on')); document.body.classList.remove('fs-lock'); document.querySelectorAll('.fsb').forEach((b) => { b.textContent = '⛶'; }); } });
+function ctMap(el, view, fsTarget) {
   if (map) { map.remove(); map = null; }
   map = window.L.map(el, { zoomControl: false, attributionControl: true }).setView(view || [45.9, 25], 7);
-  window.L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+  mapTiles().addTo(map);
+  fsControl(map, fsTarget);
   return map;
 }
 const ctLive = (hash) => location.hash.startsWith(hash);
+
+/* sugestii: calatorii cu plecare si sosire apropiate de ale celei principale (features/similar.py), cu insigne acelasi drum / alt drum, sens invers, perioada anului si temperatura */
+const CTS = { f: 'all' };
+function ctSugRows(j, ids) {
+  const all = (j.suggestions || []).filter((s) => !ids.includes(s.id));
+  const nOther = all.filter((s) => s.same_road === false).length, nSame = all.filter((s) => s.same_road === true).length;
+  const shown = all.filter((s) => CTS.f === 'all' || (CTS.f === 'other' ? s.same_road === false : s.same_road === true));
+  const chip = (k, t, n) => `<button class="pchip ${CTS.f === k ? 'on' : ''}" data-ctsf="${k}">${t} <small>${n}</small></button>`;
+  const rows = shown.map((s) => {
+    const dt0 = new Date(T(s.start)).toLocaleDateString(LOC(), { day: 'numeric', month: 'short', year: '2-digit' });
+    const season = s.season_days <= 20 ? X('aceeași perioadă a anului', 'same time of year') : '±' + s.season_days + ' ' + X('zile față de perioada ta', 'days from your time of year');
+    const road = s.same_road === true ? `<span class="tg">${X('același drum', 'same road')}</span>` : s.same_road === false ? `<span class="tg" style="background:#ff9a3c33">${X('alt drum', 'other road')} · ${s.overlap}% ${X('suprapus', 'shared')}</span>` : '';
+    return `<a class="item" href="#" data-ctadd="${s.id}"><div class="t"><span>${esc(dt0)}${s.year_ago >= 1 ? ' · ' + X('acum ' + s.year_ago + (s.year_ago === 1 ? ' an' : ' ani'), s.year_ago + (s.year_ago === 1 ? ' year ago' : ' years ago')) : ''}</span><span class="arr">·</span><span>${esc(tr(s.start_name || '—'))} → ${esc(tr(s.end_name || '—'))}</span>${road}${s.reverse ? `<span class="tg">${X('sens invers', 'reverse')}</span>` : ''}</div>
+      <div class="m"><span><b>${nf(s.km, 1)}</b> km <small>(${s.dkm > 0 ? '+' : ''}${nf(s.dkm, 0)}%)</small></span>${s.wh_km != null ? `<span><b>${nf(s.wh_km)}</b> Wh/km</span>` : ''}<span><b>${hm(s.total_min)}</b></span>${s.temp != null ? `<span><b>${nf(s.temp, 0)}°</b>${s.dtemp != null ? ' <small>(' + (s.dtemp > 0 ? '+' : '') + nf(s.dtemp, 0) + '°)</small>' : ''}</span>` : ''}<span>${season}</span>${s.n_charges ? `<span>${s.n_charges} ${X('încărcări', 'charges')}</span>` : ''}</div></a>`;
+  }).join('');
+  return `<div class="pchips">${chip('all', X('Toate', 'All'), all.length)}${chip('other', X('Alt drum', 'Other road'), nOther)}${chip('same', X('Același drum', 'Same road'), nSame)}</div>${rows || `<p class="note">${X('Nimic pentru filtrul ales.', 'Nothing for this filter.')}</p>`}`;
+}
+async function ctSuggest() {
+  const box = document.getElementById('ct_sim'), cm = window.__cmp;
+  if (!box || !cm || !cm.ids.length) return;
+  box.innerHTML = `<p class="note">${X('Caut călătorii similare…', 'Looking for similar trips…')}</p>`;
+  let j; try { j = await api('/api/trips/similar?id=' + cm.ids[0] + '&car=' + car); } catch (e) { box.innerHTML = ''; return; }
+  if (document.getElementById('ct_sim') !== box) return;                          // s-a schimbat pagina intre timp
+  if (!(j.suggestions || []).length) { box.innerHTML = `<p class="note">${X('Nicio călătorie similară (plecare și sosire la sub ' + nf(j.radius_km || 1, 1) + ' km, distanța ±20%).', 'No similar trip (start and end within ' + nf(j.radius_km || 1, 1) + ' km, distance ±20%).')}</p>`; return; }
+  const draw = () => {
+    box.innerHTML = `<h2>${X('Călătorii similare', 'Similar trips')}</h2><div class="card" style="padding:8px 12px"><p class="note" style="margin:0 0 6px">${X('Aceeași plecare și sosire ca principala (și în sens invers), distanță apropiată; cele din aceeași perioadă a anului sunt primele. Atinge una ca s-o compari.', 'Same start and end as the main trip (and the reverse), similar distance; the ones from the same time of year come first. Tap one to compare it.')}${j.total > j.suggestions.length ? ' ' + X('Primele ' + j.suggestions.length + ' din ' + j.total + '.', 'First ' + j.suggestions.length + ' of ' + j.total + '.') : ''}</p>${ctSugRows(j, cm.ids)}</div>`;
+    box.querySelectorAll('[data-ctsf]').forEach((b) => b.onclick = () => { CTS.f = b.dataset.ctsf; draw(); });
+    box.querySelectorAll('[data-ctadd]').forEach((a) => a.onclick = (e) => { e.preventDefault(); location.hash = '#/compare/' + [...cm.ids, +a.dataset.ctadd].join(','); });
+  };
+  draw();
+}
 
 /* ================= COMPARE ================= */
 const CMP = { raf: 0 };
@@ -98,10 +157,10 @@ PAGES.compare = {
     const chips = trips.map((c, i) => `<div class="ct-trip">${ctDot(CT_COL[i])}<div><b>${i === 0 ? X('Principală', 'Main trip') : X('Comparația ', 'Comparison ') + i}</b><small>${esc(ctName(c))} · ${esc(ctDate(c))}</small></div><a href="#" data-ctrm="${c.id}" aria-label="${X('Scoate', 'Remove')}">✕</a></div>`).join('');
     const picker = ids.length < 3 ? `<div class="addf" style="margin-top:10px"><label>${ids.length ? X('Adaugă o comparație', 'Add a comparison') : X('Alege călătoria principală', 'Pick the main trip')}<select id="ct_add"><option value="">—</option>${opts}</select></label></div>` : '';
     if (!trips.length) return head + `<div class="card cfg">${picker}</div>`;
-    return head + `<div class="card cfg" style="padding:10px 14px">${chips}${picker}</div>
-      <div class="map big" id="ctmap" style="height:52vh;margin-top:12px"></div>
+    return head + `<div class="card cfg" style="padding:10px 14px">${chips}${picker}</div>${ids.length < 3 ? '<div id="ct_sim"></div>' : ''}
+      <div id="ctfs"><div class="map big" id="ctmap" style="height:52vh;margin-top:12px"></div>
       <div class="card ct-ctl"><div class="row"><button class="ct-play" id="ct_play" aria-label="play">❚❚</button><input type="range" id="ct_sl" min="0" max="1000" value="0" style="flex:1"><b id="ct_t" class="ct-clk">0m 00s</b></div>
-        <div class="seg ct-spd" style="margin:8px 0 0">${[1, 2, 4, 8].map((n) => `<button data-ctsp="${n}" class="${n === 1 ? 'on' : ''}">${n}×</button>`).join('')}</div></div>
+        <div class="seg ct-spd" style="margin:8px 0 0">${[1, 2, 4, 8].map((n) => `<button data-ctsp="${n}" class="${n === 1 ? 'on' : ''}">${n}×</button>`).join('')}</div></div></div>
       <h2>${X('Statistici', 'Statistics')}</h2><div class="card" style="overflow-x:auto;padding:8px 6px"><table class="ct-tab" id="ct_tab"></table></div>`;
   },
   after() {
@@ -109,15 +168,16 @@ PAGES.compare = {
     const go = (ids) => { location.hash = '#/compare' + (ids.length ? '/' + ids.join(',') : ''); };
     if (sel) sel.onchange = () => { if (sel.value) go([...window.__cmp.ids, +sel.value]); };
     document.querySelectorAll('[data-ctrm]').forEach((a) => a.onclick = (e) => { e.preventDefault(); go(window.__cmp.ids.filter((x) => x !== +a.dataset.ctrm)); });
+    ctSuggest();
     const trips = window.__cmp.trips, el = document.getElementById('ctmap');
     if (!el || !window.L || !trips.length) return;
-    const hash = location.hash, m = ctMap(el);
+    const hash = location.hash, m = ctMap(el, null, document.getElementById('ctfs'));
     const allPts = [];
     const dur = Math.max(...trips.map((c) => c.t1 - c.t0)), dd = trips.map((c) => c.t1 - c.t0);
     const mks = trips.map((c, i) => {
       const ll = c.tl.map((p) => [p.lat, p.lon]); allPts.push(...ll);
       window.L.polyline(ll, { color: CT_COL[i], weight: 4, opacity: .28 }).addTo(m);
-      const done = window.L.polyline([], { color: CT_COL[i], weight: 6, opacity: .95, lineCap: 'round' }).addTo(m);
+      const done = window.L.polyline([], { color: CT_COL[i], weight: 6, opacity: .95, lineCap: 'round', lineJoin: 'round', className: 'glow' }).addTo(m);
       const mk = window.L.marker(ll[0], { icon: window.L.divIcon({ className: '', iconSize: [0, 0], html: `<div class="ct-car" style="--c:${CT_COL[i]}"><u></u><div class="ct-lb p${i}"></div></div>` }), zIndexOffset: 500 - i }).addTo(m);
       return { mk, done, lb: null, ar: null };
     });

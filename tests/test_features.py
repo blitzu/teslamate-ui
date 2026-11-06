@@ -2069,6 +2069,42 @@ class CreditsTests(Isolated):
         self.assertIn('usage', j['packs'][0])
 
 
+class SimilarTripsTests(Isolated):
+    def trip(self, tid, start, a, b, km, **k):
+        return dict(dict(id=tid, start=start, end=start, start_name='A', end_name='B', km=km, kwh=km * 0.15, wh_km=150, total_min=60, n_drives=1, n_charges=0, temp=10.0,
+                         a_lat=a[0], a_lon=a[1], b_lat=b[0], b_lon=b[1]), **k)
+
+    def test_candidates_match_endpoints_distance_and_direction_and_rank_by_season(self):
+        from features import similar as SM
+        A, B = (44.40, 26.10), (45.65, 25.60)
+        main = self.trip(1, '2026-11-02T08:00:00', A, B, 200.0)
+        near = lambda p: (p[0] + 0.002, p[1] + 0.002)                     # ~250 m
+        trips = [main,
+                 self.trip(2, '2026-10-20T08:00:00', near(A), near(B), 205.0),                 # aceeasi perioada, plecare+sosire apropiate
+                 self.trip(3, '2025-05-10T08:00:00', near(A), near(B), 205.0),                 # la fel, dar alta perioada a anului
+                 self.trip(4, '2026-09-01T08:00:00', near(B), near(A), 198.0),                 # sens invers
+                 self.trip(5, '2026-09-02T08:00:00', (44.60, 26.10), B, 200.0),                # plecarea la ~22 km: nu
+                 self.trip(6, '2026-09-03T08:00:00', near(A), near(B), 300.0)]                  # distanta prea diferita: nu
+        out = SM.candidates(main, trips)
+        self.assertEqual([c['id'] for c in out], [2, 4, 3])                  # (4 are sezon mai departe decat 2, dar mai aproape decat 3)
+        self.assertTrue(out[1]['reverse'] and not out[0]['reverse'])
+        self.assertEqual(out[0]['dtemp'], 0.0)
+        self.assertEqual(SM.candidates(self.trip(9, '2026-11-02T08:00:00', (None, None), B, 200.0), trips), [])
+
+    def test_season_distance_wraps_around_new_year(self):
+        from features import similar as SM
+        self.assertEqual(SM.doy_gap(dt.datetime(2026, 12, 28), dt.datetime(2027, 1, 3)), 6)
+        self.assertEqual(SM.doy_gap(dt.datetime(2026, 1, 1), dt.datetime(2026, 7, 2)), 182)
+
+    def test_overlap_tells_the_same_road_from_another_one(self):
+        from features import similar as SM
+        road1 = [(44.40 + i * 0.012, 26.10 - i * 0.005) for i in range(100)]
+        same = [(la + 0.0005, lo + 0.0005) for la, lo in road1[::3]]          # acelasi drum, alte esantioane
+        other = [(la, lo + 0.06) for la, lo in road1]                           # drum paralel la ~5 km
+        self.assertGreaterEqual(SM.overlap(SM.thin(road1), SM.thin(same)), 0.95)
+        self.assertLessEqual(SM.overlap(SM.thin(road1), SM.thin(other)), 0.1)
+
+
 class LiveDriveTests(Isolated):
     def lv(self, **k):
         return dict(dict(state='driving', shift_state='D', latitude=44.40, longitude=26.10, heading=135, speed=45, battery_level=60, odometer=5012.0, ideal_battery_range_km=290.0, power=18), **k)

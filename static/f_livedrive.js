@@ -20,7 +20,7 @@ function liveDriveBanner(L) {
 }
 
 const LD = { el: null, map: null, layers: null, timer: null, fit: true, data: null, idle: 0 };
-const ldCarIcon = (h) => window.L.divIcon({ className: '', iconSize: [34, 34], iconAnchor: [17, 17], html: `<svg class="ldcar" viewBox="0 0 34 34" style="transform:rotate(${Math.round(h || 0)}deg)"><circle cx="17" cy="17" r="15" fill="#1f6feb" stroke="#fff" stroke-width="3"/><path d="M17 6l7 17-7-4-7 4z" fill="#fff"/></svg>` });
+const ldCarIcon = (h) => window.L.divIcon({ className: '', iconSize: [34, 34], iconAnchor: [17, 17], html: `<i class="ldpulse"></i><svg class="ldcar" viewBox="0 0 34 34" style="transform:rotate(${Math.round(h || 0)}deg)"><circle cx="17" cy="17" r="15" fill="#1f6feb" stroke="#fff" stroke-width="3"/><path d="M17 6l7 17-7-4-7 4z" fill="#fff"/></svg>` });
 const ldPinIcon = () => window.L.divIcon({ className: '', iconSize: [30, 40], iconAnchor: [15, 38], html: '<svg class="ldpin" viewBox="0 0 30 40"><path d="M15 1C7 1 1 7 1 15c0 10 14 24 14 24s14-14 14-24C29 7 23 1 15 1z" fill="#e5484d" stroke="#fff" stroke-width="2"/><circle cx="15" cy="15" r="5" fill="#5b1013"/></svg>' });
 
 function ldStop() { if (LD.timer) { clearInterval(LD.timer); LD.timer = null; } }
@@ -36,7 +36,8 @@ function ldMount(el, lat, lon) {
   el.innerHTML = ''; el.appendChild(LD.el);
   if (!LD.map) {
     LD.map = window.L.map(LD.el, { zoomControl: false }).setView([lat ?? 44.43, lon ?? 26.1], 14);
-    window.L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(LD.map);
+    mapTiles().addTo(LD.map);
+    if (typeof fsControl === 'function') fsControl(LD.map);
     LD.layers = null; LD.fit = true;
   } else LD.map.invalidateSize();
   if (LD.data && LD.data.active) { ldFill(LD.data); if (LD.fit) ldDraw(LD.data); }
@@ -52,7 +53,16 @@ function ldDraw(r) {
   const me = r.lat != null && r.lon != null ? [r.lat, r.lon] : pts[pts.length - 1];
   const ro = r.route || {};
   const to = ro.lat != null && ro.lon != null ? [ro.lat, ro.lon] : null;
-  if (pts.length > 1) P.polyline(pts, { color: '#2f7bff', weight: 6, opacity: .95, lineCap: 'round', lineJoin: 'round' }).addTo(g);
+  if (pts.length > 1) {                                                              // traseul: stralucire + culoare dupa viteza (albastru lent, verde, auriu, rosu rapid)
+    P.polyline(pts, { color: '#4c8dff', weight: 16, opacity: .15, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(g);
+    const raw = (r.points || []).filter((p) => p[1] != null && p[2] != null), col = (v) => v < 30 ? '#7aa8ff' : v < 70 ? '#6fd6b8' : v < 110 ? '#d9ba80' : '#ef7a7a';
+    let run = [[raw[0][1], raw[0][2]]], c = col(raw[0][3] || 0);
+    for (let i = 1; i < raw.length; i++) {
+      const cc = col(raw[i][3] || 0); run.push([raw[i][1], raw[i][2]]);
+      if (cc !== c || i === raw.length - 1) { P.polyline(run, { color: c, weight: 6, opacity: .96, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(g); run = [[raw[i][1], raw[i][2]]]; c = cc; }
+    }
+    P.circleMarker(pts[0], { radius: 6, color: '#0b0d10', weight: 3, fillColor: '#6fd6b8', fillOpacity: 1, interactive: false }).addTo(g);          // punctul de plecare
+  }
   if (me && to) P.polyline([me, to], { color: '#9fb4d6', weight: 3, opacity: .8, dashArray: '2 9', lineCap: 'round' }).addTo(g);          // pana la destinatie: linie dreapta (traseul exact nu e publicat)
   if (to) P.marker(to, { icon: ldPinIcon(), interactive: false }).addTo(g);
   if (me) P.marker(me, { icon: ldCarIcon(r.heading), interactive: false, zIndexOffset: 1000 }).addTo(g);
