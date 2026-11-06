@@ -3266,8 +3266,8 @@ def api_state():
 
 CSP = os.environ.get('CSP') or (
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' data: blob: https://tile.openstreetmap.org https://static-assets.tesla.com; "
-    "connect-src 'self' https://tile.openstreetmap.org https://api.open-meteo.com https://archive-api.open-meteo.com; "
+    "img-src 'self' data: blob: https://tile.openstreetmap.org https://tiles.openfreemap.org https://static-assets.tesla.com; "
+    "connect-src 'self' https://tile.openstreetmap.org https://tiles.openfreemap.org https://api.open-meteo.com https://archive-api.open-meteo.com; "
     "worker-src 'self' blob:; child-src blob:; font-src 'self' data:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'")
 SEC_HEADERS = [('Content-Security-Policy', CSP if 'frame-ancestors' in CSP else CSP + "; frame-ancestors 'none'"), ('X-Frame-Options', 'DENY'), ('X-Content-Type-Options', 'nosniff'), ('Referrer-Policy', 'strict-origin-when-cross-origin'),
                ('Permissions-Policy', 'geolocation=(), camera=(), microphone=(), payment=()')]

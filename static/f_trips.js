@@ -43,16 +43,18 @@ PAGES.tripd = {
       <div class="map big" id="tmap"></div>
       <div class="grid g3" style="margin-top:12px">${stat(X('Distanță', 'Distance'), nf(t.km, 1), 'km')}${stat(X('Timp total', 'Total time'), hm(t.total_min))}${stat(X('La volan', 'Driving'), hm(t.drive_min))}${stat(X('Energie folosită', 'Energy used'), nf(t.kwh, 1), 'kWh')}${stat(X('Consum', 'Consumption'), t.wh_km ? t.wh_km : '—', 'Wh/km')}${stat(X('Viteză max', 'Top speed'), nf(t.speed_max), 'km/h')}</div>
       ${driveCostCard(t, X('Cost călătorie', 'Trip cost'))}
+      <div id="ct_sim"></div>
       ${t.n_charges ? `<div class="grid" style="margin-top:10px">${stat(X('Încărcări pe drum', 'Charges on the way'), t.n_charges + '×  +' + nf(t.charge_kwh, 1), 'kWh')}${stat(X('Cost încărcări', 'Charging cost'), nf(t.charge_cost, 2), esc(cu))}</div>` : ''}
       <h2>${X('Cursele din călătorie', 'Drives in this trip')} (${t.n_drives})</h2><div class="list">${t.drive_ids.map((id) => `<a class="item" href="#/drive/${id}"><div class="t"><span>${X('Cursa', 'Drive')} #${id}</span><span class="arr">→</span></div></a>`).join('')}</div>`;
   },
   after(arg) {
+    if (typeof ctSuggest === 'function') ctSuggest(+arg, [+arg], (id) => { location.hash = '#/compare/' + arg + ',' + id; }, true);          // sugestii de calatorii similare (tacut cand nu exista)
     setTimeout(async () => {
       const el = $('#tmap'); if (!el || !window.L) return;
       let d; try { d = await api('/api/trips/detail?id=' + encodeURIComponent(arg)); } catch (e) { el.innerHTML = `<div class="empty">${X('Harta nu e disponibilă.', 'The map is not available.')}</div>`; return; }
       if (map) { map.remove(); map = null; }
       map = window.L.map(el, { zoomControl: false }).setView([44.4, 26.1], 8);
-      mapTiles().addTo(map);
+      mapBase(map);
       const col = (v) => v < 30 ? '#7aa8ff' : v < 70 ? '#6fd6b8' : v < 110 ? '#d9ba80' : '#ef7a7a', all = [];
       d.segments.forEach((s) => s.points.forEach((p, i, a) => { all.push([p[1], p[2]]); if (i) window.L.polyline([[a[i - 1][1], a[i - 1][2]], [p[1], p[2]]], { color: col(p[3] || 0), weight: 5, opacity: .95, lineCap: 'round' }).addTo(map); }));
       d.stops.forEach((s) => window.L.circleMarker([s.lat, s.lon], { radius: 8, color: '#0b0d10', weight: 3, fillColor: s.kind === 'charge' ? '#d9ba80' : '#9aa4af', fillOpacity: 1 }).addTo(map).bindTooltip(s.kind === 'charge' ? `⚡ ${esc(s.name || '')} +${nf(s.kwh, 1)} kWh` : esc(s.name || '—')));

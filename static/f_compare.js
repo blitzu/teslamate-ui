@@ -53,11 +53,19 @@ function ctAt(tl, t) {
 /* statistici pe intervalul [a, b] (ms) */
 function ctStats(tl, a, b) {
   const A = ctAt(tl, a), B = ctAt(tl, b);
-  const s = { dur: b - a, dist: B.dist - A.dist, used: B.used - A.used, regen: B.regen - A.regen, chg: B.chg - A.chg, soc0: A.soc, soc1: B.soc, vmax: Math.max(A.v, B.v), move: 0, stops: 0, emin: Math.min(A.ele, B.ele), emax: Math.max(A.ele, B.ele), up: 0, down: 0 };
-  let last = A, inStop = false;
+  const s = { dur: b - a, dist: B.dist - A.dist, used: B.used - A.used, regen: B.regen - A.regen, chg: B.chg - A.chg, soc0: A.soc, soc1: B.soc, vmax: Math.max(A.v, B.v), move: 0, stops: 0, emin: Math.min(A.ele, B.ele), emax: Math.max(A.ele, B.ele), up: 0, down: 0,
+    roll: 0, idle: 0, pause: 0, chgT: 0, idleN: 0, idleMax: 0 };
+  let last = A, inStop = false, run = 0;
+  const endRun = () => { if (run >= 15000) { s.idleN++; s.idleMax = Math.max(s.idleMax, run); } run = 0; };            // o oprire in trafic = cel putin 15 s pe loc in timpul cursei
   const step = (p) => {
     const dt = Math.min(p.t, b) - Math.max(last.t, a);
-    if (dt > 0) { if (p.st === 'd') s.move += dt; else if (!inStop) { s.stops++; inStop = true; } }
+    if (dt > 0) {
+      if (p.st === 'd') {
+        s.move += dt;
+        const vi = (p.dist - last.dist) / (dt / 3.6e6);                                      // viteza pe interval din distanta (nu din vitezometru): rezista la esantionare rara
+        if (vi < 3) { s.idle += dt; run += dt; } else { s.roll += dt; endRun(); }
+      } else { endRun(); s.pause += dt; if (p.st === 'c') s.chgT += dt; if (!inStop) { s.stops++; inStop = true; } }
+    }
     if (p.st === 'd') inStop = false;
     const d = p.ele - last.ele; if (d > 0) s.up += d; else s.down -= d;
     s.vmax = Math.max(s.vmax, p.v); s.emin = Math.min(s.emin, p.ele); s.emax = Math.max(s.emax, p.ele);
@@ -65,7 +73,8 @@ function ctStats(tl, a, b) {
   };
   tl.forEach((p) => { if (p.t > a && p.t < b) step(p); });
   step(Object.assign({}, B, { st: B.st }));
-  s.net = s.used - s.regen; s.vavg = s.move > 0 ? s.dist / (s.move / 3.6e6) : 0; s.wh = s.dist > .2 ? s.net * 1000 / s.dist : null;
+  endRun();
+  s.net = s.used - s.regen; s.vavg = s.roll > 0 ? s.dist / (s.roll / 3.6e6) : (s.move > 0 ? s.dist / (s.move / 3.6e6) : 0); s.vtot = s.dur > 0 ? s.dist / (s.dur / 3.6e6) : 0; s.pct = s.dur > 0 ? s.roll / s.dur * 100 : 0; s.wh = s.dist > .2 ? s.net * 1000 / s.dist : null;
   return s;
 }
 const ctName = (c) => `${tr(c.from || '—')} → ${tr(c.to || '—')}`;
@@ -74,6 +83,7 @@ const ctDot = (c) => `<i class="ct-dot" style="background:${c}"></i>`;
 /* buton "ecran complet" pe harta: Fullscreen API unde exista; altfel (iOS Safari nu il are pe elemente obisnuite) elementul acopera singur tot ecranul. Escape il inchide in ambele moduri. */
 function fsSet(host, on, btn, m) {
   host.classList.toggle('fs-on', on);
+  for (let p = host.parentElement; p && p.id !== 'view' && p !== document.body; p = p.parentElement) p.classList.toggle('fs-par', on);          // pasi parintii izolati (z-index) ca sa nu acopere ecranul complet
   document.body.classList.toggle('fs-lock', !!document.querySelector('.fs-on'));
   if (btn) { btn.textContent = on ? '✕' : '⛶'; btn.setAttribute('aria-label', on ? X('Ieși din ecranul complet', 'Exit fullscreen') : X('Ecran complet', 'Fullscreen')); }
   if (on && host.requestFullscreen) host.requestFullscreen().catch(() => {});
@@ -96,12 +106,13 @@ function fsControl(m, target) {
   });
   new Ctl().addTo(m);
 }
-addEventListener('keydown', (e) => { if (e.key === 'Escape') document.querySelectorAll('.fs-on').forEach((h) => { h.classList.remove('fs-on'); document.body.classList.remove('fs-lock'); document.querySelectorAll('.fsb').forEach((b) => { b.textContent = '⛶'; }); }); });
-document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) { document.querySelectorAll('.fs-on').forEach((h) => h.classList.remove('fs-on')); document.body.classList.remove('fs-lock'); document.querySelectorAll('.fsb').forEach((b) => { b.textContent = '⛶'; }); } });
+const fsClear = () => { document.querySelectorAll('.fs-on,.fs-par').forEach((h) => h.classList.remove('fs-on', 'fs-par')); document.body.classList.remove('fs-lock'); document.querySelectorAll('.fsb').forEach((b) => { if (b.textContent === '✕') b.textContent = '⛶'; }); };
+addEventListener('keydown', (e) => { if (e.key === 'Escape') fsClear(); });
+document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) fsClear(); });
 function ctMap(el, view, fsTarget) {
   if (map) { map.remove(); map = null; }
   map = window.L.map(el, { zoomControl: false, attributionControl: true }).setView(view || [45.9, 25], 7);
-  mapTiles().addTo(map);
+  mapBase(map);
   fsControl(map, fsTarget);
   return map;
 }
@@ -123,17 +134,17 @@ function ctSugRows(j, ids) {
   }).join('');
   return `<div class="pchips">${chip('all', X('Toate', 'All'), all.length)}${chip('other', X('Alt drum', 'Other road'), nOther)}${chip('same', X('Același drum', 'Same road'), nSame)}</div>${rows || `<p class="note">${X('Nimic pentru filtrul ales.', 'Nothing for this filter.')}</p>`}`;
 }
-async function ctSuggest() {
-  const box = document.getElementById('ct_sim'), cm = window.__cmp;
-  if (!box || !cm || !cm.ids.length) return;
-  box.innerHTML = `<p class="note">${X('Caut călătorii similare…', 'Looking for similar trips…')}</p>`;
-  let j; try { j = await api('/api/trips/similar?id=' + cm.ids[0] + '&car=' + car); } catch (e) { box.innerHTML = ''; return; }
+async function ctSuggest(mainId, ids, pick, quiet) {
+  const box = document.getElementById('ct_sim');
+  if (!box || !(mainId > 0)) return;
+  box.innerHTML = quiet ? '' : `<p class="note">${X('Caut călătorii similare…', 'Looking for similar trips…')}</p>`;
+  let j; try { j = await api('/api/trips/similar?id=' + mainId + '&car=' + car); } catch (e) { box.innerHTML = ''; return; }
   if (document.getElementById('ct_sim') !== box) return;                          // s-a schimbat pagina intre timp
-  if (!(j.suggestions || []).length) { box.innerHTML = `<p class="note">${X('Nicio călătorie similară (plecare și sosire la sub ' + nf(j.radius_km || 1, 1) + ' km, distanța ±20%).', 'No similar trip (start and end within ' + nf(j.radius_km || 1, 1) + ' km, distance ±20%).')}</p>`; return; }
+  if (!(j.suggestions || []).length) { box.innerHTML = quiet ? '' : `<p class="note">${X('Nicio călătorie similară (plecare și sosire la sub ' + nf(j.radius_km || 1, 1) + ' km, distanța ±20%).', 'No similar trip (start and end within ' + nf(j.radius_km || 1, 1) + ' km, distance ±20%).')}</p>`; return; }
   const draw = () => {
-    box.innerHTML = `<h2>${X('Călătorii similare', 'Similar trips')}</h2><div class="card" style="padding:8px 12px"><p class="note" style="margin:0 0 6px">${X('Aceeași plecare și sosire ca principala (și în sens invers), distanță apropiată; cele din aceeași perioadă a anului sunt primele. Atinge una ca s-o compari.', 'Same start and end as the main trip (and the reverse), similar distance; the ones from the same time of year come first. Tap one to compare it.')}${j.total > j.suggestions.length ? ' ' + X('Primele ' + j.suggestions.length + ' din ' + j.total + '.', 'First ' + j.suggestions.length + ' of ' + j.total + '.') : ''}</p>${ctSugRows(j, cm.ids)}</div>`;
+    box.innerHTML = `<h2>${X('Călătorii similare', 'Similar trips')}</h2><div class="card" style="padding:8px 12px"><p class="note" style="margin:0 0 6px">${X('Aceeași plecare și sosire (și în sens invers), distanță apropiată; cele din aceeași perioadă a anului sunt primele. Atinge una ca s-o compari.', 'Same start and end (and the reverse), similar distance; the ones from the same time of year come first. Tap one to compare it.')}${j.total > j.suggestions.length ? ' ' + X('Primele ' + j.suggestions.length + ' din ' + j.total + '.', 'First ' + j.suggestions.length + ' of ' + j.total + '.') : ''}</p>${ctSugRows(j, ids)}</div>`;
     box.querySelectorAll('[data-ctsf]').forEach((b) => b.onclick = () => { CTS.f = b.dataset.ctsf; draw(); });
-    box.querySelectorAll('[data-ctadd]').forEach((a) => a.onclick = (e) => { e.preventDefault(); location.hash = '#/compare/' + [...cm.ids, +a.dataset.ctadd].join(','); });
+    box.querySelectorAll('[data-ctadd]').forEach((a) => a.onclick = (e) => { e.preventDefault(); pick(+a.dataset.ctadd); });
   };
   draw();
 }
@@ -168,7 +179,7 @@ PAGES.compare = {
     const go = (ids) => { location.hash = '#/compare' + (ids.length ? '/' + ids.join(',') : ''); };
     if (sel) sel.onchange = () => { if (sel.value) go([...window.__cmp.ids, +sel.value]); };
     document.querySelectorAll('[data-ctrm]').forEach((a) => a.onclick = (e) => { e.preventDefault(); go(window.__cmp.ids.filter((x) => x !== +a.dataset.ctrm)); });
-    ctSuggest();
+    ctSuggest((window.__cmp.ids || [])[0], window.__cmp.ids, (id) => { location.hash = '#/compare/' + [...window.__cmp.ids, id].join(','); });
     const trips = window.__cmp.trips, el = document.getElementById('ctmap');
     if (!el || !window.L || !trips.length) return;
     const hash = location.hash, m = ctMap(el, null, document.getElementById('ctfs'));
@@ -206,8 +217,11 @@ PAGES.compare = {
     document.querySelectorAll('[data-ctsp]').forEach((b) => b.onclick = () => { sp = +b.dataset.ctsp; document.querySelectorAll('[data-ctsp]').forEach((x) => x.classList.toggle('on', x === b)); });
     const S = trips.map((c) => ctStats(c.tl, c.t0, c.t1));
     const rows = [
-      [X('Distanță', 'Distance'), (s) => nf(s.dist, 1) + ' km'], [X('Durată', 'Duration'), (s) => ctClock(s.dur)], [X('În mișcare', 'Moving'), (s) => ctClock(s.move)],
-      [X('Viteză medie (în mișcare)', 'Avg speed (moving)'), (s) => nf(s.vavg) + ' km/h'], [X('Viteză maximă', 'Top speed'), (s) => nf(s.vmax) + ' km/h'],
+      [X('Distanță', 'Distance'), (s) => nf(s.dist, 1) + ' km'], [X('Durată totală', 'Total time'), (s) => ctClock(s.dur)],
+      [X('În mișcare (rulând)', 'Moving (rolling)'), (s) => ctClock(s.roll)], [X('Staționar în trafic (semafoare, cozi)', 'Stationary in traffic (lights, queues)'), (s) => ctClock(s.idle)],
+      [X('Oprit între curse (opriri, încărcare)', 'Stopped between drives (stops, charging)'), (s) => ctClock(s.pause)], [X('Din timp, în mișcare', 'Share of time moving'), (s) => nf(s.pct) + '%'],
+      [X('Opriri în trafic (peste 15 s)', 'Traffic stops (over 15 s)'), (s) => nf(s.idleN)], [X('Cea mai lungă oprire în trafic', 'Longest traffic stop'), (s) => s.idleMax ? ctClock(s.idleMax) : '—'],
+      [X('Viteză medie în mișcare', 'Avg speed while moving'), (s) => nf(s.vavg) + ' km/h'], [X('Viteză medie totală (cu opriri)', 'Avg speed overall (with stops)'), (s) => nf(s.vtot) + ' km/h'], [X('Viteză maximă', 'Top speed'), (s) => nf(s.vmax) + ' km/h'],
       [X('Consum net', 'Net used'), (s) => nf(s.net, 1) + ' kWh'], [X('Eficiență', 'Efficiency'), (s) => s.wh != null ? nf(s.wh) + ' Wh/km' : '—'],
       [X('Recuperat', 'Regen'), (s) => nf(s.regen, 1) + ' kWh'], [X('Încărcat pe drum', 'Charged on the way'), (s) => nf(s.chg, 1) + ' kWh'],
       [X('Baterie', 'Battery'), (s) => nf(s.soc0) + '→' + nf(s.soc1) + '%'], [X('Opriri', 'Stops'), (s) => nf(s.stops)],
@@ -264,7 +278,7 @@ PAGES.timeline = {
       q('tl_d').textContent = nf(s.dist, 1) + ' km'; q('tl_e').textContent = ctClock(s.dur);
       q('tl_a0').textContent = ctTod(a); q('tl_a1').textContent = ctTod(b);
       q('tl_cur').innerHTML = `<h3>${X('La cursor', 'At cursor')}<small>${ctTod(p.t)}</small></h3><div class="ct-g">${row(X('Viteză', 'Speed'), nf(p.v) + ' km/h')}${row(X('Altitudine', 'Altitude'), nf(p.ele) + ' m')}${row(X('Baterie', 'Battery'), nf(p.soc) + '%')}${row(X('Distanță', 'Distance'), nf(p.dist, 1) + ' km')}${row(X('Consum net', 'Net used'), nf(p.used - p.regen, 1) + ' kWh')}${row(X('Încărcat', 'Charged'), nf(p.chg, 1) + ' kWh')}</div>`;
-      q('tl_gen').innerHTML = `<h3>${X('General', 'General')}<small>${X('selecție', 'selection')}</small></h3><div class="ct-g">${row(X('Viteză medie', 'Average speed'), nf(s.vavg, 1) + ' km/h')}${row(X('Viteză maximă', 'Top speed'), nf(s.vmax, 1) + ' km/h')}${row(X('Opriri', 'Stops'), nf(s.stops))}${row(X('În mișcare', 'Moving time'), ctClock(s.move))}${row(X('Distanță', 'Distance'), nf(s.dist, 1) + ' km')}${row(X('Durată', 'Duration'), ctClock(s.dur))}</div>`;
+      q('tl_gen').innerHTML = `<h3>${X('General', 'General')}<small>${X('selecție', 'selection')}</small></h3><div class="ct-g">${row(X('Viteză medie', 'Average speed'), nf(s.vavg, 1) + ' km/h')}${row(X('Viteză maximă', 'Top speed'), nf(s.vmax, 1) + ' km/h')}${row(X('Opriri', 'Stops'), nf(s.stops))}${row(X('În mișcare', 'Moving time'), ctClock(s.roll))}${row(X('Staționar în trafic', 'Stationary in traffic'), ctClock(s.idle))}${row(X('Opriri în trafic', 'Traffic stops'), nf(s.idleN) + (s.idleMax ? ' · ' + ctClock(s.idleMax) : ''))}${row(X('Distanță', 'Distance'), nf(s.dist, 1) + ' km')}${row(X('Durată', 'Duration'), ctClock(s.dur))}</div>`;
       q('tl_alt').innerHTML = `<h3>${X('Altitudine', 'Altitude')}<small>${X('selecție', 'selection')}</small></h3><div class="ct-g">${row(X('Minimă', 'Minimum'), nf(s.emin) + ' m')}${row(X('Maximă', 'Maximum'), nf(s.emax) + ' m')}${row(X('Urcare', 'Ascent'), '↑ ' + nf(s.up) + ' m')}${row(X('Coborâre', 'Descent'), '↓ ' + nf(s.down) + ' m')}</div>`;
       q('tl_en').innerHTML = `<h3>${X('Energie', 'Energy')}<small>${X('selecție', 'selection')}</small></h3><div class="ct-g">${row(X('Consum net', 'Net used'), nf(s.net, 1) + ' kWh')}${row(X('Recuperat', 'Regen'), nf(s.regen, 1) + ' kWh')}${row(X('Încărcat', 'Charged'), nf(s.chg, 1) + ' kWh')}${row(X('Eficiență', 'Efficiency'), s.wh != null ? nf(s.wh) + ' Wh/km' : '—')}${row(X('Baterie', 'Battery'), nf(s.soc0) + '→' + nf(s.soc1) + '%')}</div>`;
     }

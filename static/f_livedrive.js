@@ -36,7 +36,7 @@ function ldMount(el, lat, lon) {
   el.innerHTML = ''; el.appendChild(LD.el);
   if (!LD.map) {
     LD.map = window.L.map(LD.el, { zoomControl: false }).setView([lat ?? 44.43, lon ?? 26.1], 14);
-    mapTiles().addTo(LD.map);
+    mapBase(LD.map);
     if (typeof fsControl === 'function') fsControl(LD.map);
     LD.layers = null; LD.fit = true;
   } else LD.map.invalidateSize();
@@ -55,6 +55,7 @@ function ldDraw(r) {
   const to = ro.lat != null && ro.lon != null ? [ro.lat, ro.lon] : null;
   if (pts.length > 1) {                                                              // traseul: stralucire + culoare dupa viteza (albastru lent, verde, auriu, rosu rapid)
     P.polyline(pts, { color: '#4c8dff', weight: 16, opacity: .15, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(g);
+    P.polyline(pts, { color: '#0b0d10', weight: 10, opacity: .55, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(g);          // contur inchis: traseul se vede si pe hartile luminoase
     const raw = (r.points || []).filter((p) => p[1] != null && p[2] != null), col = (v) => v < 30 ? '#7aa8ff' : v < 70 ? '#6fd6b8' : v < 110 ? '#d9ba80' : '#ef7a7a';
     let run = [[raw[0][1], raw[0][2]]], c = col(raw[0][3] || 0);
     for (let i = 1; i < raw.length; i++) {

@@ -152,9 +152,53 @@ ${L.is_climate_on ? `<path class="heat ${hot}" d="M78 226q10-10 22 0t22 0"/><pat
 </g>${tp(24, 104, 'fl')}${tp(276, 104, 'fr')}${tp(24, 352, 'rl')}${tp(276, 352, 'rr')}</svg>`;
 }
 
-/* harta de baza: OpenStreetMap, innegrita din CSS (.leaflet-tile-pane) ca sa se potriveasca cu aplicatia */
-function mapTiles() {
-  return window.L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' });
+/* harta de baza, la alegere (butonul de pe harta; alegerea se tine pe acest dispozitiv): OpenStreetMap intunecata sau clara (dale raster) si hartile vectoriale OpenFreeMap
+   (fara cheie; incarcate doar cand le alegi: MapLibre + pluginul pentru Leaflet). Daca WebGL sau reteaua lipsesc, harta cade pe OpenStreetMap. */
+const MAP_STYLES = [
+  ['osm', 'OpenStreetMap · întunecată', 'OpenStreetMap · dark'],
+  ['osm-light', 'OpenStreetMap · clară', 'OpenStreetMap · light'],
+  ['ofm-dark', 'Vectorială · întunecată', 'Vector · dark'],
+  ['ofm-fiord', 'Vectorială · albastru închis', 'Vector · dark blue'],
+  ['ofm-liberty', 'Vectorială · colorată', 'Vector · colourful'],
+  ['ofm-bright', 'Vectorială · luminoasă', 'Vector · bright'],
+  ['ofm-positron', 'Vectorială · minimalistă', 'Vector · minimal'],
+];
+const mapStyleKey = () => { const k = lsGet('map_style', 'osm'); return MAP_STYLES.some((x) => x[0] === k) ? k : 'osm'; };
+function mapLoadVector() {
+  if (window.L && window.L.maplibreGL) return Promise.resolve();
+  if (!window.WebGLRenderingContext) return Promise.reject(new Error('WebGL'));
+  return loadMapLibre().then(() => new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'vendor/leaflet-maplibre-gl.js'; s.onload = res; s.onerror = () => rej(new Error('plugin')); document.head.appendChild(s); }));
+}
+function mapBase(map) {
+  if (!map || map.__mb) return;
+  map.__mb = { seq: 0 };
+  const osm = () => window.L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' });
+  const apply = async () => {
+    const my = ++map.__mb.seq, k = mapStyleKey(), cont = map.getContainer();
+    const put = (layer, dark) => { if (map.__mb.layer) { try { map.removeLayer(map.__mb.layer); } catch (e) { /* deja scos */ } } map.__mb.layer = layer.addTo(map); cont.classList.toggle('mp-dark', !!dark); };
+    if (!k.startsWith('ofm-')) { put(osm(), k === 'osm'); return; }
+    try {
+      await mapLoadVector();
+      if (my !== map.__mb.seq || !map._container) return;                                     // alt stil ales intre timp sau harta a fost inchisa
+      put(window.L.maplibreGL({ style: 'https://tiles.openfreemap.org/styles/' + k.slice(4), attribution: '© OpenFreeMap © OpenMapTiles · Data from OpenStreetMap' }), false);
+    } catch (e) { if (my === map.__mb.seq && map._container) put(osm(), true); }                  // fara WebGL / retea: harta clasica
+  };
+  const Ctl = window.L.Control.extend({
+    options: { position: 'topright' },
+    onAdd() {
+      const box = document.createElement('div'); box.className = 'msc';
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'fsb'; b.textContent = '🗺'; b.setAttribute('aria-label', X('Stilul hărții', 'Map style'));
+      const menu = document.createElement('div'); menu.className = 'msm'; menu.hidden = true;
+      const fill = () => { menu.innerHTML = MAP_STYLES.map((x) => `<button type="button" data-ms="${x[0]}" class="${x[0] === mapStyleKey() ? 'on' : ''}">${esc(X(x[1], x[2]))}</button>`).join(''); };
+      b.onclick = (e) => { e.preventDefault(); fill(); menu.hidden = !menu.hidden; };
+      menu.onclick = (e) => { const t = e.target.closest('[data-ms]'); if (!t) return; lsSet('map_style', t.dataset.ms); menu.hidden = true; apply(); };
+      window.L.DomEvent.disableClickPropagation(box); window.L.DomEvent.disableScrollPropagation(box);
+      box.append(b, menu);
+      return box;
+    },
+  });
+  new Ctl().addTo(map);
+  apply();
 }
 /* traseu cu stralucire: un strat lat si transparent sub linia propriu-zisa */
 function glowLine(pts, color, w) {
@@ -241,7 +285,7 @@ function drawMap(el, L) {
   if (map) { map.remove(); map = null; }
   const lat = L.latitude ?? 44.4268, lon = L.longitude ?? 26.1025;
   map = window.L.map(el, { zoomControl: false, attributionControl: true }).setView([lat, lon], 14);
-  mapTiles().addTo(map);
+  mapBase(map);
   window.L.marker([lat, lon], { icon: window.L.divIcon({ className: '', html: '<div class="pin"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }) }).addTo(map);
 }
 
@@ -326,7 +370,7 @@ async function pageDrive(id) {
     const el = $('#dmap'); if (!el || !window.L || pts.length < 2) return;
     if (map) { map.remove(); map = null; }
     map = window.L.map(el, { zoomControl: false }).setView([pts[0][1], pts[0][2]], 13);
-    mapTiles().addTo(map);
+    mapBase(map);
     const col = (v) => v < 30 ? '#7aa8ff' : v < 70 ? '#6fd6b8' : v < 110 ? '#d9ba80' : '#ef7a7a';
     for (let i = 1; i < pts.length; i++) window.L.polyline([[pts[i - 1][1], pts[i - 1][2]], [pts[i][1], pts[i][2]]], { color: col(pts[i][3] || 0), weight: 5, opacity: .95, lineCap: 'round' }).addTo(map);
     const dot = (p, c) => window.L.circleMarker([p[1], p[2]], { radius: 7, color: '#0b0d10', weight: 3, fillColor: c, fillOpacity: 1 }).addTo(map);

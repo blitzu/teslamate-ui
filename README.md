@@ -114,6 +114,7 @@ Set `NOTIFY_WEBHOOK` — see **[docs/notifications.md](docs/notifications.md)** 
 |---|---|---|---|
 | Tesla Fleet API (`fleet-api.prd.*.vn.cloud.tesla.com`, `auth.tesla.com`) | remote commands, live read of climate/charge settings, profiler | your OAuth token, the vehicle VIN, command parameters | server |
 | OpenStreetMap tiles (`tile.openstreetmap.org`) | map background | tile coordinates (and your IP address, as with any web map) | browser |
+| OpenFreeMap (`tiles.openfreemap.org`) | vector map backgrounds, only when you choose one with the 🗺 button on a map | style, tile and font requests (and your IP address, as with any web map); no key, no account | browser |
 | Open-Meteo (`api.open-meteo.com`, `archive-api.open-meteo.com`) | weather in the route replay | latitude/longitude rounded to 0.1° and the date | browser |
 | fuel-prices.eu | daily national fuel price for the ICE-car comparison | only the country name | server |
 | Overpass / OpenStreetMap (`overpass-api.de` and mirrors) | “Find the station” button on a charge | the coordinates of that charge, only when you press the button | server |

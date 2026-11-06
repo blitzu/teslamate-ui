@@ -3,6 +3,14 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.14.0 - 2026-11-06
+
+### New features
+- **Choose your map.** Every map in the app (Car, trips, drive pages, compare, timeline, live drive) has a 🗺 button in the top right corner with a list of styles: OpenStreetMap dark (the default, as before) and light, and the **OpenFreeMap vector maps** Dark, Dark blue, Colourful (Liberty), Bright and Minimal (Positron). Vector maps are sharper, zoom smoothly and have clear labels; they are free and need no key. The choice is remembered on each device. The vector map code (MapLibre and its Leaflet plugin) is loaded only when you pick one; without WebGL or network the map falls back to OpenStreetMap. Tile and style requests go to tiles.openfreemap.org when a vector map is chosen.
+- **Similar trips on every trip page.** The "Similar trips" card (same start and end, similar distance, same road / other road, time of year) now also shows on the page of each trip, so you no longer have to open Compare first; tap a suggestion to compare the two. The card stays hidden when there is nothing similar.
+- **Moving time versus time stood still.** The Compare statistics and the timeline now split the time: **moving** (rolling), **stationary in traffic** (lights, queues, while the drive is still on), **stopped between drives** (stops and charging), the share of the time spent moving, the number of traffic stops (over 15 seconds) and the longest one, and two average speeds: while moving and overall (with the stops). So two routes with the same distance but different traffic show why one was slower.
+- The live drive route has a dark outline so it also reads well on the light maps, and fullscreen now covers the whole screen, side menu included, on the live drive map too.
+
 ## 1.13.1 - 2026-11-06
 
 ### Fixes
