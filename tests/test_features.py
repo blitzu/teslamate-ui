@@ -1960,6 +1960,7 @@ class CreditsTests(Isolated):
 
     def tearDown(self):
         S.OWN.run('delete from credit_packs')
+        S.route_lookup('POST', '/api/credits/delete')[0](None, dict(id=0))                  # goleste si memoria ledgerului de vouchere
         S.meta_update(987655, dict(cost=None, station=''))
         super().tearDown()
 
@@ -2008,6 +2009,57 @@ class CreditsTests(Isolated):
         self.assertEqual((r['cost_list'], r['cost_eff']), (88.0, 44.0))
         S.meta_update(987655, dict(cost='70', station=st))                    # alta suma decat tariful: scrisa de tine
         self.assertEqual(S.decorate([self.row()])[0]['cost_eff'], 70.0)
+
+    def test_connection_fee_is_added_per_session(self):
+        self.save(None, dict(provider='Ionity', kind='money', paid='1000', amount='2000', fee='2'))          # taxa din credit: (90 + 2) x 0,5
+        r = S.decorate([self.row()])[0]
+        self.assertEqual((r['cost_eff'], r['credit']['list'], r['credit']['fee']), (46.0, 92.0, 2.0))
+        S.OWN.run('delete from credit_packs')
+        self.save(None, dict(provider='Ionity', kind='money', paid='1000', amount='2000', fee='2', fee_in_credit='0'))   # taxa separat: 90 x 0,5 + 2
+        self.assertEqual(S.decorate([self.row()])[0]['cost_eff'], 47.0)
+        S.OWN.run('delete from credit_packs')
+        self.save(None, dict(provider='Tesla Supercharger', kind='km', paid='100', amount='1000', fee='2'))   # km: 150 x 0,1 + 2
+        self.assertEqual(S.decorate([self.row(name='Supercharger Sibiu')])[0]['cost_eff'], 17.0)
+        S.OWN.run('delete from credit_packs')
+        self.save(None, dict(provider='Ionity', kind='money', paid='1000', amount='1000', fee='2'))           # fara reducere, doar taxa: 90 + 2
+        self.assertEqual(S.decorate([self.row()])[0]['cost_eff'], 92.0)
+        with self.assertRaises(ValueError):
+            self.save(None, dict(provider='Ionity', kind='money', paid='1', amount='1', fee='-3'))
+
+    def test_a_voucher_is_free_money_taken_off_first(self):
+        from features import credits as CR
+        packs = [dict(id=1, provider='Ionity', kind='money', paid=1000, amount=2000, since='', fee=0, fee_in_credit=1),
+                 dict(id=2, provider='Ionity', kind='voucher', paid=0, amount=10, since='2026-11-01', fee=0, fee_in_credit=1)]
+        items = [dict(id=11, provider='Ionity', start='2026-10-30T10:00:00', base=50.0),      # inainte de voucher: nu primeste
+                 dict(id=12, provider='Ionity', start='2026-11-02T10:00:00', base=4.0),
+                 dict(id=13, provider='Ionity', start='2026-11-03T10:00:00', base=30.0),
+                 dict(id=14, provider='Ionity', start='2026-11-04T10:00:00', base=30.0)]       # voucherul s-a terminat
+        per, per_v = CR.allocate(packs, items)
+        self.assertEqual({k: round(v, 2) for k, v in per.items()}, {12: 4.0, 13: 6.0})
+        self.assertEqual((round(per_v[2]['used'], 2), per_v[2]['n']), (10.0, 2))
+
+    def test_voucher_lowers_the_real_cost_through_decorate(self):
+        self.save(None, dict(provider='Ionity', kind='money', paid='1000', amount='2000'))
+        self.save(None, dict(provider='Ionity', kind='voucher', amount='10', since='2026-11-01'))
+        ra = self.row(id=987661, start_date='2026-11-02T10:00:00', cost=4.0)
+        rb = self.row(id=987662, start_date='2026-11-03T10:00:00', cost=30.0)
+        cls = type(S.CREDITS)
+        old = cls.__dict__['source']
+        cls.source = staticmethod(lambda: [dict(ra, cost_eff=4.0, provider='Ionity'), dict(rb, cost_eff=30.0, provider='Ionity')])       # incarcarile dinainte de credit, ca in calculul real
+        try:
+            a, b = S.decorate([dict(ra)])[0], S.decorate([dict(rb)])[0]
+        finally:
+            cls.source = old
+        self.assertEqual((a['cost_eff'], a['credit']['voucher']), (0.0, 4.0))                  # voucherul acopera tot
+        self.assertEqual((b['cost_eff'], b['credit']['voucher']), (12.0, 6.0))                 # (30 - 6) x 0,5
+
+    def test_voucher_page_listing_and_rules(self):
+        from features import credits as CR
+        p = CR.parse(dict(provider='iHunt', kind='voucher', amount='10'))
+        self.assertEqual((p['kind'], p['paid'], bool(p['since'])), ('voucher', 0.0, True))      # data primirii implicit azi
+        self.assertIsNone(CR.pick([dict(id=1, provider='iHunt', kind='voucher', paid=0, amount=10, since='')], 'iHunt', '2026-11-02'))   # voucherul nu e pachet cumparat
+        self.assertEqual(CR.adjust(dict(kind='money', paid=1.0, amount=1.0, fee=0, fee_in_credit=1), 4.0, None, 4.0)[0], 0.0)       # voucher acopera tot
+        self.assertEqual(CR.adjust(dict(kind='money', paid=1000, amount=2000, fee=2, fee_in_credit=1), 30.0, None, 6.0)[0], 13.0)   # (30 + 2 - 6) x 0,5
 
     def test_the_listing_shows_what_is_left_of_each_pack(self):
         self.save(None, dict(provider='Ionity', kind='money', paid='1000', amount='2000'))

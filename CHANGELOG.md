@@ -3,6 +3,12 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.12.1 - 2026-11-06
+
+### New features
+- **Connection fee in prepaid credit packs.** A pack can have a fee per session (e.g. 2 per charge at a network that charges for connecting). It is added to every charge of the provider and is either paid from the credit (added to the list price before the discount) or separately in cash; with kilometre packs it is always separate. The charge note and the pack list show it.
+- **Vouchers.** A voucher is free money from a provider (e.g. a 10 voucher): add it as a pack of type "Voucher" with the day you received it. It is taken off the charges first, oldest charge first, from that day on, so until it is used up the charges cost 0 (or less), and then they go back to the credit you bought. The page shows how much of each voucher is used and what is left.
+
 ## 1.12.0 - 2026-11-06
 
 ### New features
