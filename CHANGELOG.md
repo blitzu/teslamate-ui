@@ -3,6 +3,15 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.15.0 - 2026-11-06
+
+### New features
+- **Tesla Supercharger history (read-only).** When the Tesla account is connected, the app reads your Supercharger history from the Tesla Fleet API (`GET /api/1/dx/charging/history`, scope `vehicle_charging_cmds`, which the app already has): for every session the **credit kilometres Tesla really took**, the energy the charger measured, the price per kWh and what you paid. It syncs once a day and with the new **Sync with Tesla** button on the Prepaid credit page; nothing is written to Tesla, and only the session figures are kept (no VIN, no token). Each Tesla session is matched to your TeslaMate charges by time (a session TeslaMate split in two shares it by kWh).
+  - A kilometre pack marked **"exact, from the Tesla history"** shows the kilometres used and left exactly as in the Tesla app, and each charge gets its real credit kilometres (no calibration factor needed).
+  - A Supercharger session **paid with money** (not covered by credit) gets the **real amount you paid Tesla** as its cost, instead of an estimate; a cost you typed still wins. Credit-covered sessions are priced by the pack.
+- **Expiry date on prepaid packs and vouchers.** A pack or voucher can have a "Valid until" date (Tesla's credit expires after about 6 months). The pack list shows the days left (amber in the last two weeks), or "Expired" in red with what was left unused. After the date a pack or voucher no longer applies to charges, so a charge made after it is priced at the list price.
+- **Credit kilometres per kWh also shown as kWh/100 km.** Next to the factor of a kilometre pack (for example 4.95 km/kWh) the app shows the same thing as consumption (about 20.2 kWh/100 km), also while you type it and in the note on a charge.
+
 ## 1.14.1 - 2026-11-06
 
 ### Fixes

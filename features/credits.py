@@ -42,9 +42,15 @@ def parse(b):
     fee = 0.0 if kind == 'voucher' or str(b.get('fee') or '').strip() == '' else num(b.get('fee'), -1, 1000, 'Taxa')
     if fee < 0:
         raise ValueError('Taxa invalidă')
-    return dict(provider=prov, kind=kind, paid=paid, amount=amount, since=since, note=clean(b.get('note'), 60), fee=fee,
+    expires = str(b.get('expires') or '').strip()[:10]
+    if expires and not re.fullmatch(r'\d{4}-\d{2}-\d{2}', expires):
+        raise ValueError('Data de expirare invalidă.')
+    if expires and since and expires < since:
+        raise ValueError('Data de expirare e înaintea datei de la care se aplică.')
+    return dict(provider=prov, kind=kind, paid=paid, amount=amount, since=since, expires=expires, note=clean(b.get('note'), 60), fee=fee,
                 fee_in_credit=0 if str(b.get('fee_in_credit', '1')).lower() in ('0', 'false', 'no') else 1,
-                km_kwh=None if kind != 'km' or str(b.get('km_kwh') or '').strip() == '' else num(b.get('km_kwh'), 0.2, 50, 'Kilometrii pe kWh'))
+                km_kwh=None if kind != 'km' or str(b.get('km_kwh') or '').strip() == '' else num(b.get('km_kwh'), 0.2, 50, 'Kilometrii pe kWh'),
+                source='tesla' if kind == 'km' and str(b.get('source')) == 'tesla' else '')
 
 
 def rate(p):
@@ -55,7 +61,8 @@ def rate(p):
 def pick(packs, provider, day):
     """Pachetul care se aplica unei incarcari: al furnizorului ei, valabil la data ei; daca sunt mai multe, cel mai recent (dupa data de la care se aplica)."""
     prov = str(provider or '').strip().casefold()
-    ok = [p for p in packs if p['kind'] != 'voucher' and p['provider'].casefold() == prov and (not p.get('since') or p['since'] <= str(day)[:10])]
+    d = str(day)[:10]
+    ok = [p for p in packs if p['kind'] != 'voucher' and p['provider'].casefold() == prov and (not p.get('since') or p['since'] <= d) and (not p.get('expires') or d <= p['expires'])]
     return max(ok, key=lambda p: (p.get('since') or '', p['id'])) if ok else None
 
 
@@ -67,12 +74,15 @@ def credit_km(p, km, kwh):
     return km if km and km > 0 else None
 
 
-def adjust(p, list_cost=None, km=None, voucher=0.0, kwh=None):
+def adjust(p, list_cost=None, km=None, voucher=0.0, kwh=None, tesla=None):
     """Costul real dupa credit (sau None daca lipseste ce trebuie), ca (cost, de_la_credit): bani => din costul de lista, km => din kilometrii adaugati.
     Taxa de conectare a pachetului (pe sesiune) se adauga la fiecare incarcare: la creditul in bani se plateste din credit (se aduna la pretul de lista) sau separat, in bani;
     la creditul in km se plateste mereu separat. de_la_credit = cat din pretul de lista a trecut prin credit. Voucherele (bani gratis) se scad primele din ce trece prin credit."""
     fee = p.get('fee') or 0
     if p['kind'] == 'km':
+        if p.get('source') == 'tesla' and tesla:                             # kilometrii exacti din istoricul Tesla (+ ce s-a platit in plus, daca creditul nu a acoperit tot)
+            k = tesla['credit_km'] * tesla['share']
+            return (round(k * rate(p) + fee + (tesla.get('net_due') or 0), 2), k) if k > 0 else None
         k = credit_km(p, km, kwh)
         return (round(k * rate(p) + fee, 2), k) if k and k > 0 else None
     if list_cost is None:
@@ -137,7 +147,7 @@ def allocate(packs, items):
         for v in vouchers:
             if need <= 0.004:
                 break
-            if v['provider'].casefold() != prov or left[v['id']] <= 0.004 or (v.get('since') and v['since'] > day):
+            if v['provider'].casefold() != prov or left[v['id']] <= 0.004 or (v.get('since') and v['since'] > day) or (v.get('expires') and v['expires'] < day):
                 continue
             take = min(left[v['id']], need)
             left[v['id']] -= take
@@ -148,7 +158,7 @@ def allocate(packs, items):
     return per, per_v
 
 
-def adjust_row(packs, r, e, voucher=0.0):
+def adjust_row(packs, r, e, voucher=0.0, tesla=None):
     """Pentru o incarcare (r = randul ei dupa furnizor si cost_eff, e = datele salvate in aplicatie, voucher = cat din pret acopera voucherele): dict cu costul real si detaliile, sau None cand nu se aplica."""
     p = pick(packs, r.get('provider'), r.get('start_date') or '')
     if not p and not voucher:
@@ -161,12 +171,13 @@ def adjust_row(packs, r, e, voucher=0.0):
         return None
     km = range_km(r)
     kwh = r.get('charge_energy_used') or r.get('charge_energy_added')
-    res = adjust(p, base, km, voucher, kwh)
+    res = adjust(p, base, km, voucher, kwh, tesla)
     if res is None:
         return None
     cost, via = res
     return dict(pack=p['id'], kind=p['kind'], rate=round(rate(p), 4), list=round(via, 2) if p['kind'] == 'money' else None, base=round(base, 2) if base is not None else None,
-                fee=p.get('fee') or 0, fee_in_credit=bool(p.get('fee_in_credit', 1)), voucher=round(voucher, 2), km=round(via, 1) if p['kind'] == 'km' else (round(km, 1) if km else None), kwh=round(float(kwh), 2) if kwh else None, km_kwh=p.get('km_kwh'), cost=cost)
+                fee=p.get('fee') or 0, fee_in_credit=bool(p.get('fee_in_credit', 1)), voucher=round(voucher, 2), km=round(via, 1) if p['kind'] == 'km' else (round(km, 1) if km else None), kwh=round(float(kwh), 2) if kwh else None, km_kwh=p.get('km_kwh'),
+                tesla=dict(sid=tesla['sid'], start=tesla['start'], site=tesla['site'], kwh=tesla['kwh'], km=round(tesla['credit_km'] * tesla['share'], 1)) if p['kind'] == 'km' and p.get('source') == 'tesla' and tesla else None, cost=cost)
 
 
 def calibrate(kwh_total, amount, left):
@@ -209,12 +220,12 @@ def tally(data):
 def init(S):
     S.OWN.migrate('credits', ['create table credit_packs (id integer primary key, provider text not null, kind text not null, paid real not null, amount real not null, since text, note text, ts real)',
                               'alter table credit_packs add column fee real not null default 0', 'alter table credit_packs add column fee_in_credit integer not null default 1',
-                              'alter table credit_packs add column km_kwh real'])
+                              'alter table credit_packs add column km_kwh real', 'alter table credit_packs add column expires text', 'alter table credit_packs add column source text'])
     cache = {'t': 0, 'rows': []}
 
     def rows():
         if time.time() - cache['t'] > 30:
-            cache['rows'], cache['t'] = S.OWN.rows('select id, provider, kind, paid, amount, since, note, fee, fee_in_credit, km_kwh from credit_packs'), time.time()
+            cache['rows'], cache['t'] = S.OWN.rows('select id, provider, kind, paid, amount, since, note, fee, fee_in_credit, km_kwh, expires, source from credit_packs'), time.time()
         return cache['rows']
 
     tl = threading.local()
@@ -255,7 +266,12 @@ def init(S):
         def adjust(self, r, e):
             if getattr(tl, 'busy', False):
                 return None
-            return adjust_row(rows(), r, e, ledger()[0].get(r['id'], 0.0))
+            tesla = S.TESLA.match_row(r) if getattr(S, 'TESLA', None) else None
+            return adjust_row(rows(), r, e, ledger()[0].get(r['id'], 0.0), tesla)
+
+        def tesla_cost(self, r):
+            """Costul real platit la Tesla pentru o incarcare Supercharger neacoperita de credit (din istoricul Tesla), sau None."""
+            return S.TESLA.cost(r) if getattr(S, 'TESLA', None) else None
 
         def ledger(self):
             return ledger()
@@ -275,9 +291,10 @@ def init(S):
         if hc is None:
             raise S.DBDown()
         car = int(a.get('car', 1))
-        packs = S.OWN.rows('select id, provider, kind, paid, amount, since, note, fee, fee_in_credit, km_kwh from credit_packs order by provider collate nocase, since, id')
+        packs = S.OWN.rows('select id, provider, kind, paid, amount, since, note, fee, fee_in_credit, km_kwh, expires, source from credit_packs order by provider collate nocase, since, id')
         use = usage(car, hc is False) if packs else {}
         per_v = S.CREDITS.ledger()[1] if any(p['kind'] == 'voucher' for p in packs) else {}
+        tesla = getattr(S, 'TESLA', None)
         for p in packs:
             if p['kind'] == 'voucher':
                 u = per_v.get(p['id']) or dict(n=0, used=0)
@@ -286,7 +303,10 @@ def init(S):
                 continue
             p['rate'] = round(rate(p), 4)
             p['usage'] = use.get(p['id']) or dict(n=0, kwh=0, used=0, real=0, saved=None, typed=0)
-        return dict(packs=packs, providers=S.provider_list(car, hc is False))
+            tu = tesla.usage(p) if tesla and p.get('source') == 'tesla' else None
+            if tu:                                                           # dupa Tesla: kilometri folositi exact, din istoricul Supercharger
+                p['usage'] = dict(p['usage'], n=tu['n'], kwh=tu['kwh'], used=tu['used'], tesla=True, real=round(tu['used'] * p['rate'], 2))
+        return dict(packs=packs, providers=S.provider_list(car, hc is False), tesla=tesla.status() if tesla else None)
 
     @S.route('POST', '/api/credits/save', pin=True, role='user')
     def save(h, b):
@@ -298,13 +318,13 @@ def init(S):
             float(left)                                                      # valideaza inainte sa scriem ceva
         if b.get('id'):
             pid = int(b['id'])
-            S.OWN.run('update credit_packs set provider=?, kind=?, paid=?, amount=?, since=?, note=?, fee=?, fee_in_credit=?, km_kwh=?, ts=? where id=?',
-                      (p['provider'], p['kind'], p['paid'], p['amount'], p['since'], p['note'], p['fee'], p['fee_in_credit'], p['km_kwh'], time.time(), pid))
+            S.OWN.run('update credit_packs set provider=?, kind=?, paid=?, amount=?, since=?, note=?, fee=?, fee_in_credit=?, km_kwh=?, expires=?, source=?, ts=? where id=?',
+                      (p['provider'], p['kind'], p['paid'], p['amount'], p['since'], p['note'], p['fee'], p['fee_in_credit'], p['km_kwh'], p['expires'], p['source'], time.time(), pid))
         else:
             if S.OWN.one('select count(*) n from credit_packs')['n'] >= MAX_PACKS:
                 raise ValueError('Maxim %d pachete.' % MAX_PACKS)
-            S.OWN.run('insert into credit_packs(provider, kind, paid, amount, since, note, fee, fee_in_credit, km_kwh, ts) values(?,?,?,?,?,?,?,?,?,?)',
-                      (p['provider'], p['kind'], p['paid'], p['amount'], p['since'], p['note'], p['fee'], p['fee_in_credit'], p['km_kwh'], time.time()))
+            S.OWN.run('insert into credit_packs(provider, kind, paid, amount, since, note, fee, fee_in_credit, km_kwh, expires, source, ts) values(?,?,?,?,?,?,?,?,?,?,?,?)',
+                      (p['provider'], p['kind'], p['paid'], p['amount'], p['since'], p['note'], p['fee'], p['fee_in_credit'], p['km_kwh'], p['expires'], p['source'], time.time()))
             pid = S.OWN.one('select max(id) m from credit_packs')['m']
         cache['t'] = led['t'] = 0
         if left:                                                             # "mai am X km" din aplicatia furnizorului => km de credit pe kWh

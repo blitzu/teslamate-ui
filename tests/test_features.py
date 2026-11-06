@@ -2103,6 +2103,20 @@ class CreditsTests(Isolated):
             cls.source = old
         self.assertEqual(S.OWN.rows('select km_kwh from credit_packs')[0]['km_kwh'], 5.0)
 
+    def test_an_expired_pack_or_voucher_no_longer_applies(self):
+        from features import credits as CR
+        packs = [dict(id=1, provider='Tesla', kind='money', paid=100, amount=1000, since='', expires='2026-11-30', fee=0, fee_in_credit=1, km_kwh=None),
+                 dict(id=2, provider='Tesla', kind='voucher', paid=0, amount=10, since='2026-10-01', expires='2026-11-10', fee=0, fee_in_credit=1)]
+        self.assertEqual(CR.pick(packs, 'Tesla', '2026-11-30T23:00:00')['id'], 1)          # ultima zi inca se aplica
+        self.assertIsNone(CR.pick(packs, 'Tesla', '2026-12-01T08:00:00'))                  # dupa expirare, nu
+        items = [dict(id=11, provider='Tesla', start='2026-11-09T10:00:00', base=4.0), dict(id=12, provider='Tesla', start='2026-11-11T10:00:00', base=4.0)]
+        per, per_v = CR.allocate(packs, items)
+        self.assertEqual(sorted(per), [11])                                                 # voucherul expirat nu mai acopera incarcarea din 11 nov
+        self.assertEqual(CR.parse(dict(provider='Tesla', kind='km', paid='1', amount='1000', expires='2027-04-16'))['expires'], '2027-04-16')
+        for bad in (dict(expires='curand'), dict(expires='2026-01-01', since='2026-02-01')):
+            with self.assertRaises(ValueError):
+                CR.parse(dict(provider='Tesla', kind='km', paid='1', amount='1000', **bad))
+
     def test_the_listing_shows_what_is_left_of_each_pack(self):
         self.save(None, dict(provider='Ionity', kind='money', paid='1000', amount='2000'))
         fn = S.route_lookup('GET', '/api/credits')[0]
@@ -2154,6 +2168,94 @@ class SimilarTripsTests(Isolated):
         other = [(la, lo + 0.06) for la, lo in road1]                           # drum paralel la ~5 km
         self.assertGreaterEqual(SM.overlap(SM.thin(road1), SM.thin(same)), 0.95)
         self.assertLessEqual(SM.overlap(SM.thin(road1), SM.thin(other)), 0.1)
+
+
+SESSION = {"sessionId": 1001, "vin": "X", "siteLocationName": "Pitesti, Romania", "chargeStartDateTime": "2026-10-17T15:09:51+03:00", "chargeStopDateTime": "2026-10-17T15:42:57+03:00",
+           "unlatchDateTime": "2026-10-17T15:42:58+03:00", "countryCode": "RO", "credit": {"energyApplied": 37, "distance": 185, "distanceUnit": "km"},
+           "fees": [{"feeType": "CHARGING", "currencyCode": "RON", "pricingType": "CREDIT", "rateBase": 2.45, "usageBase": 37.365, "totalDue": 0, "netDue": 0, "uom": "kwh", "isPaid": True, "status": "PAID"},
+                    {"feeType": "CONGESTION", "currencyCode": "RON", "pricingType": "NO_CHARGE", "rateBase": 2.5, "usageBase": 0, "totalDue": 0, "netDue": 0, "uom": "min", "isPaid": True, "status": "PAID"}],
+           "billingType": "IMMEDIATE", "vehicleMakeType": "TESLA"}
+
+
+class TeslaCreditTests(Isolated):
+    def setUp(self):
+        super().setUp()
+        self.cur = S.CURRENCY
+        S.CURRENCY = 'RON'                                                  # fara conversie de moneda (ar cere un curs de schimb)
+        S.OWN.run('delete from tesla_sessions')
+        S.OWN.run('delete from credit_packs')
+        S.TESLA.reset()
+        S.route_lookup('POST', '/api/credits/delete')[0](None, dict(id=0))
+
+    def tearDown(self):
+        S.CURRENCY = self.cur
+        S.OWN.run('delete from tesla_sessions')
+        S.OWN.run('delete from credit_packs')
+        S.TESLA.reset()
+        S.route_lookup('POST', '/api/credits/delete')[0](None, dict(id=0))
+        super().tearDown()
+
+    def put(self, **k):
+        from features import teslacredit as TC
+        s = dict(TC.parse_session(SESSION), **k)
+        S.OWN.run('insert or replace into tesla_sessions(sid, car, start, stop, site, country, credit_km, kwh, rate, cur, net_due, total_due, paid, ts) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                  (s['sid'], 1, s['start'], s['stop'], s['site'], s['country'], s['credit_km'], s['kwh'], s['rate'], s['cur'], s['net_due'], s['total_due'], s['paid'], 0))
+        S.TESLA.reset()
+
+    def row(self, **k):
+        return dict(dict(id=987700, name='Pitesti Supercharger', start_date='2026-10-17T12:09:30', charge_energy_added=38.68, charge_energy_used=37.35, cost=None, cost_real=None, lat=None, lon=None,
+                         start_rated_range_km=180.0, end_rated_range_km=491.0), **k)
+
+    def test_a_tesla_session_is_parsed_with_utc_times_credit_energy_and_price(self):
+        from features import teslacredit as TC
+        s = TC.parse_session(SESSION)
+        self.assertEqual((s['start'], s['stop']), ('2026-10-17T12:09:51', '2026-10-17T12:42:57'))        # +03:00 -> UTC, ca in TeslaMate
+        self.assertEqual((s['credit_km'], s['kwh'], s['rate'], s['cur'], s['net_due'], s['paid']), (185.0, 37.365, 2.45, 'RON', 0.0, 1))
+        mi = dict(SESSION, credit=dict(distance=100, distanceUnit='mi'))
+        self.assertAlmostEqual(TC.parse_session(mi)['credit_km'], 160.9, 1)
+        self.assertIsNone(TC.parse_session(dict(SESSION, sessionId=None)))
+
+    def test_history_is_read_page_by_page_and_errors_are_reported(self):
+        from features import teslacredit as TC
+        pages = {1: dict(data=[dict(SESSION, sessionId=1)] * 2, totalResults=3), 2: dict(data=[dict(SESSION, sessionId=3)], totalResults=3)}
+        calls = []
+        def http(url, headers=None):
+            calls.append(url)
+            n = int(url.split('pageNo=')[1].split('&')[0])
+            return 200, pages.get(n, dict(data=[], totalResults=3))
+        out, err = TC.fetch_all(http, 'https://x', 'T', 'V')
+        self.assertEqual((len(out), err, len(calls)), (3, None, 2))
+        self.assertTrue(all('/dx/charging/history?vin=V' in c for c in calls))
+        self.assertEqual(TC.fetch_all(lambda u, headers=None: (403, {}), 'https://x', 'T', 'V'), ([], 'Tesla a răspuns cu 403.'))
+
+    def test_a_charge_is_matched_to_its_session_and_split_charges_share_it(self):
+        from features import teslacredit as TC
+        s = TC.parse_session(SESSION)
+        t = lambda x: dt.datetime.fromisoformat(x)
+        self.assertEqual(TC.match([s], t('2026-10-17T12:09:30'), 37.35)[1], 37.35 / 37.365)
+        self.assertEqual(TC.match([s], t('2026-10-17T12:35:00'), 1.0)[0]['sid'], 1001)               # o a doua incarcare din aceeasi sesiune
+        self.assertEqual(TC.match([s], t('2026-10-17T14:00:00'), 10.0), (None, None))                # alta ora: nu e a ei
+
+    def test_a_km_pack_marked_tesla_takes_the_exact_credit_km_from_the_session(self):
+        self.put()
+        S.route_lookup('POST', '/api/credits/save')[0](None, dict(provider='Tesla Supercharger', kind='km', paid='115', amount='1150', source='tesla', km_kwh='9'))     # factorul din formular nu conteaza cu Tesla
+        r = S.decorate([self.row()])[0]
+        self.assertEqual((r['credit']['km'], r['credit']['tesla']['sid']), (round(185 * 37.35 / 37.365, 1), 1001))
+        self.assertAlmostEqual(r['cost_eff'], round(185 * 37.35 / 37.365 * 0.1, 2), 1)               # 0,10 lei pe km de credit
+        lst = S.route_lookup('GET', '/api/credits')[0](None, dict(car=1))
+        pk = lst['packs'][0]
+        self.assertEqual((pk['usage']['used'], pk['usage']['tesla'], pk['source']), (185.0, True, 'tesla'))      # folosit exact dupa Tesla
+
+    def test_a_supercharger_paid_in_money_gets_the_real_cost_from_tesla(self):
+        self.put(credit_km=0.0, net_due=64.5, total_due=64.5)
+        self.assertEqual(S.decorate([self.row()])[0]['cost_eff'], round(64.5 * 37.35 / 37.365, 2))
+        S.meta_update(987700, dict(cost='70'))                                                       # suma scrisa de tine bate Tesla
+        try:
+            self.assertEqual(S.decorate([self.row()])[0]['cost_eff'], 70.0)
+        finally:
+            S.meta_update(987700, dict(cost=None))
+        self.put(credit_km=185.0, net_due=0.0)                                                       # acoperita de credit: nu se ia suma de la Tesla
+        self.assertIsNone(S.decorate([self.row()])[0]['cost_tesla'])
 
 
 class LiveDriveTests(Isolated):

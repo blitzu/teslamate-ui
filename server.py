@@ -456,7 +456,8 @@ def decorate(rows):
             kwh = r.get('charge_energy_used') or r.get('charge_energy_added')
             if pl and kwh:
                 r['cost_place'], r['place_name'], r['place_price'] = round(float(kwh) * pl['price'], 2), pl['name'], pl['price']
-        r['cost_eff'] = e['cost'] if e.get('cost') is not None else (r['cost_real'] if r.get('cost_real') is not None else (r['cost_place'] if r['cost_place'] is not None else r.get('cost')))
+        r['cost_tesla'] = CREDITS.tesla_cost(r) if CREDITS and e.get('cost') is None else None          # platit la Tesla (istoricul Supercharger), cand sesiunea nu a fost din credit
+        r['cost_eff'] = e['cost'] if e.get('cost') is not None else (r['cost_tesla'] if r['cost_tesla'] is not None else (r['cost_real'] if r.get('cost_real') is not None else (r['cost_place'] if r['cost_place'] is not None else r.get('cost'))))
         r['credit'] = CREDITS.adjust(r, e) if CREDITS else None          # credit cumparat la furnizor (bani sau km): costul real in loc de pretul de lista
         if r['credit']:
             r['cost_list'], r['cost_eff'] = r['credit']['list'], r['credit']['cost']
