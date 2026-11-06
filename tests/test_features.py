@@ -2091,6 +2091,15 @@ class SimilarTripsTests(Isolated):
         self.assertEqual(out[0]['dtemp'], 0.0)
         self.assertEqual(SM.candidates(self.trip(9, '2026-11-02T08:00:00', (None, None), B, 200.0), trips), [])
 
+    def test_a_loop_is_not_marked_reverse(self):
+        from features import similar as SM
+        H = (44.40, 26.10)
+        main = self.trip(1, '2026-11-02T08:00:00', H, (H[0] + 0.0004, H[1]), 3.7)          # acasa -> acasa (sosirea la 45 m de plecare)
+        t = self.trip(2, '2026-11-01T08:00:00', (H[0] + 0.0002, H[1]), (H[0] + 0.0001, H[1]), 3.8)
+        out = SM.candidates(main, [main, t])
+        self.assertEqual([c['id'] for c in out], [2])
+        self.assertFalse(out[0]['reverse'])
+
     def test_season_distance_wraps_around_new_year(self):
         from features import similar as SM
         self.assertEqual(SM.doy_gap(dt.datetime(2026, 12, 28), dt.datetime(2027, 1, 3)), 6)

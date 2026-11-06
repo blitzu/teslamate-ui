@@ -47,7 +47,7 @@ def candidates(main, trips, radius=RADIUS_KM):
             continue
         fa, fb = hav_km(*ma, *ta), hav_km(*mb, *tb)
         ra, rb = hav_km(*ma, *tb), hav_km(*mb, *ta)
-        same = max(fa, fb) <= max(ra, rb)
+        same = max(fa, fb) <= max(ra, rb) + 0.05                          # la bucle (plecare = sosire) ambele sensuri se potrivesc la fel: ramane sensul normal
         d1, d2 = (fa, fb) if same else (ra, rb)
         if max(d1, d2) > radius:
             continue

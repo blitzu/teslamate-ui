@@ -3,6 +3,11 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.13.1 - 2026-11-06
+
+### Fixes
+- **Similar trips: no more false "reverse" badge on loops.** For trips that start and end at the same place (e.g. home to home) both directions match equally and the suggestion was wrongly marked "reverse"; it is now marked only when the opposite direction really matches better.
+
 ## 1.13.0 - 2026-11-06
 
 ### New features
