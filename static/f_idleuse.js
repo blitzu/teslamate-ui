@@ -2,9 +2,10 @@
 NAVI.idleuse = 'M11 21h-1l1-7H7.5c-.58 0-.57-.32-.38-.66.19-.34.05-.08.07-.12C8.48 10.94 10.42 7.54 13 3h1l-1 7h3.5c.49 0 .56.33.47.51l-.07.15C12.96 17.55 11 21 11 21z';
 EXTRA_MENU.push(['idleuse', 'Consum în staționare', 'Idle energy use', 'idleuse']);
 
-const IU_COL = { climate: '#ffb15c', heater: '#ef7a7a', sentry: '#b69bff', awake: '#8fd3ff', sleep: '#5b7bb5' };
-const IU_ORDER = ['climate', 'heater', 'sentry', 'awake', 'sleep'];
+const IU_COL = { climate: '#ffb15c', heater: '#ef7a7a', both: '#ff9a7a', sentry: '#b69bff', awake: '#8fd3ff', sleep: '#5b7bb5' };
+const IU_ORDER = ['both', 'climate', 'heater', 'sentry', 'awake', 'sleep'];
 const iuName = (k) => ({
+  both: X('Preîncălzire: habitaclu + baterie', 'Preheat: cabin + battery'),
   climate: X('Climatizare / preîncălzire habitaclu', 'Climate / cabin preheat'),
   heater: X('Încălzirea bateriei', 'Battery heating'),
   sentry: X('Mod Sentry', 'Sentry mode'),
@@ -12,6 +13,7 @@ const iuName = (k) => ({
   sleep: X('Somn (consum de fond)', 'Asleep (background drain)'),
 })[k];
 const iuHelp = (k) => ({
+  both: X('Clima și încălzirea bateriei au mers în același timp (de obicei o preîncălzire pe frig). Semnalele mașinii nu spun cât a consumat fiecare, așa că energia nu e împărțită între ele; e suma lor.', 'The climate and the battery heating ran at the same time (usually a cold-weather preheat). The car signals do not say how much each used, so the energy is not split between them; this is their sum.'),
   climate: X('Cât timp clima a fost pornită cu mașina oprită (preîncălzire din aplicație sau programată, dezghețare, ventilație). Intră și scaunele / volanul încălzite.', 'While the climate was on with the car parked (preheat from the app or scheduled, defrost, ventilation). Heated seats and wheel are included.'),
   heater: X('Bateria s-a încălzit singură (frig) cât mașina stătea. Încălzirea din timpul încărcării sau al condusului nu e aici.', 'The battery heated itself (cold) while parked. Heating during charging or driving is not here.'),
   sentry: X('Cât timp Sentry a fost pornit și mașina nu făcea altceva. Sentry ține mașina trează, deci include și consumul de „treaz”.', 'While Sentry was on and the car did nothing else. Sentry keeps the car awake, so this includes the “awake” draw.'),
@@ -25,7 +27,7 @@ function iuBars(days) {
   const tot = (d) => IU_ORDER.reduce((s, k) => s + Math.max(0, d[k] || 0), 0), mx = Math.max(...days.map(tot), 0.1), bw = (W - 8) / n;
   const bars = days.map((d, i) => {
     let y = H - pb;
-    const segs = ['sleep', 'awake', 'sentry', 'heater', 'climate'].map((k) => { const v = Math.max(0, d[k] || 0), h = v / mx * (H - pb - 16); y -= h; return h > 0.4 ? `<rect x="${4 + i * bw + bw * .1}" y="${y.toFixed(1)}" width="${Math.max(1.5, bw * .8).toFixed(1)}" height="${h.toFixed(1)}" fill="${IU_COL[k]}"/>` : ''; }).join('');
+    const segs = ['sleep', 'awake', 'sentry', 'heater', 'climate', 'both'].map((k) => { const v = Math.max(0, d[k] || 0), h = v / mx * (H - pb - 16); y -= h; return h > 0.4 ? `<rect x="${4 + i * bw + bw * .1}" y="${y.toFixed(1)}" width="${Math.max(1.5, bw * .8).toFixed(1)}" height="${h.toFixed(1)}" fill="${IU_COL[k]}"/>` : ''; }).join('');
     return `<g><title>${esc(d.day)} · ${nf(tot(d), 2)} kWh</title>${segs}</g>`;
   }).join('');
   const every = Math.ceil(n / 8);

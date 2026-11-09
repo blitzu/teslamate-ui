@@ -19,7 +19,7 @@ EDGE_S = 2                    # toleranta la marginea unei curse / incarcari (se
 OPEN_MAX_S = 24 * 3600        # o incarcare "neinchisa" nu poate tine mai mult
 PLUG_ADDED_KWH = 0.15          # o "incarcare" care a adaugat mai putin de atat in baterie e masina conectata, nu o incarcare
 MAX_KW = 12.0                # o masina parcata nu trage atat: segmentul e semn de ceva nemasurat (cursa lipsa, reset de autonomie) si se numara separat
-CATS = ('climate', 'heater', 'sentry', 'awake', 'sleep')
+CATS = ('climate', 'heater', 'both', 'sentry', 'awake', 'sleep')
 
 
 def _cover(a, b, iv, starts):
@@ -36,11 +36,10 @@ def _cover(a, b, iv, starts):
 
 def split_segment(dt_s, wc, wh, sf, asleep):
     """Cum se imparte un segment: {categorie: fractiune} cu suma 1. wc/wh = partea de clima / incalzire baterie (0..1), sf = partea acoperita de Sentry, asleep = segment lung."""
-    w = wc + wh
-    if w > 1:
-        wc, wh = wc / w, wh / w
-    rest = max(0.0, 1.0 - wc - wh)
-    out = {'climate': wc, 'heater': wh, 'sentry': rest * sf}
+    both = min(wc, wh)                                   # clima si incalzirea bateriei in acelasi timp: semnalele nu spun cat a consumat fiecare, deci nu se imparte
+    wc, wh = wc - both, wh - both
+    rest = max(0.0, 1.0 - wc - wh - both)
+    out = {'climate': wc, 'heater': wh, 'both': both, 'sentry': rest * sf}
     out['sleep' if asleep else 'awake'] = rest * (1 - sf)
     return out
 

@@ -3,6 +3,11 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.16.2 - 2026-11-09
+
+### Fixes
+- **Idle energy use no longer splits a preheat between cabin and battery.** When the climate and the battery heating ran together, the page shared the energy 50/50, which looked precise but was not: the car's signals do not say how much each one used (on a real preheat the battery-heating flag stayed on while the "heater really on" signal stayed off, and the cabin went from 1 °C to 24 °C). That energy now goes to its own line, **Preheat: cabin + battery**, as their sum. "Climate" and "Battery heating" show only the time one of them ran alone. The totals do not change.
+
 ## 1.16.1 - 2026-11-09
 
 ### Fixes

@@ -2338,8 +2338,11 @@ class IdleUseTests(Isolated):
         self.assertAlmostEqual(c['climate']['kwh'], 0.5 * 0.125, places=4)
         self.assertAlmostEqual(c['awake']['kwh'], 0.5 * 0.125, places=4)
         out = self.run_an([(t, 300.0, True, True), (t + 300, 299.0, True, True)])           # climă și baterie împreună: egal
-        self.assertAlmostEqual(out['cats']['climate']['kwh'], out['cats']['heater']['kwh'], places=6)
-        self.assertAlmostEqual(out['kwh'], 0.125, places=6)
+        self.assertAlmostEqual(out['cats']['both']['kwh'], 0.125, places=6)                  # nu se imparte intre ele
+        self.assertEqual((out['cats']['climate']['kwh'], out['cats']['heater']['kwh']), (0.0, 0.0))
+        out = self.run_an([(t, 300.0, True, True), (t + 300, 299.0, True, False)])           # jumatate din segment ambele, jumatate doar clima
+        self.assertAlmostEqual(out['cats']['both']['kwh'], 0.0625, places=4)
+        self.assertAlmostEqual(out['cats']['climate']['kwh'], 0.0625, places=4)
 
     def test_charging_positions_are_ignored_even_for_an_open_charge(self):
         t = 1_800_000_000.0
