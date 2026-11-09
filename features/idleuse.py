@@ -44,11 +44,12 @@ def split_segment(dt_s, wc, wh, sf, asleep):
     return out
 
 
-def analyze(samples, busy, sentry, eff, lo=None, hi=None, tz_offset=lambda t: 0, trace=None, plug=()):
+def analyze(samples, busy, sentry, eff, lo=None, hi=None, tz_offset=lambda t: 0, trace=None, plug=(), phi=None):
     """samples: [(t, autonomie_km, clima, incalzire)] pozitii din afara curselor/incarcarilor (momente UNIX, sortate); busy: [(inceput, sfarsit|None, autonomie_start, autonomie_sfarsit)]
     curse si incarcari (sfarsit None = in curs); sentry: [[inceput, sfarsit]]; eff = kWh pe km de autonomie ideala. Se numara segmentele care incep in [lo, hi).
     plug: [(inceput, sfarsit, autonomie_start, autonomie_sfarsit, kWh_din_retea)] = "incarcari" fara energie adaugata (TeslaMate inregistreaza asa preincalzirea cand masina e la
-    incarcator): ramane staționare, iar la energia din baterie se adauga ce a venit din retea in acel interval.
+    incarcator): ramane staționare, iar la energia din baterie se adauga ce a venit din retea in acel interval. phi(t0, t1) = fractia din energia din priza care a venit din retea
+    (nu din soare / bateria casei) in acel interval, sau None; cand exista, energia din priza se pretuieste dupa sursa ei, nu la pretul energiei din baterie.
     Intoarce {cats: {cat: {kwh, hours}}, by_day: {zi: {cat: kwh}}, kwh, hours, skipped_kwh, skipped_n, first, last}."""
     busy = sorted(busy, key=lambda b: b[0])
     for i, (t0, t1, r0, r1) in enumerate(busy):
@@ -80,7 +81,7 @@ def analyze(samples, busy, sentry, eff, lo=None, hi=None, tz_offset=lambda t: 0,
     anch.sort(key=lambda a: (a[0], 0 if a[2] == 'end' else 1))
     sentry = merge([list(x) for x in sentry])
     s_starts = [x[0] for x in sentry]
-    cats = {c: dict(kwh=0.0, hours=0.0) for c in CATS}
+    cats = {c: dict(kwh=0.0, hours=0.0, wall=0.0, wall_grid=0.0) for c in CATS}
     by_day = {}
     skipped = skipped_n = 0
     first = last = None
@@ -95,10 +96,16 @@ def analyze(samples, busy, sentry, eff, lo=None, hi=None, tz_offset=lambda t: 0,
         if bisect.bisect_left(starts, b[0] - 1) - bisect.bisect_right(starts, a[0] + 1) > 0:      # o cursa pornește în interior, dar fără capăt de autonomie: nu putem ști
             continue
         e = (a[1] - b[1]) * eff
-        for p0, p1, _, _, g in plug:                     # energia venita din retea in timpul acestui segment (clima pornita la incarcator)
+        wall = wall_grid = 0.0
+        for p0, p1, _, _, g in plug:                     # energia venita din priza in timpul acestui segment (clima pornita la incarcator)
             ov = min(b[0], p1) - max(a[0], p0)
             if ov > 0 and p1 > p0:
-                e += g * ov / (p1 - p0)
+                w = g * ov / (p1 - p0)
+                e += w
+                ph = phi(max(a[0], p0), min(b[0], p1)) if phi else None
+                if ph is not None:                       # cunoastem sursa: din priza = retea x phi, restul solar / bateria casei
+                    wall += w
+                    wall_grid += w * ph
         if trace is not None:
             trace.append((a[0], b[0], a[2], b[2], round(e, 3)))
         if e > MAX_KW * dts / 3600:
@@ -110,6 +117,9 @@ def analyze(samples, busy, sentry, eff, lo=None, hi=None, tz_offset=lambda t: 0,
         wh = 0.0 if asleep else (a[4] + b[4]) / 2
         sf = _cover(a[0], b[0], sentry, s_starts) / dts
         parts = split_segment(dts, wc, wh, sf, asleep)
+        for c, f in parts.items():
+            cats[c]['wall'] += wall * f
+            cats[c]['wall_grid'] += wall_grid * f
         first = a[0] if first is None else first
         last = b[0]
         cur = a[0]
@@ -130,22 +140,30 @@ def analyze(samples, busy, sentry, eff, lo=None, hi=None, tz_offset=lambda t: 0,
     return dict(cats=cats, by_day=by_day, kwh=sum(c['kwh'] for c in cats.values()), hours=sum(c['hours'] for c in cats.values()), skipped_kwh=skipped, skipped_n=skipped_n, first=first, last=last)
 
 
-def summarize(res, price=None, driving_kwh=None):
+def summarize(res, price=None, driving_kwh=None, grid_price=None):
     """Din rezultatul `analyze` face lista pentru ecran: kWh, ore, kW mediu, cost, pondere, cat e peste ce ar consuma masina doar dormind, proiectie la 30 de zile."""
     c = res['cats']
     sleep_kw = c['sleep']['kwh'] / c['sleep']['hours'] if c['sleep']['hours'] > 1 else None
     days = (res['last'] - res['first']) / 86400 if res['first'] is not None and res['last'] is not None else 0
     tot = res['kwh']
     out = []
+    total_cost = 0.0
     for k in CATS:
         x = c[k]
         kw = x['kwh'] / x['hours'] if x['hours'] > 0.05 else None
         extra = max(0.0, x['kwh'] - x['hours'] * sleep_kw) if sleep_kw is not None and k != 'sleep' else None
+        wall = min(x['wall'], x['kwh']) if grid_price else 0.0
+        # energia scoasa din baterie la pretul ei (din costul incarcarilor), cea luata direct din priza la pretul retelei x partea care chiar a venit din retea
+        cost = None if price is None else (x['kwh'] - wall) * price + (x['wall_grid'] * grid_price if wall else 0.0)
+        eff_price = None if cost is None or x['kwh'] <= 0 else cost / x['kwh']
+        total_cost += cost or 0.0
         out.append(dict(key=k, kwh=round(x['kwh'], 2), hours=round(x['hours'], 1), kw=None if kw is None else round(kw, 2), pct=round(x['kwh'] / tot * 100) if tot > 0 else None,
-                        cost=None if price is None else round(x['kwh'] * price, 2), extra_kwh=None if extra is None else round(extra, 2),
-                        extra_cost=None if extra is None or price is None else round(extra * price, 2),
-                        per30_kwh=round(x['kwh'] / days * 30, 1) if days >= 2 else None, per30_cost=round(x['kwh'] / days * 30 * price, 2) if days >= 2 and price is not None else None))
-    return dict(cats=out, kwh=round(tot, 2), hours=round(res['hours'], 1), cost=None if price is None else round(tot * price, 2), days=round(days, 1), price=None if price is None else round(price, 3),
+                        cost=None if cost is None else round(cost, 2), extra_kwh=None if extra is None else round(extra, 2),
+                        extra_cost=None if extra is None or eff_price is None else round(extra * eff_price, 2),
+                        wall_kwh=round(wall, 2) if wall else None, wall_grid_kwh=round(x['wall_grid'], 2) if wall else None,
+                        per30_kwh=round(x['kwh'] / days * 30, 1) if days >= 2 else None, per30_cost=round(cost / days * 30, 2) if days >= 2 and cost is not None else None))
+    return dict(cats=out, kwh=round(tot, 2), hours=round(res['hours'], 1), cost=None if price is None else round(total_cost, 2), days=round(days, 1), price=None if price is None else round(price, 3),
+                grid_price=grid_price or None,
                 sleep_kw=None if sleep_kw is None else round(sleep_kw, 3), driving_kwh=None if driving_kwh is None else round(driving_kwh, 1),
                 idle_share=round(tot / (tot + driving_kwh) * 100) if driving_kwh and tot + driving_kwh > 0 else None,
                 skipped_kwh=round(res['skipped_kwh'], 2), skipped_n=res['skipped_n'])
@@ -234,9 +252,15 @@ def init(S):
         lo, hi, _ = S.list_filters(a, 'drive')
         samples, busy, sentry, eff, plug = load(car, lo, hi)
         P = lambda x: x.replace(tzinfo=dt.timezone.utc).timestamp()
-        res = analyze(samples, busy, sentry, eff, P(lo) if lo else None, P(hi) if hi else None, tzoff(), plug=plug)
+        es = getattr(S, 'ENERGYSRC', None)
+        phi_fn = (lambda a, b: (es.share(a, b) or {}).get('phi')) if es else None                  # sursa energiei din priza, minut cu minut (features.energysrc)
+        res = analyze(samples, busy, sentry, eff, P(lo) if lo else None, P(hi) if hi else None, tzoff(), plug=plug, phi=phi_fn)
         price, driving = price_and_driving(car, lo, hi)
-        out = summarize(res, price, driving)
+        try:
+            grid_price = float(S.cget('price_grid', 'PRICE_GRID', '') or 0) or None
+        except (TypeError, ValueError):
+            grid_price = None
+        out = summarize(res, price, driving, grid_price)
         out['by_day'] = [dict(day=d, **{c: round(v[c], 2) for c in CATS}) for d, v in sorted(res['by_day'].items())][-400:]
         out['eff'] = round(eff, 4)
         out['period'] = dict(from_=lo.isoformat() if lo else None, to=hi.isoformat() if hi else None)

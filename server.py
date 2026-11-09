@@ -242,11 +242,15 @@ def real_cost(row, allow_fetch=True):
         return None, False
     t0, t1 = _dtp(row['start_date']), _dtp(row['end_date'])
     a, b = t0.replace(tzinfo=dt.timezone.utc).timestamp(), t1.replace(tzinfo=dt.timezone.utc).timestamp()
+    cap = row.get('charge_energy_used') or row.get('charge_energy_added')
+    es = ENERGYSRC.for_charge(row['id'], a, b) if (ENERGYSRC and cap) else None
+    if es:                                            # originea energiei pe minute: retea directa + bateria casei incarcata din retea; soarele si bateria incarcata din soare = 0
+        RC_CACHE[k] = round(es['phi'] * cap * price, 2)
+        return RC_CACHE[k], True
     hist = ha_history(HA['grid'], t0 - dt.timedelta(minutes=1), t1)
     if not hist:                                      # eroare/lipsa istoric: nu cacha "0,00" pana la repornire
         return None, True
     grid = _integral(hist, a, b)
-    cap = row.get('charge_energy_used') or row.get('charge_energy_added')
     if cap:
         grid = min(grid, cap)                          # importul casei nu poate depasi energia luata de masina
     RC_CACHE[k] = round(grid * price, 2)
@@ -1472,6 +1476,15 @@ def charge_solar(cid):
         return dict(available=False, reason='Estimarea se face doar pentru încărcări AC acasă.')
     t0, t1 = _dtp(cp['start_date']), _dtp(cp['end_date'])
     car_kwh = cp['charge_energy_used'] or cp['charge_energy_added'] or 0
+    try:
+        price = float(cget('price_grid', 'PRICE_GRID', '') or 0) or float(cp.get('tariff') or 0)
+    except (TypeError, ValueError):
+        price = float(cp.get('tariff') or 0)
+    es = ENERGYSRC.for_charge(cid, t0.replace(tzinfo=dt.timezone.utc).timestamp(), t1.replace(tzinfo=dt.timezone.utc).timestamp()) if (ENERGYSRC and car_kwh) else None
+    if es:
+        grid = es['phi'] * car_kwh
+        return dict(available=True, method='ledger', cost_tm=cp.get('cost'), price=price or None, cost_real=round(grid * price, 2) if price else None, car_kwh=round(car_kwh, 2),
+                    grid_kwh=round(grid, 2), via_battery_kwh=round(es['phi_batt'] * car_kwh, 2), solar_share=round((1 - es['phi']) * 100), battery_grid_pct=round((es.get('g_end') or 0) * 100))
     gh = ha_history(HA['grid'], t0 - dt.timedelta(minutes=1), t1)
     if not gh:
         return dict(available=False, reason='Istoricul din Home Assistant nu e disponibil acum.')
@@ -3293,6 +3306,7 @@ PUBLIC_ROUTES = []               # fn(handler, cale, parametri) -> (cod, corp, c
 CTX = threading.local()          # CTX.actor = cine a dat comanda (user:rol / rule:id / system)
 OWN = None                       # baza de date proprie (features.store.Store), setata de features.load()
 PLACES = None                    # features.places: match(lat, lon) -> loc salvat cu pret pe kWh
+ENERGYSRC = None                 # features.energysrc: originea energiei din casa (retea / solar / baterie) pe minute, pentru costul real al incarcarilor
 CREDITS = None                   # features.credits: adjust(rand, date_salvate) -> costul real dupa creditul cumparat la furnizor (sau None)
 INET = None                       # features.inet: HTTPS direct din internet (Let's Encrypt + DuckDNS)
 INET_TLS = None                   # contextul TLS al listenerului public (pus de features.inet); None = HTTP simplu

@@ -36,9 +36,15 @@ Without HA nothing changes: everything keeps working through the Fleet API.
 
 HomeLink, schedules, rear seats and windows are always sent through the Fleet API.
 
-## Energy source estimate
+## Energy source
 
-Set `HA_GRID_IMPORT` (grid import power, W) and optionally `HA_PV_POWER`. The charge detail page then shows *"X% from solar / home battery"*: `1 − grid import energy during the charge ÷ energy the car used`. It is an estimate — house load drawn from the grid during the same window inflates the grid part.
+Set `HA_GRID_IMPORT` (grid import power, W) and `HA_PV_POWER`. The charge detail page then shows *"X% from solar / home battery"* and the **real cost** of a home charge (grid share × `PRICE_GRID`; solar and a battery charged by the sun cost 0).
+
+**Origin tracking (home battery).** When the battery power and charge level sensors are also available, the app follows where the energy comes from minute by minute (*proportional tracing*): everything the sources produce (panels + grid import + battery discharge) goes into one shared bus that every consumer (the house, the car, the battery charging, the export) draws from in the same proportion. The grid share of the bus is `(import + discharge × g) ÷ (PV + import + discharge)`, where `g` is the fraction of the energy stored in the home battery that came from the grid: when the battery charges, `g` mixes with the grid share of that minute; when it discharges, `g` stays. So the sun costs 0, a battery charged by the sun costs 0, and a battery charged from the grid (for example an evening top-up) or direct grid power costs your grid price. The charge page also shows how much of the grid part went through the battery.
+
+* Sensors: for a Solarman/Deye inverter the others are derived from the grid-import sensor name (`..._grid_import_power` → `..._battery_power`, `..._battery`, `..._battery_capacity`). Otherwise set `HA_BATT_POWER` (W), `HA_BATT_SOC` (%) and `HA_BATT_KWH` (usable kWh, a number or a sensor). `HA_BATT_SIGN=+` if your battery power is positive while charging (the default expects negative).
+* Home Assistant keeps about 10 days of history, so the app fills in what it can on first start and then samples every 30 seconds into its own database (`src_min`, about 30 MB per year). Charges older than the stored minutes keep the older estimate (grid import during the charge, capped at the energy the car used).
+* It starts from "the battery is all solar" (`g = 0`), so the first days after the first start can under-count grid energy still sitting in the battery. A single inverter/battery is assumed. `GET /api/energysrc` shows the coverage and the current grid share of the battery.
 
 ## Automations
 

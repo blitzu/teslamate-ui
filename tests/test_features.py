@@ -2293,6 +2293,105 @@ class LiveDriveTests(Isolated):
         self.assertEqual(out['kwh'], 0.0)
 
 
+class RealCostWarmTests(Isolated):
+    def test_warm_computes_the_real_cost_of_every_home_charge_once_and_only_with_home_assistant(self):
+        from features import drivecost as DC
+        calls = []
+        keep = (S.ha_ok, S.q, S._charges_rows, S.real_cost)
+        try:
+            S.ha_ok = lambda: True
+            S.HA['grid'] = 'sensor.grid'
+            S.q = lambda sql, args=(): [{'id': 1}, {'id': 2}]
+            S._charges_rows = lambda car, n, off: [dict(id=car * 10 + i) for i in range(2)]
+            S.real_cost = lambda row, allow_fetch=True: (calls.append((row['id'], allow_fetch)) or ((None, False) if row['id'] == 11 else (1.0, True)))
+            self.assertEqual(DC.warm(S, pause=0), 3)                                          # 4 incarcari, una deja in memorie / necalculabila
+            self.assertTrue(all(f for _, f in calls))                                          # cu interogare reala in HA
+            S.HA['grid'] = ''
+            calls.clear()
+            self.assertEqual(DC.warm(S, pause=0), 0)                                          # fara senzor de retea: nimic
+            self.assertEqual(calls, [])
+        finally:
+            S.ha_ok, S.q, S._charges_rows, S.real_cost = keep
+
+
+class EnergySourceTests(Isolated):
+    def minute(self, t, pv=0.0, grid=0.0, batt=0.0, soc=None):
+        return (t, pv, grid, batt, soc)
+
+    def test_the_grid_share_follows_the_sources_that_feed_the_house(self):
+        from features import energysrc as ES
+        t = 1_800_000_000
+        out, g, _ = ES.advance(0.0, 50.0, 30.0, [self.minute(t, pv=0, grid=3000, batt=0),                      # noapte, doar retea
+                                                  self.minute(t + 60, pv=5000, grid=0, batt=-2000),               # zi, doar soare, bateria se incarca
+                                                  self.minute(t + 120, pv=1000, grid=1000, batt=0),                # jumatate-jumatate
+                                                  self.minute(t + 180, pv=0, grid=0, batt=0)])                    # nimic: minut necalculat
+        self.assertEqual([round(x[1], 2) if x[1] is not None else None for x in out], [1.0, 0.0, 0.5, None])
+        self.assertEqual(g, 0.0)                                                                                 # bateria s-a incarcat doar din soare
+
+    def test_a_battery_charged_from_the_grid_carries_that_origin_into_later_use(self):
+        from features import energysrc as ES
+        t, rows, soc = 1_800_000_000, [], 20.0
+        for i in range(120):                                                                                      # 2 h incarcare din retea, 3 kW in baterie (cap 30 kWh)
+            soc += 3.0 / 60 / 30 * 100
+            rows.append(self.minute(t + i * 60, pv=0, grid=3500, batt=-3000, soc=soc))
+        out, g, soc = ES.advance(0.0, 20.0, 30.0, rows)
+        self.assertTrue(all(abs(x[1] - 1.0) < 1e-9 for x in out))
+        self.assertGreater(g, 0.45)
+        self.assertLess(g, 0.65)                                                                                  # 6 kWh din retea in 12 kWh = ~50%
+        night = [self.minute(t + 7200 + i * 60, pv=0, grid=0, batt=2000, soc=soc) for i in range(3)]             # noaptea, doar bateria alimenteaza casa
+        out2, g2, _ = ES.advance(g, soc, 30.0, night)
+        self.assertAlmostEqual(out2[0][1], g, places=6)                                                           # curentul din baterie costa cat e g din retea
+        self.assertAlmostEqual(out2[0][2], g, places=6)
+        self.assertEqual(g2, g)                                                                                    # descarcarea nu schimba g
+        day = [self.minute(t + 14400 + i * 60, pv=6000, grid=0, batt=-3000, soc=soc + i) for i in range(120)]      # a doua zi bateria se incarca din soare: g scade
+        _, g3, _ = ES.advance(g2, soc, 30.0, day)
+        self.assertLess(g3, g2 * 0.8)
+
+    def test_a_sign_flipped_battery_sensor_is_handled(self):
+        from features import energysrc as ES
+        out, g, _ = ES.advance(0.0, 50.0, 30.0, [self.minute(1_800_000_000, pv=0, grid=3500, batt=3000, soc=50)], charge_sign=1)
+        self.assertGreater(g, 0.0)
+
+    def test_resample_averages_each_minute_by_time_held(self):
+        from features import energysrc as ES
+        t0 = 1_800_000_000
+        r = ES.resample([(t0 - 30, 100.0), (t0 + 30, 300.0), (t0 + 150, 50.0)], t0, 3)
+        self.assertEqual([round(x) for x in r], [200, 300, 175])                                                   # 30 s la 100 + 30 s la 300; 300; 30 s la 300 + 30 s la 50
+        self.assertEqual(ES.resample([], t0, 2), [None, None])
+        self.assertEqual(ES.resample([(t0 + 90, 5.0)], t0, 2), [None, 5.0])                                         # inainte de primul punct nu stim nimic
+
+    def test_a_charge_share_is_weighted_by_the_charger_power_and_needs_enough_minutes(self):
+        from features import energysrc as ES
+        t = 1_800_000_000
+        rows = [(t + i * 60, 1.0 if i < 5 else 0.0, 0.0) for i in range(10)]                                       # primele 5 min din retea, urmatoarele din soare
+        sh = ES.weighted_share(rows, [(t - 5, 4.0), (t + 300, 1.0)], 10)                                           # 4 kW prima jumatate, 1 kW a doua
+        self.assertAlmostEqual(sh['phi'], 0.8, places=3)
+        self.assertAlmostEqual(ES.weighted_share(rows, None, 10)['phi'], 0.5, places=3)
+        self.assertIsNone(ES.weighted_share(rows[:6], None, 10))                                                  # doar 60% din minute
+        self.assertIsNone(ES.weighted_share([], None, 1))
+
+    def test_real_cost_prefers_the_ledger_and_falls_back_to_the_grid_import(self):
+        keep = (S.ENERGYSRC, S.ha_history)
+        S.RC_CACHE.clear()
+        S.CFG['price_grid'] = '1.0'
+        S.HA['grid'] = 'sensor.x_grid_import_power'
+        row = dict(id=77, name='Acasa', dc=False, power_max=7, tariff=1.1, start_date='2026-11-08T04:00:00', end_date='2026-11-08T08:00:00', charge_energy_used=10.0)
+        try:
+            S.ENERGYSRC = type('E', (), {'for_charge': lambda self, cid, a, b: dict(phi=0.4, phi_batt=0.1)})()
+            S.ha_history = lambda *a, **k: self.fail('nu trebuie sa intrebe HA cand registrul are minutele')
+            self.assertEqual(S.real_cost(row, True), (4.0, True))                                                 # 40% din 10 kWh x 1,0
+            self.assertEqual(S.real_cost(row, False), (4.0, False))                                               # apoi din memorie
+            S.RC_CACHE.clear()
+            S.ENERGYSRC = type('E', (), {'for_charge': lambda self, cid, a, b: None})()                           # fara minute: calculul vechi
+            S.ha_history = lambda eid, a, b: [(a.replace(tzinfo=S.dt.timezone.utc).timestamp(), 2000.0)]            # 2 kW constant
+            c, fetched = S.real_cost(row, True)
+            self.assertTrue(fetched)
+            self.assertAlmostEqual(c, 8.0, places=1)                                                               # 4 h x 2 kW = 8 kWh x 1,0
+        finally:
+            S.ENERGYSRC, S.ha_history = keep
+            S.RC_CACHE.clear()
+
+
 class IdleUseTests(Isolated):
     EFF = 0.125                                                    # kWh pe km de autonomie ideala (8 km = 1 kWh)
 
@@ -2377,6 +2476,26 @@ class IdleUseTests(Isolated):
         out = self.run_an([], [], plug=plug)                                                 # fara pozitii: capetele vin din proces, energia ramane
         self.assertAlmostEqual(out['kwh'], 10.8 * 0.125 + 0.87, places=3)
         self.assertAlmostEqual(out['cats']['awake']['kwh'], out['kwh'], places=6)           # steagurile clima nu se stiu: treaza
+
+    def test_the_wall_energy_of_a_preheat_is_priced_by_its_source_and_the_battery_part_by_the_battery_price(self):
+        from features import idleuse as IU
+        t = 1_800_000_000.0
+        plug = [(t, t + 940, 390.85, 380.05, 0.87)]                                          # 1,35 kWh din baterie + 0,87 kWh din priza
+        s = [(t, 390.85, True, False), (t + 940, 380.05, True, False)]
+        res = IU.analyze(s, [], [], self.EFF, plug=plug, phi=lambda a, b: 0.5)                # jumatate din priza = retea, jumatate solar / bateria casei
+        sm = IU.summarize(res, price=1.0, grid_price=2.0)
+        c = {x['key']: x for x in sm['cats']}['climate']
+        self.assertAlmostEqual(c['kwh'], 10.8 * 0.125 + 0.87, places=3)
+        self.assertEqual(c['wall_kwh'], 0.87)
+        self.assertEqual(c['wall_grid_kwh'], 0.43)
+        self.assertAlmostEqual(c['cost'], 10.8 * 0.125 * 1.0 + 0.435 * 2.0, places=2)         # 1,35 x 1,0 + 0,435 x 2,0
+        self.assertAlmostEqual(sm['cost'], c['cost'], places=2)
+        self.assertEqual(sm['grid_price'], 2.0)
+        res = IU.analyze(s, [], [], self.EFF, plug=plug)                                      # fara registru: totul la pretul energiei din baterie, ca inainte
+        c = {x['key']: x for x in IU.summarize(res, price=1.0, grid_price=2.0)['cats']}['climate']
+        self.assertEqual((c['wall_kwh'], c['cost']), (None, round(c['kwh'], 2)))
+        res = IU.analyze(s, [], [], self.EFF, plug=plug, phi=lambda a, b: 0.5)
+        self.assertEqual({x['key']: x for x in IU.summarize(res, price=1.0)['cats']}['climate']['wall_kwh'], None)     # fara pret al retelei nu se rafineaza
 
     def test_an_impossible_jump_is_skipped_and_counted(self):
         t = 1_800_000_000.0

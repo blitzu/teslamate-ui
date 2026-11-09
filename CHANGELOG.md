@@ -3,6 +3,19 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.17.0 - 2026-11-09
+
+### New features
+- **Origin of the home energy, minute by minute.** The cost of a home charge now follows where the electricity really came from, including the home battery: the sun costs 0, a battery charged by the sun costs 0, and direct grid power or a battery that was charged from the grid (for example an evening top-up) costs your grid price. The app traces it with a simple model: everything the sources produce (panels + grid import + battery discharge) goes into one shared bus that every consumer draws from in the same proportion, and the home battery remembers what fraction of it came from the grid. It reads only Home Assistant sensors (grid import, PV, battery power, battery level and capacity; for a Solarman/Deye inverter they are found from the grid-import sensor, otherwise `HA_BATT_POWER`, `HA_BATT_SOC`, `HA_BATT_KWH`, `HA_BATT_SIGN` set them). Home Assistant keeps only about 10 days, so the app fills in what is there on first start and then stores its own minute samples (about 30 MB a year).
+  - The *Energy source* card on a charge shows the grid share, how much of it went through the home battery, the battery's grid share at the end of the charge, and the real cost. On the last 10 days of real data it agrees with the old import-based figure where the car charged straight from the sun or the grid, and corrects it where house load had inflated the grid part (one night charge: 7.2 kWh from the grid instead of 8.9).
+  - **Preheating at the charger is priced by its source too.** In Idle energy use, the energy a preheat takes straight from the plug (the charge TeslaMate records with no energy added) is priced by where it came from in that minute: the share from the grid × your grid price, and the share from the sun or from the home battery as free. What came out of the car battery stays at the price of that battery's energy. The card shows the plug energy and how much of it was from the grid (for example, a morning preheat that drew 0.84 kWh from the plug, of which 0.01 kWh from the grid because the house battery supplied it, now costs 1.09 instead of 2.76). Needs `PRICE_GRID`; without it, or without origin data for that time, the previous pricing is used.
+  - Charges older than the stored minutes keep the previous estimate. A new `GET /api/energysrc` shows the coverage and the battery's current grid share. It starts from "the battery is all solar", so the first days can under-count grid energy still in the battery.
+
+## 1.16.3 - 2026-11-09
+
+### Fixes
+- **Costs that depend on the real source of the home electricity no longer fall back to the flat tariff after a restart.** The app prices a home charge by what really came from the grid (the inverter's grid import from Home Assistant × your grid price; solar and the solar battery count as 0), but trip costs and the idle energy page only read that figure from memory, and memory is empty after every restart, so they used TeslaMate's flat per-kWh tariff until someone opened the Charges list. The real cost of every home AC charge is now computed in the background shortly after start and every 3 hours, so the trip costs, the cost per kWh in Idle energy use and the totals use the real price (for example, on a day with mostly solar charging the average price of the energy drops from the flat 1.28 to 0.82 per kWh).
+
 ## 1.16.2 - 2026-11-09
 
 ### Fixes

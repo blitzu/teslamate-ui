@@ -71,6 +71,28 @@ def simulate(charges, drives):
     return out
 
 
+WARM_FIRST_S = 90               # dupa pornire, cat asteptam pana la primul calcul
+WARM_EVERY_S = 3 * 3600
+
+
+def warm(S, pause=0.2):
+    """Calculeaza costul real (din Home Assistant: energia importata din retea x tarif) al incarcarilor AC de acasa care nu sunt inca in memorie. Costul curselor si pagina de
+    consum in staționare il citesc doar din memorie, deci dupa o repornire ar cadea pe tariful fix din TeslaMate pana cand cineva deschidea lista de incarcari. Intoarce cate s-au calculat."""
+    if not (S.ha_ok() and S.HA.get('grid')):
+        return 0
+    n = 0
+    for car in S.q('select id from cars order by id'):
+        for r in S._charges_rows(car['id'], 5000, 0):
+            try:
+                _, fetched = S.real_cost(r, True)
+            except Exception:  # noqa
+                continue
+            if fetched:
+                n += 1
+                time.sleep(pause)
+    return n
+
+
 def init(S):
     class DriveCost:
         cache = {}
@@ -130,6 +152,19 @@ def init(S):
             return rows
 
     S.DRIVECOST = DriveCost()
+
+    def warm_loop():
+        time.sleep(WARM_FIRST_S)
+        while True:
+            try:
+                if not S.DEMO_ONLY and S.has_cars() and warm(S):
+                    DriveCost.cache.clear()                                    # costurile curselor se recalculeaza cu costurile reale
+            except Exception as e:  # noqa
+                S.log('cost real incarcari:', str(e)[:100], flush=True)
+            time.sleep(WARM_EVERY_S)
+
+    if hasattr(S, 'BG_TASKS'):
+        S.BG_TASKS.append(warm_loop)
 
 
 def _tz(S):
