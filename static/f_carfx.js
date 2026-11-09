@@ -15,7 +15,7 @@ function carFx(L) {
     const chg = L.charging_state === 'Charging', done = L.charging_state === 'Complete', col = chg || done ? '#6fd6b8' : '#8f99a4';
     g += `<path d="M${PORT[0]} ${PORT[1]}C70 1342 -10 1372 -140 1396" fill="none" stroke="#252b32" stroke-width="15" stroke-linecap="round"/>`
       + `<path d="M${PORT[0]} ${PORT[1]}C70 1342 -10 1372 -140 1396" fill="none" stroke="#5b6671" stroke-width="3.5" stroke-linecap="round"/>`
-      + (chg ? `<path class="fxd" d="M${PORT[0]} ${PORT[1]}C70 1342 -10 1372 -140 1396" fill="none" stroke="#6fd6b8" stroke-width="5" stroke-linecap="round" stroke-dasharray="14 36"/>` : '')
+      + (chg ? `<path class="fxi" d="M${PORT[0]} ${PORT[1]}C70 1342 -10 1372 -140 1396" fill="none" stroke="#6fd6b8" stroke-width="5" stroke-linecap="round" stroke-dasharray="14 36"/>` : '')
       + `<circle class="${chg ? 'fxg' : ''}" cx="${PORT[0]}" cy="${PORT[1]}" r="34" fill="${col}" opacity="${chg ? '.8' : done ? '.55' : '.35'}" filter="url(#fxb)"/>`
       + `<circle cx="${PORT[0]}" cy="${PORT[1]}" r="9" fill="${col}"/>`;
   } else if (on(L.charge_port_door_open)) {
@@ -72,7 +72,7 @@ function carView34(c, L) {
     const [px, py] = g.port, chg = L.charging_state === 'Charging', done = L.charging_state === 'Complete', col = chg || done ? '#6fd6b8' : '#8f99a4';
     const cab = `M${px} ${py}c60 40 110 160 150 330`;
     s += `<path d="${cab}" fill="none" stroke="#252b32" stroke-width="22" stroke-linecap="round"/><path d="${cab}" fill="none" stroke="#5b6671" stroke-width="5" stroke-linecap="round"/>`
-      + (chg ? `<path class="fxd" d="${cab}" fill="none" stroke="#6fd6b8" stroke-width="8" stroke-linecap="round" stroke-dasharray="20 50"/>` : '')
+      + (chg ? `<path class="fxi7" d="${cab}" fill="none" stroke="#6fd6b8" stroke-width="8" stroke-linecap="round" stroke-dasharray="20 50"/>` : '')
       + `<circle class="${chg ? 'fxg' : ''}" cx="${px}" cy="${py}" r="50" fill="${col}" opacity="${chg ? '.8' : done ? '.55' : '.35'}" filter="url(#fxb34)"/><circle cx="${px}" cy="${py}" r="13" fill="${col}"/>`;
   } else if (on(L.charge_port_door_open)) s += `<circle cx="${g.port[0]}" cy="${g.port[1]}" r="18" fill="none" stroke="#ffb15c" stroke-width="7"/>`;
   if (on(L.is_climate_on)) {

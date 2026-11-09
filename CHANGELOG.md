@@ -3,6 +3,11 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.17.1 - 2026-11-09
+
+### Fixes
+- **The charging cable animation ran the wrong way.** While charging, the moving dashes on the cable travelled from the car out to the plug. They now flow from the plug into the car, in both the top view and the 3/4 view. The 3/4 view also no longer jumps at the end of each animation cycle.
+
 ## 1.17.0 - 2026-11-09
 
 ### New features

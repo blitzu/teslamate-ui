@@ -305,6 +305,8 @@ body.nav-open #nav{transform:none;box-shadow:0 0 40px #000a}
 .fxr{fill:none;stroke:#ef7a7a;stroke-width:5;opacity:0;animation:fxr 3.2s ease-out infinite;transform-box:fill-box;transform-origin:center}@keyframes fxr{0%{opacity:.6;transform:scale(.97)}100%{opacity:0;transform:scale(1.2)}}
 .fxg{animation:fxgl 2.2s ease-in-out infinite}@keyframes fxgl{50%{opacity:.35}}
 .fxd{animation:fxdash 1.1s linear infinite}@keyframes fxdash{to{stroke-dashoffset:-50}}
+.fxi{animation:fxdashi 1.1s linear infinite}@keyframes fxdashi{to{stroke-dashoffset:50}}                                    /* cablul de incarcare: curentul intra in masina (de la capatul cablului spre port); perioada 14+36 */
+.fxi7{animation:fxdashi7 1.1s linear infinite}@keyframes fxdashi7{to{stroke-dashoffset:70}}                                 /* acelasi lucru pentru vederea 3/4 (perioada 20+50) */
 .fxh{fill:none;stroke:#ff9a5c;stroke-width:7;stroke-linecap:round;animation:fxhe 2.4s ease-in-out infinite}.fxh.cold{stroke:#8fd3ff}@keyframes fxhe{0%,100%{transform:translateY(0);opacity:.25}50%{transform:translateY(-22px);opacity:.9}}
 .fxz{animation:fxzz 2.6s ease-in-out infinite}@keyframes fxzz{50%{opacity:.35;transform:translateY(-10px)}}
 .fxu{animation:fxdash 2.4s linear infinite}
