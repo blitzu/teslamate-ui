@@ -3,6 +3,11 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.16.1 - 2026-11-09
+
+### Fixes
+- **Idle energy use now counts preheating done at the charger.** When the car is plugged in and you preheat it, TeslaMate records the session as a "charge" that added no energy, and the page skipped every charge, so exactly the preheat you start at home was missing (one morning showed 0.03 kWh for a preheat that used about 2.2 kWh, 4% of the battery). A session that added less than 0.15 kWh to the battery is now treated as parked time, and the energy that came from the grid during it is added to the drop in the battery. Climate running during a real charge or a drive still cannot be told apart and stays with the charge or drive; the page now says so.
+
 ## 1.16.0 - 2026-11-09
 
 ### New features

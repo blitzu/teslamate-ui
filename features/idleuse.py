@@ -17,6 +17,7 @@ from features.sleepguard import intervals_from_events, merge
 GAP_S = 20 * 60               # peste atat intre doua puncte masina doarme / e oprita (TeslaMate nu mai are pozitii)
 EDGE_S = 2                    # toleranta la marginea unei curse / incarcari (secunde)
 OPEN_MAX_S = 24 * 3600        # o incarcare "neinchisa" nu poate tine mai mult
+PLUG_ADDED_KWH = 0.15          # o "incarcare" care a adaugat mai putin de atat in baterie e masina conectata, nu o incarcare
 MAX_KW = 12.0                # o masina parcata nu trage atat: segmentul e semn de ceva nemasurat (cursa lipsa, reset de autonomie) si se numara separat
 CATS = ('climate', 'heater', 'sentry', 'awake', 'sleep')
 
@@ -44,9 +45,11 @@ def split_segment(dt_s, wc, wh, sf, asleep):
     return out
 
 
-def analyze(samples, busy, sentry, eff, lo=None, hi=None, tz_offset=lambda t: 0, trace=None):
+def analyze(samples, busy, sentry, eff, lo=None, hi=None, tz_offset=lambda t: 0, trace=None, plug=()):
     """samples: [(t, autonomie_km, clima, incalzire)] pozitii din afara curselor/incarcarilor (momente UNIX, sortate); busy: [(inceput, sfarsit|None, autonomie_start, autonomie_sfarsit)]
     curse si incarcari (sfarsit None = in curs); sentry: [[inceput, sfarsit]]; eff = kWh pe km de autonomie ideala. Se numara segmentele care incep in [lo, hi).
+    plug: [(inceput, sfarsit, autonomie_start, autonomie_sfarsit, kWh_din_retea)] = "incarcari" fara energie adaugata (TeslaMate inregistreaza asa preincalzirea cand masina e la
+    incarcator): ramane staționare, iar la energia din baterie se adauga ce a venit din retea in acel interval.
     Intoarce {cats: {cat: {kwh, hours}}, by_day: {zi: {cat: kwh}}, kwh, hours, skipped_kwh, skipped_n, first, last}."""
     busy = sorted(busy, key=lambda b: b[0])
     for i, (t0, t1, r0, r1) in enumerate(busy):
@@ -69,6 +72,12 @@ def analyze(samples, busy, sentry, eff, lo=None, hi=None, tz_offset=lambda t: 0,
             anch.append((t0, r0, 'start', False, False))
         if r1 is not None:
             anch.append((t1, r1, 'end', False, False))
+    s_t = [x[0] for x in samples]
+    for t0, t1, r0, r1, _ in plug:                       # capetele lor, daca nu exista deja o pozitie langa ele
+        for t, r in ((t0, r0), (t1, r1)):
+            i = bisect.bisect_left(s_t, t - 90)
+            if r is not None and not (i < len(s_t) and s_t[i] <= t + 90) and not inside(t):
+                anch.append((t, r, 'park', False, False))
     anch.sort(key=lambda a: (a[0], 0 if a[2] == 'end' else 1))
     sentry = merge([list(x) for x in sentry])
     s_starts = [x[0] for x in sentry]
@@ -87,6 +96,10 @@ def analyze(samples, busy, sentry, eff, lo=None, hi=None, tz_offset=lambda t: 0,
         if bisect.bisect_left(starts, b[0] - 1) - bisect.bisect_right(starts, a[0] + 1) > 0:      # o cursa pornește în interior, dar fără capăt de autonomie: nu putem ști
             continue
         e = (a[1] - b[1]) * eff
+        for p0, p1, _, _, g in plug:                     # energia venita din retea in timpul acestui segment (clima pornita la incarcator)
+            ov = min(b[0], p1) - max(a[0], p0)
+            if ov > 0 and p1 > p0:
+                e += g * ov / (p1 - p0)
         if trace is not None:
             trace.append((a[0], b[0], a[2], b[2], round(e, 3)))
         if e > MAX_KW * dts / 3600:
@@ -165,7 +178,7 @@ def init(S):
             bp.append(whi)
         samples = [(float(r['t']), float(r['r']), bool(r['c']), bool(r['h'])) for r in S.q(
             'select extract(epoch from date) t, ideal_battery_range_km r, is_climate_on c, battery_heater h from positions where ' + ' and '.join(sp) + ' order by date', tuple(bp))]
-        busy = []
+        busy, plug = [], []
         for tab in ('drives', 'charging_processes'):
             sel, par = ['car_id = %s'], [car]
             if wlo:
@@ -174,17 +187,22 @@ def init(S):
             if whi:
                 sel.append('start_date < %s')
                 par.append(whi)
-            for r in S.q('select start_date a, end_date b, start_ideal_range_km ra, end_ideal_range_km rb from ' + tab + ' where ' + ' and '.join(sel), tuple(par)):
+            extra = ', charge_energy_added ea, charge_energy_used eu' if tab == 'charging_processes' else ''
+            for r in S.q('select start_date a, end_date b, start_ideal_range_km ra, end_ideal_range_km rb' + extra + ' from ' + tab + ' where ' + ' and '.join(sel), tuple(par)):
                 a = P(dt.datetime.fromisoformat(str(r['a']))) if r['a'] else None
                 if a is None:
                     continue
                 b = P(dt.datetime.fromisoformat(str(r['b']))) if r['b'] else None
-                busy.append((a, b, None if r['ra'] is None else float(r['ra']), None if r['rb'] is None else float(r['rb'])))
+                ra, rb = (None if r['ra'] is None else float(r['ra'])), (None if r['rb'] is None else float(r['rb']))
+                if tab == 'charging_processes' and b is not None and r['ea'] is not None and float(r['ea']) < PLUG_ADDED_KWH:
+                    plug.append((a, b, ra, rb, float(r['eu'] or 0)))          # nu a incarcat nimic: e doar masina conectata (de obicei preincalzire)
+                else:
+                    busy.append((a, b, ra, rb))
         since = P(lo) if lo else 0
         ev = [(x['ts'], x['new']) for x in S.OWN.rows('select ts, new from events where key=? and car=? and ts >= ? order by ts', ('sentry_mode', car, since - 86400))]
         prev = S.OWN.one('select ts, new from events where key=? and car=? and ts < ? order by ts desc limit 1', ('sentry_mode', car, since - 86400))
         sentry = intervals_from_events(([(prev['ts'], prev['new'])] if prev else []) + ev, 'True', now)
-        return samples, busy, sentry, float(eff)
+        return samples, busy, sentry, float(eff), plug
 
     def price_and_driving(car, lo, hi):
         """(pret mediu pe kWh din baterie in perioada, kWh condusi in perioada) - pretul vine din costul curselor (FIFO din drivecost)."""
@@ -215,9 +233,9 @@ def init(S):
             return dict(empty=True)
         car = int(a.get('car', 1))
         lo, hi, _ = S.list_filters(a, 'drive')
-        samples, busy, sentry, eff = load(car, lo, hi)
+        samples, busy, sentry, eff, plug = load(car, lo, hi)
         P = lambda x: x.replace(tzinfo=dt.timezone.utc).timestamp()
-        res = analyze(samples, busy, sentry, eff, P(lo) if lo else None, P(hi) if hi else None, tzoff())
+        res = analyze(samples, busy, sentry, eff, P(lo) if lo else None, P(hi) if hi else None, tzoff(), plug=plug)
         price, driving = price_and_driving(car, lo, hi)
         out = summarize(res, price, driving)
         out['by_day'] = [dict(day=d, **{c: round(v[c], 2) for c in CATS}) for d, v in sorted(res['by_day'].items())][-400:]

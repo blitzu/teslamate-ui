@@ -2363,6 +2363,18 @@ class IdleUseTests(Isolated):
         self.assertAlmostEqual(self.run_an(late, [(t + 100, None, 265.0, None)])['kwh'], 0.5 * self.EFF, places=4)      # o incarcare nu tine peste 24 h
         self.assertEqual(self.run_an([(t + 3600, 330.0, False, False), (t + 3900, 329.5, False, False)], [(t + 100, None, 265.0, None)])['kwh'], 0.0)    # in primele 24 h pozitiile ei nu intra
 
+    def test_preheating_at_the_charger_is_counted_with_the_grid_energy(self):
+        t = 1_800_000_000.0
+        # TeslaMate: "incarcare" de 16 min fara energie adaugata; bateria a scazut cu 10,8 km (1,35 kWh), din retea au venit 0,87 kWh, clima era pornita
+        plug = [(t, t + 940, 390.85, 380.05, 0.87)]
+        s = [(t, 390.85, True, False), (t + 940, 380.05, True, False)]
+        out = self.run_an(s, [], plug=plug)
+        self.assertAlmostEqual(out['cats']['climate']['kwh'], 10.8 * 0.125 + 0.87, places=3)
+        self.assertEqual(out['skipped_n'], 0)
+        out = self.run_an([], [], plug=plug)                                                 # fara pozitii: capetele vin din proces, energia ramane
+        self.assertAlmostEqual(out['kwh'], 10.8 * 0.125 + 0.87, places=3)
+        self.assertAlmostEqual(out['cats']['awake']['kwh'], out['kwh'], places=6)           # steagurile clima nu se stiu: treaza
+
     def test_an_impossible_jump_is_skipped_and_counted(self):
         t = 1_800_000_000.0
         out = self.run_an([(t, 300.0, False, False), (t + 300, 250.0, False, False), (t + 600, 249.9, False, False)])     # 50 km pe 5 min = 75 kW
