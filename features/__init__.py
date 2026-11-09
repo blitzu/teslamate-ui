@@ -2,7 +2,7 @@
 (`S.route(...)`), sarcinile de fundal (`S.BG_TASKS`), hook-urile MQTT (`S.MQTT_HOOKS`), receptorii de notificari (`S.NOTIFY_SINKS`) si tabelele (`S.OWN.migrate`)."""
 import importlib
 
-MODULES = ['events', 'backup', 'alerts', 'sleepguard', 'service', 'trips', 'software', 'telegram', 'reports', 'pzu', 'push', 'share', 'handoff', 'zones', 'tags', 'places', 'chstats', 'drivecost', 'stations', 'ampwhere', 'inet', 'tessie_data', 'livedrive', 'teslacredit', 'credits', 'similar']          # modulele noi se adauga aici, in ordinea initializarii
+MODULES = ['events', 'backup', 'alerts', 'sleepguard', 'service', 'trips', 'software', 'telegram', 'reports', 'pzu', 'push', 'share', 'handoff', 'zones', 'tags', 'places', 'chstats', 'drivecost', 'stations', 'ampwhere', 'inet', 'tessie_data', 'livedrive', 'teslacredit', 'credits', 'similar', 'idleuse']          # modulele noi se adauga aici, in ordinea initializarii
 
 
 def load(S):

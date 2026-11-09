@@ -3,6 +3,13 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.16.0 - 2026-11-09
+
+### New features
+- **Idle energy use: what climate, Sentry and the rest cost.** A new page (Parked → "What climate, Sentry and the rest cost", also in the menu as *Idle energy use*) shows the energy the car uses while it is neither driving nor charging, split into **climate / cabin preheat**, **battery heating**, **Sentry mode**, **car awake (other)** and **asleep (background drain)**, for the period you choose. Each function shows its kWh, hours, average kW, estimated cost, the share of the total, how much of it is **beyond what the car would have used asleep**, and what it adds up to over 30 days at that rate. The top shows the total, the share of all the energy you used (parked versus driving) and the daily baseline drain; a stacked bar chart shows every day.
+  - The car does not report a figure per function, so the energy is derived from TeslaMate data: between two points where the car was not driving or charging, the drop in ideal range × the car's efficiency (the same formula TeslaMate uses for a drive), assigned by the climate and battery-heating flags at that moment, by the Sentry intervals in the event log, and by whether the car was awake or asleep. They are estimates: a single 5-minute interval is noisy, but daily and weekly sums are stable. Cost uses the average price of the energy in the battery over the period (the drive-cost calculation).
+  - Charging that TeslaMate never closed is cut at the next activity (at most 24 hours), and intervals with an impossible jump are left out and counted at the bottom of the page.
+
 ## 1.15.0 - 2026-11-06
 
 ### New features

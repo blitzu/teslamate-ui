@@ -2293,5 +2293,111 @@ class LiveDriveTests(Isolated):
         self.assertEqual(out['kwh'], 0.0)
 
 
+class IdleUseTests(Isolated):
+    EFF = 0.125                                                    # kWh pe km de autonomie ideala (8 km = 1 kWh)
+
+    def run_an(self, samples, busy=(), sentry=(), **k):
+        from features import idleuse as IU
+        return IU.analyze(samples, list(busy), list(sentry), self.EFF, **k)
+
+    def test_a_long_gap_is_sleep_and_a_climate_run_is_split_from_the_awake_baseline(self):
+        t = 1_800_000_000.0
+        drive = (t - 600, t, 300.0, 296.0)                                              # cursa se termina la t, autonomia 296
+        # 8 min cu clima pornita (0,5 km pe 5 min = 0,0625 kWh), apoi 4 puncte treaza fara clima (0,1 km pe 5 min), apoi somn de 6 h (-4 km)
+        s, r, ts = [], 296.0, t + 300
+        for i in range(2):
+            r -= 0.5
+            s.append((ts, r, True, False))
+            ts += 300
+        for i in range(4):
+            r -= 0.1
+            s.append((ts, r, False, False))
+            ts += 300
+        t_next = ts - 300 + 6 * 3600                                                       # ultimul punct e la ts - 300: de acolo, exact 6 h de somn
+        out = self.run_an(s, [drive, (t_next, t_next + 600, r - 4.0, r - 8.0)])
+        c = out['cats']
+        self.assertAlmostEqual(c['sleep']['kwh'], 4.0 * self.EFF, places=2)
+        self.assertAlmostEqual(c['sleep']['hours'], 6.0, places=1)
+        self.assertGreater(c['climate']['kwh'], 0.08)                                    # primul segment (drive end -> clima) + al doilea
+        self.assertAlmostEqual(c['awake']['kwh'] + c['climate']['kwh'] + c['sleep']['kwh'], out['kwh'], places=6)
+        self.assertEqual((c['heater']['kwh'], c['sentry']['kwh']), (0.0, 0.0))
+
+    def test_sentry_takes_the_awake_time_it_covers(self):
+        t = 1_800_000_000.0
+        s = [(t + i * 300, 300.0 - i * 0.4, False, False) for i in range(7)]            # 30 min treaza, 0,4 km pe 5 min
+        out = self.run_an(s, [], [[t, t + 900]])                                         # Sentry pe primele 15 min
+        c = out['cats']
+        self.assertAlmostEqual(c['sentry']['hours'], 0.25, places=2)
+        self.assertAlmostEqual(c['awake']['hours'], 0.25, places=2)
+        self.assertAlmostEqual(c['sentry']['kwh'], c['awake']['kwh'], places=3)
+
+    def test_a_half_climate_segment_splits_in_two_and_both_flags_share_the_energy(self):
+        t = 1_800_000_000.0
+        out = self.run_an([(t, 300.0, True, False), (t + 300, 299.0, False, False)])       # clima pe jumatate din segment
+        c = out['cats']
+        self.assertAlmostEqual(c['climate']['kwh'], 0.5 * 0.125, places=4)
+        self.assertAlmostEqual(c['awake']['kwh'], 0.5 * 0.125, places=4)
+        out = self.run_an([(t, 300.0, True, True), (t + 300, 299.0, True, True)])           # climă și baterie împreună: egal
+        self.assertAlmostEqual(out['cats']['climate']['kwh'], out['cats']['heater']['kwh'], places=6)
+        self.assertAlmostEqual(out['kwh'], 0.125, places=6)
+
+    def test_charging_positions_are_ignored_even_for_an_open_charge(self):
+        t = 1_800_000_000.0
+        charge = (t, t + 3600, 200.0, 260.0)
+        s = [(t + 600 + i * 300, 210.0 + i, False, False) for i in range(5)]               # autonomia creste: sunt pozitii din timpul incarcarii
+        out = self.run_an(s, [charge, (t + 7200, None, 260.0, None)])
+        self.assertEqual(out['kwh'], 0.0)                                                    # nicio energie negativa si nimic din interiorul incarcarii
+        open_ = self.run_an([(t + 7200 + i * 300, 261.0 + i, False, False) for i in range(3)], [(t + 7000, None, 260.0, None)])
+        self.assertEqual(open_['kwh'], 0.0)                                                  # incarcare in curs: pozitiile ei nu intra
+
+    def test_a_stale_open_charge_stops_at_the_next_activity_and_a_sample_at_its_very_start_is_not_parked(self):
+        t = 1_800_000_000.0
+        stale = (t + 100, None, 265.0, None)                                                # TeslaMate nu a inchis-o niciodata
+        nxt = (t + 3 * 3600, t + 4 * 3600, 330.0, 390.0)                                    # urmatoarea incarcare, reala
+        s = [(t, 265.9, False, False), (t + 99.2, 265.9, False, False)]                     # al doilea e scris in aceeasi secunda cu startul incarcarii
+        out = self.run_an(s + [(t + 4 * 3600 + 300, 390.0, False, False), (t + 4 * 3600 + 600, 389.9, False, False)], [stale, nxt])
+        self.assertEqual(out['skipped_n'], 0)
+        self.assertGreaterEqual(out['kwh'], 0.0)
+        self.assertAlmostEqual(out['kwh'], (0.9 + 0.1) * 0.125, places=4)                   # dinaintea incarcarii (0,9 km) + de dupa cea reala (0,1 km); peste cea neinchisa nu se numara
+        late = [(t + 100 + 25 * 3600, 330.0, False, False), (t + 100 + 25 * 3600 + 300, 329.5, False, False)]
+        self.assertAlmostEqual(self.run_an(late, [(t + 100, None, 265.0, None)])['kwh'], 0.5 * self.EFF, places=4)      # o incarcare nu tine peste 24 h
+        self.assertEqual(self.run_an([(t + 3600, 330.0, False, False), (t + 3900, 329.5, False, False)], [(t + 100, None, 265.0, None)])['kwh'], 0.0)    # in primele 24 h pozitiile ei nu intra
+
+    def test_an_impossible_jump_is_skipped_and_counted(self):
+        t = 1_800_000_000.0
+        out = self.run_an([(t, 300.0, False, False), (t + 300, 250.0, False, False), (t + 600, 249.9, False, False)])     # 50 km pe 5 min = 75 kW
+        self.assertEqual(out['skipped_n'], 1)
+        self.assertAlmostEqual(out['skipped_kwh'], 50 * 0.125, places=3)
+        self.assertAlmostEqual(out['kwh'], 0.1 * 0.125, places=4)
+
+    def test_a_segment_is_cut_at_local_midnight_and_only_segments_in_range_are_counted(self):
+        day = 1_800_000_000 // 86400 * 86400
+        a, b = day + 23 * 3600, day + 23 * 3600 + 3 * 3600                                  # 23:00 -> 02:00 (o noapte), 3 km
+        out = self.run_an([(a, 300.0, False, False), (b, 297.0, False, False)])
+        days = sorted(out['by_day'])
+        self.assertEqual(len(days), 2)
+        self.assertAlmostEqual(out['by_day'][days[0]]['sleep'], 3 * 0.125 / 3, places=4)    # o ora din trei
+        self.assertAlmostEqual(out['by_day'][days[1]]['sleep'], 3 * 0.125 * 2 / 3, places=4)
+        self.assertEqual(self.run_an([(a, 300.0, False, False), (b, 297.0, False, False)], lo=a + 1)['kwh'], 0.0)       # segmentul incepe inainte de perioada
+
+    def test_summary_gives_cost_extra_over_sleep_and_a_monthly_projection(self):
+        from features import idleuse as IU
+        t = 1_800_000_000.0
+        s, r = [], 300.0
+        for i in range(0, 12 * 12):                                                          # 12 h treaza cu 0,2 kW (0,4 km pe 5 min nu: 0,2 kW = 0,0167 kWh = 0,133 km)
+            s.append((t + i * 300, r, False, False))
+            r -= 0.1333
+        out = IU.analyze(s + [(t + 144 * 300 + 48 * 3600, r - 2.0, False, False)], [], [[t, t + 12 * 3600]], self.EFF)
+        sm = IU.summarize(out, price=1.0, driving_kwh=40.0)
+        by = {c['key']: c for c in sm['cats']}
+        self.assertGreater(by['sentry']['kwh'], 1.5)
+        self.assertAlmostEqual(by['sentry']['cost'], by['sentry']['kwh'], places=2)         # pret 1,0
+        self.assertGreater(by['sleep']['hours'], 40)
+        self.assertLess(by['sentry']['extra_kwh'], by['sentry']['kwh'])                      # peste somn = mai putin decat tot
+        self.assertIsNone(by['sleep']['extra_kwh'])
+        self.assertEqual(sm['idle_share'], round(sm['kwh'] / (sm['kwh'] + 40.0) * 100))
+        self.assertGreater(by['sentry']['per30_kwh'], by['sentry']['kwh'])                   # perioada < 30 zile
+
+
 if __name__ == '__main__':
     unittest.main()
