@@ -3,6 +3,11 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.17.2 - 2026-11-12
+
+### Fixes
+- **Doors drawn open on the car picture when none was open.** The exact open doors are read from the car while something is open, and that reading stayed in the page after the door was closed, so the doors on the driver's side kept showing as open. The reading is now used only while the live state still reports something open (doors, frunk, trunk or windows), and it is discarded once everything is closed.
+
 ## 1.17.1 - 2026-11-09
 
 ### Fixes

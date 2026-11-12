@@ -973,11 +973,14 @@ function afterProfiler() {
 
 /* ---------- Deschideri animate pe poza masinii (usi, frunk, portbagaj, geamuri) ---------- */
 function openState(L, o) {
-  o = o || {};
-  const d = { fl: !!o.df, rl: !!o.dr, fr: !!o.pf, rr: !!o.pr };                       // df/dr = sofer (stanga) fata/spate, pf/pr = pasager (dreapta)
-  const known = Object.keys(o).length > 0 && ['df', 'dr', 'pf', 'pr'].some((k) => o[k] !== undefined && o[k] !== null);
-  return { doors: d, doorsKnown: known, anyDoor: known ? Object.values(d).some(Boolean) : !!L.doors_open, frunk: !!(L.frunk_open || o.ft), trunk: !!(L.trunk_open || o.rt),
-    windows: !!(L.windows_open || o.fd_window || o.fp_window || o.rd_window || o.rp_window) };
+  /* `o` e instantaneul luat de la masina (S.opens) cat timp ceva era deschis. Dupa ce se inchide, instantaneul ramane vechi in memoria paginii,
+     asa ca il folosim doar pentru categoria pe care starea live o da inca drept deschisa; altfel ar ramane usile (de obicei cele de pe stanga) desenate deschise. */
+  const on = (v) => v === true || v === 'true';
+  const dOn = on(L.doors_open), tOn = on(L.trunk_open), fOn = on(L.frunk_open), wOn = on(L.windows_open);
+  o = (dOn || tOn || fOn || wOn) ? (o || {}) : {};
+  const d = dOn ? { fl: !!o.df, rl: !!o.dr, fr: !!o.pf, rr: !!o.pr } : { fl: false, rl: false, fr: false, rr: false };    // df/dr = sofer (stanga) fata/spate, pf/pr = pasager (dreapta)
+  const known = dOn && ['df', 'dr', 'pf', 'pr'].some((k) => o[k] !== undefined && o[k] !== null);
+  return { doors: d, doorsKnown: known, anyDoor: known ? Object.values(d).some(Boolean) : dOn, frunk: fOn, trunk: tOn, windows: wOn };
 }
 function openOverlay(L, o) {
   const st = openState(L, o);
@@ -1005,7 +1008,8 @@ function openChips(L, o) {
 let openBusy = false;
 async function refreshOpenings(c) {
   const L = c.live || {};
-  if (!(L.doors_open || L.trunk_open || L.frunk_open || L.windows_open) || openBusy || S.demo) return;
+  if (!(L.doors_open || L.trunk_open || L.frunk_open || L.windows_open)) { if (S.opens) delete S.opens[c.id]; return; }        // nimic deschis: uitam instantaneul vechi
+  if (openBusy || S.demo) return;
   openBusy = true;
   try {
     const d = await api('/api/vdata?car=' + c.id); S.opens = S.opens || {};
