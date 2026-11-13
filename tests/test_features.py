@@ -671,9 +671,21 @@ class NotificationClearTests(Isolated):
         S.notify_check(1, 'battery_level', 25, 0)
         time.sleep(0.3)
         self.assertEqual([c for c in self.calls if c and c.get('kind') == 'low_batt'], [])  # 0% nu e o valoare reala
-        S.LIVE[1] = dict(battery_level=18, plugged_in=False, shift_state='P')
-        S.notify_check(1, 'battery_level', 22, 18)
-        time.sleep(0.3)
+        old_s = S.LOW_BATT_CONFIRM_S
+        S.LOW_BATT_CONFIRM_S = 0.2                                                          # in productie 90 s
+        S.LAST_SENT.pop('low_batt:1', None)
+        try:
+            S.LIVE[1] = dict(battery_level=1, plugged_in=False, shift_state='P')
+            S.notify_check(1, 'battery_level', 22, 1)
+            S.LIVE[1] = dict(battery_level=35, plugged_in=False, shift_state='P')          # citire falsa: revine la loc inainte de confirmare
+            time.sleep(0.6)
+            self.assertEqual([c for c in self.calls if c and c.get('kind') == 'low_batt' and not c.get('clear')], [])
+            S.LIVE[1] = dict(battery_level=18, plugged_in=False, shift_state='P')
+            S.notify_check(1, 'battery_level', 22, 18)
+            self.assertEqual([c for c in self.calls if c and c.get('kind') == 'low_batt' and not c.get('clear')], [])      # inca nu: asteapta confirmarea
+            time.sleep(0.6)
+        finally:
+            S.LOW_BATT_CONFIRM_S = old_s
         low = [c for c in self.calls if c and c.get('kind') == 'low_batt' and not c.get('clear')]
         self.assertEqual((len(low), low[0]['data']['tag']), (1, 'tesla_low_batt'))
         self.calls.clear()

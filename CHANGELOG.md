@@ -3,6 +3,12 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.17.3 - 2026-11-13
+
+### Fixes
+- **The low-battery alert waits before it is sent.** A single wrong reading (for example 1% for a second when the car wakes up or stops) used to send "Low battery" at once. The app now waits 90 seconds and checks again; the alert is sent only if the battery is still below 20%, the car is parked and not plugged in. The once-per-12-hours limit is now kept per car instead of for all cars together.
+- **The "local network has no password" warning is shown only when nothing protects the app.** With Cloudflare Access configured, the internet side is protected and the home network is treated as trusted, so the warning no longer appears. Without a password and without Access it is still shown.
+
 ## 1.17.2 - 2026-11-12
 
 ### Fixes

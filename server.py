@@ -2717,6 +2717,32 @@ def nf1(x):
     return ('%.1f' % float(x)).rstrip('0').rstrip('.')
 
 
+LOW_BATT_CONFIRM_S = 90                                              # o valoare mica de baterie trebuie sa se mentina atat inainte sa trimitem alerta (MQTT poate da o citire falsa cand masina se trezeste / opreste)
+LOW_BATT_PENDING = set()
+
+
+def low_batt_confirm_later(car):
+    """Alerta "baterie scazuta" nu pleaca la prima citire: asteptam LOW_BATT_CONFIRM_S secunde si abia apoi verificam din nou starea, ca o valoare falsa de o secunda sa nu trimita nimic."""
+    if car in LOW_BATT_PENDING:
+        return
+    LOW_BATT_PENDING.add(car)
+
+    def check():
+        try:
+            lv = LIVE.get(car, {})
+            soc = lv.get('battery_level')
+            if (isinstance(soc, (int, float)) and 1 <= soc < 20 and not lv.get('plugged_in') and lv.get('shift_state') in (None, 'P')
+                    and nset_load().get('low_batt') and _once('low_batt:%s' % car, 12 * 3600)):
+                notify('low_batt', '🪫 Baterie scăzută', '%s: baterie %s%% și nu e conectată la priză.' % (lv.get('display_name') or 'Tesla', soc))
+        except Exception as e:  # noqa
+            log('low_batt:', e, flush=True)
+        finally:
+            LOW_BATT_PENDING.discard(car)
+    t = threading.Timer(LOW_BATT_CONFIRM_S, check)
+    t.daemon = True
+    t.start()
+
+
 def notify_check(car, key, old, new):
     if key == 'charging_state' and old == 'Charging' and new in ('Complete', 'Stopped', 'Disconnected'):
         charge_cost_prompt(car)
@@ -2735,8 +2761,8 @@ def notify_check(car, key, old, new):
         notify('charge_done', '🔋 Încărcare terminată', '%s: baterie %s%%%s.' % (nm, soc if soc is not None else '?', ', limita %s%%' % lv['charge_limit_soc'] if lv.get('charge_limit_soc') else ''))
     elif key == 'update_available' and new is True and st['update'] and _once('update', 6 * 3600):
         notify('update', '⬇️ Update software disponibil', '%s: versiune nouă %s.' % (nm, lv.get('update_version') or ''))
-    elif key == 'battery_level' and isinstance(new, (int, float)) and 1 <= new < 20 <= (old or 0) and st['low_batt'] and not lv.get('plugged_in') and lv.get('shift_state') in (None, 'P') and _once('low_batt', 12 * 3600):
-        notify('low_batt', '🪫 Baterie scăzută', '%s: baterie %s%% și nu e conectată la priză.' % (nm, new))
+    elif key == 'battery_level' and isinstance(new, (int, float)) and 1 <= new < 20 <= (old or 0) and st['low_batt'] and not lv.get('plugged_in') and lv.get('shift_state') in (None, 'P'):
+        low_batt_confirm_later(car)
     elif key in OPEN_KEYS and new is True and st['door']:
         what = OPEN_KEYS[key]
 
@@ -3054,6 +3080,11 @@ def la_loop():
 # ---------------------------------------------------------------- acces din internet (parola + cookie semnat)
 import hashlib, hmac, html as html_mod, ipaddress
 AUTH = dict(pw=os.environ.get('APP_PASSWORD', ''), secret=(os.environ.get('SESSION_SECRET') or secrets.token_hex(32)).encode())
+
+
+def lan_unprotected():
+    """Avertismentul "reteaua locala nu are parola": doar cand nu exista nicio protectie. Cu Cloudflare Access configurat, internetul e protejat si reteaua de acasa e considerata de incredere."""
+    return not AUTH['pw'] and not ACCESS.get('team') and not DEMO_ONLY
 FAILS = {}   # ip -> [timestamps]
 LOGIN = {
     'ro': dict(title='Autentificare', pw='Parolă', go='Intră', bad='Parolă greșită.', lock='Prea multe încercări. Reia peste câteva minute.', off='Accesul din internet nu este configurat.'),
@@ -3273,9 +3304,9 @@ def api_state():
             c['image34'] = compositor_url(c) if not os.environ.get('CAR_OPTIONS') else None                 # vederea 3/4 (Model 3 / Y)
             c['live_age'] = (time.time() - LIVE_TS[c['id']]) if c['id'] in LIVE_TS else None
             out.append(c)
-        return dict(demo=False, cars=out, links=LINKS, mqtt=bool(LIVE), lan_open=not AUTH['pw'] and not DEMO_ONLY, currency=CURRENCY, app=app_brief(), tessie=bool(globals().get('tessie_has_data') and tessie_has_data()))
+        return dict(demo=False, cars=out, links=LINKS, mqtt=bool(LIVE), lan_open=lan_unprotected(), currency=CURRENCY, app=app_brief(), tessie=bool(globals().get('tessie_has_data') and tessie_has_data()))
     return dict(demo=True, public_demo=DEMO_ONLY, cars=[dict(DEMO_CAR, live=DEMO_LIVE, live_age=0, image=car_image(DEMO_CAR), photo=bool(car_photo() or car_top(DEMO_CAR.get('model'), DEMO_CAR.get('color'))), image34=compositor_url(DEMO_CAR), sleep=DEMO_SLEEP)],
-                links=({} if DEMO_ONLY else LINKS), mqtt=False, db_error=(cl is None and not DEMO_ONLY), lan_open=not AUTH['pw'] and not DEMO_ONLY, currency=CURRENCY, app=app_brief())
+                links=({} if DEMO_ONLY else LINKS), mqtt=False, db_error=(cl is None and not DEMO_ONLY), lan_open=lan_unprotected(), currency=CURRENCY, app=app_brief())
 
 
 CSP = os.environ.get('CSP') or (
