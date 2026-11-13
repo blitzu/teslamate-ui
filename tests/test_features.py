@@ -2547,3 +2547,54 @@ class IdleUseTests(Isolated):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class UsageStatsTests(Isolated):
+    NOW = dt.datetime(2026, 11, 13, 12, 0, 0)
+
+    def rows(self):
+        def r(i, days_ago, km, kwh, temp=10.0, minutes=30):
+            when = self.NOW - dt.timedelta(days=days_ago)
+            return dict(id=i, start_date=when.isoformat(), distance=km, kwh=kwh, duration_min=minutes, outside_temp_avg=temp, start_name='A', end_name='B')
+        return [r(1, 1, 10.0, 1.5, 12), r(2, 3, 20.0, 3.0, 2), r(3, 10, 50.0, 8.0, 25, 40), r(4, 20, 10.0, 2.0, 5),
+                r(5, 2, 0.4, 0.2), r(6, 4, 15.0, None), r(7, 5, 12.0, -1.0)]            # 5 prea scurta, 6 fara energie, 7 energie negativa
+
+    def test_days_window_and_invalid_drives_are_left_out(self):
+        from features import usage as US
+        o = US.summarize(self.rows(), 'days', 7, self.NOW, eff=0.15)
+        self.assertEqual((o['drives'], o['used_drives'], o['skipped']), (5, 2, 3))           # in 7 zile: cursele 1,2,5,6,7; doar 1 si 2 sunt valide
+        self.assertEqual((o['km'], o['kwh'], o['wh_km']), (30.0, 4.5, 150))                  # 4,5 kWh / 30 km
+        self.assertEqual((o['kwh_100'], o['rated_wh_km'], o['vs_rated_pct']), (15.0, 150, 0))
+        self.assertEqual(o['prev']['km'], 50.0)                                              # 7-14 zile in urma: cursa 3 (160 Wh/km)
+        self.assertEqual((o['prev']['wh_km'], o['prev']['delta_pct']), (160, -6))
+
+    def test_km_window_takes_whole_drives_from_the_newest(self):
+        from features import usage as US
+        o = US.summarize(self.rows(), 'km', 25, self.NOW, eff=None)
+        # cele mai noi curse (inclusiv cele invalide, care au distanta): 1 (10), 5 (0,4), 2 (20) -> trece de 25 km; apoi 6 (15), 7 (12)
+        self.assertEqual(o['drives'], 3)
+        self.assertEqual(o['km'], 30.0)
+        self.assertIsNone(o['rated_wh_km'])
+
+    def test_groups_by_temperature_and_speed(self):
+        from features import usage as US
+        o = US.summarize(self.rows(), 'days', 30, self.NOW, eff=0.15)
+        t = {(b['lo'], b['hi']): b for b in o['by_temp']}
+        self.assertEqual((t[(0, 10)]['n'], t[(0, 10)]['wh_km'], t[(10, 20)]['n'], t[(20, 30)]['wh_km']), (2, 167, 1, 160))      # 2 C si 5 C intra in 0-10 (curse 2 si 4): 5 kWh / 30 km
+        s = {(b['lo'], b['hi']): b for b in o['by_speed']}
+        self.assertEqual((s[(0, 30)]['n'], s[(30, 50)]['n'], s[(50, 80)]['n']), (2, 1, 1))     # 20 km/h (cursele 1 si 4), 40 km/h (cursa 2), 75 km/h (cursa 3)
+        self.assertTrue(o['best'] and o['best'][0]['wh_km'] <= o['best'][-1]['wh_km'])
+
+    def test_trend_by_day_then_by_week_and_costs(self):
+        from features import usage as US
+        short = US.summarize(self.rows(), 'days', 10, self.NOW, eff=0.15, costs={1: (3.0,), 2: (6.0,)})
+        self.assertEqual([t['day'] for t in short['trend']], ['2026-11-03', '2026-11-10', '2026-11-12'][-len(short['trend']):])
+        self.assertEqual((short['cost'], short['cost_100'], short['price_kwh']), (9.0, 30.0, 2.0))     # 9 lei / 4,5 kWh = 2 lei/kWh; 9 lei / 30 km
+        long = US.summarize(self.rows(), 'days', 90, self.NOW, eff=0.15)
+        self.assertTrue(all(dt.date.fromisoformat(t['day']).weekday() == 0 for t in long['trend']) or long['span_days'] <= 45)
+
+    def test_empty_window(self):
+        from features import usage as US
+        o = US.summarize([], 'days', 7, self.NOW)
+        self.assertTrue(o['empty_window'])
+        self.assertEqual(o['used_drives'], 0)

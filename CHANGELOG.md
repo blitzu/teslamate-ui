@@ -3,6 +3,11 @@
 All notable changes are listed here, newest first. Versions follow [Semantic Versioning](https://semver.org): *major* = breaking change, *minor* = new features, *patch* = fixes.
 Each version below becomes the text of its GitHub release and is shown in the app (Settings → Version & updates).
 
+## 1.18.0 - 2026-11-13
+
+### New features
+- **Consumption stats page.** A new page, *Consumption stats* (Drives → menu, or `#/usage`), shows how much the car uses while driving, over the **last X days** or the **last X kilometres** (pick a preset or type any number). It shows Wh/km and kWh/100 km, distance, energy, average speed, number of drives, and the cost per 100 km when drive costs are known. It compares the result with the rated consumption of the car and with the same-sized period just before (the previous X days, or the X km before). Below are charts and tables of consumption by day (or by week for long periods), by outside temperature and by average trip speed, plus the three most efficient and the three highest-consumption drives (10 km or more). For "last km" whole drives are taken, newest first, until the distance is reached. Drives under 1 km or without a valid range measurement are left out of Wh/km, and the page says how many.
+
 ## 1.17.3 - 2026-11-13
 
 ### Fixes
